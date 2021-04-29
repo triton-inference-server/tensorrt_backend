@@ -30,11 +30,15 @@
 #include <string>
 #include <vector>
 
+#include "triton/backend/backend_common.h"
 #include "triton/core/tritonserver.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
 bool UseTensorRTv2API(const nvinfer1::ICudaEngine* engine);
+
+TRITONSERVER_Error* GetProfileIndex(
+    const std::string& profile_name, int* profile_index);
 
 TRITONSERVER_DataType ConvertTrtTypeToDataType(nvinfer1::DataType trt_type);
 
@@ -56,13 +60,19 @@ TRITONSERVER_Error* ValidateDimension(
 
 TRITONSERVER_Error* CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
+    const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
+    const bool supports_batching, const bool contains_explicit_batch,
+    const bool compare_exact);
+
+TRITONSERVER_Error* CompareDimsSupported(
+    const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
     const bool supports_batching, const bool contains_explicit_batch,
     const bool compare_exact);
 
 TRITONSERVER_Error* CompareShapeDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
-    const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
+    const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
     const bool supports_batching);
 
 TRITONSERVER_Error* ValidateControlDimsDynamic(
@@ -80,6 +90,9 @@ TRITONSERVER_Error* MaximumDims(
 
 void DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims);
 
+void DimsJsonToDimVec(
+    common::TritonJson::Value& dims_json, std::vector<int64_t>* dims);
+
 bool DimVecToDims(const std::vector<int64_t>& dim_vec, nvinfer1::Dims* dims);
 
 int64_t GetElementCount(const nvinfer1::Dims& dims);
@@ -90,6 +103,7 @@ bool ContainsWildcardAtExplicitBatchDim(const nvinfer1::Dims& dims);
 
 const std::string DimsDebugString(const nvinfer1::Dims& dims);
 
+const std::string DimsJsonToString(common::TritonJson::Value& dims);
 //
 // Templates
 //

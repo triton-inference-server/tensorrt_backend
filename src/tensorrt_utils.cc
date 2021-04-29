@@ -59,6 +59,27 @@ UseTensorRTv2API(const nvinfer1::ICudaEngine* engine)
   return !engine->hasImplicitBatchDimension();
 }
 
+TRITONSERVER_Error*
+GetProfileIndex(const std::string& profile_name, int* profile_index)
+{
+  if (profile_name.empty()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG, "profile name must not be empty");
+  }
+
+  try {
+    *profile_index = stoi(profile_name);
+  }
+  catch (const std::invalid_argument& ia) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("unable to parse '") + profile_name + "': " + ia.what())
+            .c_str());
+  }
+
+  return nullptr;
+}
+
 std::pair<bool, nvinfer1::DataType>
 ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
 {
@@ -119,7 +140,27 @@ CompareDims(const nvinfer1::Dims& ldims, const nvinfer1::Dims& rdims)
 
 TRITONSERVER_Error*
 CompareDimsSupported(
-    const std::string& model_name, const std::string& binding_name,
+    const std::string& model_name, const std::string& tensor_name,
+    const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
+    const bool supports_batching, const bool contains_explicit_batch,
+    const bool compare_exact)
+{
+  std::vector<int64_t> dims_vec;
+  for (size_t i = 0; i < dims.ArraySize(); i++) {
+    int64_t dim;
+    RETURN_IF_ERROR(dims.IndexAsInt(i, &dim));
+    dims_vec.push_back(dim);
+  }
+
+  RETURN_IF_ERROR(CompareDimsSupported(
+      model_name, tensor_name, model_dims, dims_vec, supports_batching,
+      contains_explicit_batch, compare_exact));
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+CompareDimsSupported(
+    const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
     const bool supports_batching, const bool contains_explicit_batch,
     const bool compare_exact)
@@ -130,7 +171,7 @@ CompareDimsSupported(
     if ((model_dims.nbDims == 0)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("model '") + model_name + "', tensor '" + binding_name +
+          (std::string("model '") + model_name + "', tensor '" + tensor_name +
            "': for the model to support batching the shape should have at "
            "least 1 dimension; but shape expected by the model is " +
            DimsDebugString(model_dims))
@@ -154,7 +195,7 @@ CompareDimsSupported(
     if (!succ) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("model '") + model_name + "', tensor '" + binding_name +
+          (std::string("model '") + model_name + "', tensor '" + tensor_name +
            "': the model expects " + std::to_string(model_dims.nbDims) +
            " dimensions (shape " + DimsDebugString(model_dims) +
            ") but the model configuration specifies " +
@@ -180,7 +221,7 @@ CompareDimsSupported(
     if (!succ) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("model '") + model_name + "', tensor '" + binding_name +
+          (std::string("model '") + model_name + "', tensor '" + tensor_name +
            "': the model expects " + std::to_string(model_dims.nbDims) +
            " dimensions (shape " + DimsDebugString(model_dims) +
            ") but the model configuration specifies " +
@@ -195,24 +236,31 @@ CompareDimsSupported(
 
 TRITONSERVER_Error*
 CompareShapeDimsSupported(
-    const std::string& model_name, const std::string& binding_name,
-    const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
+    const std::string& model_name, const std::string& tensor_name,
+    const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
     const bool supports_batching)
 {
+  std::vector<int64_t> dims_vec;
+  for (size_t i = 0; i < dims.ArraySize(); i++) {
+    int64_t dim;
+    RETURN_IF_ERROR(dims.IndexAsInt(i, &dim));
+    dims_vec.push_back(dim);
+  }
+
   const int batch_offset = supports_batching ? 1 : 0;
   bool not_supported = false;
-  if ((int32_t)dims.size() != model_dims.nbDims) {
+  if ((int32_t)dims_vec.size() != model_dims.nbDims) {
     not_supported = true;
   } else if (model_dims.nbDims == 1) {
-    if (((dims[0] + batch_offset) != model_dims.d[0]) ||
-        (dims[0] == WILDCARD_DIM)) {
+    if (((dims_vec[0] + batch_offset) != model_dims.d[0]) ||
+        (dims_vec[0] == WILDCARD_DIM)) {
       not_supported = true;
     }
   } else if (model_dims.nbDims > 1) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("unable to load model '") + model_name +
-         "', shape binding '" + binding_name +
+         "', shape binding '" + tensor_name +
          "' can only be 0-d or 1-D tensor, got " + DimsDebugString(model_dims))
             .c_str());
   }
@@ -222,10 +270,10 @@ CompareShapeDimsSupported(
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("unable to load model '") + model_name + "', binding '" +
-         binding_name + "' shape expected by framework " +
+         tensor_name + "' shape expected by framework " +
          DimsDebugString(model_dims) +
          " doesn't match model configuration shape " +
-         backend::ShapeToString(dims))
+         backend::ShapeToString(dims_vec))
             .c_str());
   }
 
@@ -373,6 +421,19 @@ DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims)
   }
 }
 
+void
+DimsJsonToDimVec(
+    common::TritonJson::Value& dims_json, std::vector<int64_t>* dims)
+{
+  dims->clear();
+  for (size_t i = 0; i < dims_json.ArraySize(); i++) {
+    int64_t dim;
+    dims_json.IndexAsInt(i, &dim);
+    dims->push_back(dim);
+  }
+}
+
+
 bool
 DimVecToDims(const std::vector<int64_t>& dim_vec, nvinfer1::Dims* dims)
 {
@@ -423,7 +484,15 @@ DimsDebugString(const nvinfer1::Dims& dims)
 {
   std::vector<int64_t> dims_vec;
   DimsToDimVec(dims, &dims_vec);
-  return backend::ShapeToString(dims_vec);
+  return ShapeToString(dims_vec);
+}
+
+const std::string
+DimsJsonToString(common::TritonJson::Value& dims)
+{
+  std::vector<int64_t> dims_vec;
+  DimsJsonToDimVec(dims, &dims_vec);
+  return ShapeToString(dims_vec);
 }
 
 }}}  // namespace triton::backend::tensorrt

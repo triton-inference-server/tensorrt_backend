@@ -50,20 +50,14 @@ available in the main [server](https://github.com/triton-inference-server/server
 repo. If you don't find your answer there you can ask questions on the
 main Triton [issues page](https://github.com/triton-inference-server/server/issues).
 
-## Build the PyTorch Backend
-
-Use a recent cmake to build. First install the required dependencies.
-
-```
-$ apt-get install patchelf rapidjson-dev python3-dev
-```
+## Build the TensorRT Backend
 
 Appropriate version of TensorRT must be installed on the system. Check the support matrix to find the correct version of TensorRT to be installed.
 
 ```
 $ mkdir build
 $ cd build
-$ cmake -DCMAKE_INSTALL_PREFIX:PATH=`pwd`/install -DTRITON_PYTORCH_INCLUDE_PATHS="/opt/tritonserver/include/torch;/opt/tritonserver/include/torch/torch/csrc/api/include;/opt/tritonserver/include/torchvision" -DTRITON_PYTORCH_LIB_PATHS="/opt/tritonserver/backends/pytorch"..
+$ cmake -DCMAKE_INSTALL_PREFIX:PATH=`pwd`/install ..
 $ make install
 ```
 

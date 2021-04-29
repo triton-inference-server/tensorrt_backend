@@ -82,6 +82,14 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 #
 if(${TRITON_ENABLE_GPU})
   find_package(CUDAToolkit REQUIRED)
+  message(STATUS "Using CUDA ${CUDA_VERSION}")
+  set(CUDA_NVCC_FLAGS -std=c++11)
+
+  if(CUDA_VERSION VERSION_GREATER "10.1" OR CUDA_VERSION VERSION_EQUAL "10.1")
+    add_definitions(-DTRITON_ENABLE_CUDA_GRAPH=1)
+  else()
+    message(WARNING "CUDA ${CUDA_VERSION} does not support CUDA graphs.")
+  endif()
 else()
   message( FATAL_ERROR "TensorRT backend requires TRITON_ENABLE_GPU=1, CMake will exit." )
 endif() # TRITON_ENABLE_GPU
@@ -93,7 +101,12 @@ configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYO
 
 add_library(
   triton-tensorrt-backend SHARED
+  src/constants.h
   src/tensorrt.cc
+  src/tensorrt_model.cc
+  src/tensorrt_model.h
+  src/tensorrt_model_instance.cc
+  src/tensorrt_model_instance.h
   src/tensorrt_utils.cc
   src/tensorrt_utils.h
   src/loader.cc
