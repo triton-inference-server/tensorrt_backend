@@ -46,8 +46,6 @@ endif()
 
 set(TRITON_TENSORRT_BACKEND_LIBNAME triton_tensorrt)
 set(TRITON_TENSORRT_BACKEND_INSTALLDIR ${CMAKE_INSTALL_PREFIX}/backends/tensorrt)
-#set(TRITON_TENSORRT_LIBNAME "libtensorflow_triton.so")
-#set(TRITON_TENSORRT_LDFLAGS "-ltensorflow_triton")
 
 #
 # Dependencies
@@ -101,7 +99,6 @@ configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYO
 
 add_library(
   triton-tensorrt-backend SHARED
-  src/constants.h
   src/tensorrt.cc
   src/tensorrt_model.cc
   src/tensorrt_model.h

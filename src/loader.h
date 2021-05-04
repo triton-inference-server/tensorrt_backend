@@ -28,7 +28,6 @@
 #include <NvInfer.h>
 #include <string>
 #include <vector>
-
 #include "triton/core/tritonserver.h"
 
 namespace triton { namespace backend { namespace tensorrt {

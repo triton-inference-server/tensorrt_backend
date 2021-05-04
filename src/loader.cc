@@ -28,7 +28,6 @@
 
 #include <NvInferPlugin.h>
 #include <mutex>
-
 #include "logging.h"
 #include "triton/backend/backend_common.h"
 

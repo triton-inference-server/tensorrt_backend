@@ -25,7 +25,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <future>
-#include "constants.h"
 #include "loader.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
@@ -34,6 +33,7 @@
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
 
+#include <cuda_runtime_api.h>
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -41,10 +41,6 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
-
-#ifdef TRITON_ENABLE_GPU
-#include <cuda_runtime_api.h>
-#endif  // TRITON_ENABLE_GPU
 
 //
 // TensorRT Backend that implements the TRITONBACKEND API.
@@ -82,6 +78,13 @@ namespace {
       return;                                                                  \
     }                                                                          \
   } while (false)
+
+void CUDART_CB
+TimestampCaptureCallback(void* data)
+{
+  SET_TIMESTAMP(*(reinterpret_cast<uint64_t*>(data)));
+}
+
 #else
 #define FAIL_ALL_AND_RETURN_IF_ERROR(                                 \
     REQUESTS, REQUEST_COUNT, RESPONSES, S, LOG_MSG)                   \
@@ -106,15 +109,16 @@ namespace {
       return;                                                         \
     }                                                                 \
   } while (false)
-#endif  // TRITON_ENABLE_STATS
 
-#ifdef TRITON_ENABLE_STATS
 void CUDART_CB
 TimestampCaptureCallback(void* data)
 {
   SET_TIMESTAMP(*(reinterpret_cast<uint64_t*>(data)));
 }
 #endif  // TRITON_ENABLE_STATS
+
+// Number of CUDA event set for each instance.
+static constexpr int EVENT_SET_COUNT = 2;
 
 int
 GetCudaStreamPriority(TensorRTModel::Priority priority)
