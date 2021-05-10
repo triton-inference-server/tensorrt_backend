@@ -163,6 +163,7 @@ target_link_libraries(
     triton-core-serverapi   # from repo-core
     triton-core-serverstub  # from repo-core
     triton-backend-utils    # from repo-backend
+    -lpthread
 )
 
 target_link_libraries(

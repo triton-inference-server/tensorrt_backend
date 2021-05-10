@@ -312,6 +312,12 @@ ModelState::CreateEngine(
     int gpu_device, const std::string& model_path,
     nvinfer1::ICudaEngine** engine)
 {
+  // TensorRT engine creation is not thread-safe, so multiple creations
+  // are serialized with a global lock.
+  static std::mutex global_context_mu;
+  std::lock_guard<std::mutex> glock(global_context_mu);
+
+
   // Create shared engine for the device if haven't tried so.
   auto eit = device_engines_.find(gpu_device);
   if (eit == device_engines_.end()) {
@@ -796,11 +802,8 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
 
-  // Passing the queue for available contexts here so that completion
-  // thread knows where to inform that the context is ready for
-  // inputs.
-  (*state)->completion_thread_ =
-      std::thread([state]() { (*state)->ProcessResponse(); });
+  (*state)->completion_thread_ = std::thread(
+      &ModelInstanceState::ProcessResponse, *state);
 
   // CUDA 10.1 starts to support CUDA graphs.
   // If enabled, build CUDA graphs with a set of graph specs.
