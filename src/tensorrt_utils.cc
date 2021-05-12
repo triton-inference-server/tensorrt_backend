@@ -49,6 +49,25 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
   return TRITONSERVER_TYPE_INVALID;
 }
 
+std::string
+ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
+{
+  switch (trt_type) {
+    case nvinfer1::DataType::kFLOAT:
+      return "TYPE_FP32";
+    case nvinfer1::DataType::kHALF:
+      return "TYPE_FP16";
+    case nvinfer1::DataType::kINT8:
+      return "TYPE_INT8";
+    case nvinfer1::DataType::kINT32:
+      return "TYPE_INT32";
+    case nvinfer1::DataType::kBOOL:
+      return "TYPE_BOOL";
+  }
+
+  return "TYPE_INVALID";
+}
+
 bool
 UseTensorRTv2API(const nvinfer1::ICudaEngine* engine)
 {
@@ -421,16 +440,17 @@ DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims)
   }
 }
 
-void
+TRITONSERVER_Error*
 DimsJsonToDimVec(
     common::TritonJson::Value& dims_json, std::vector<int64_t>* dims)
 {
   dims->clear();
   for (size_t i = 0; i < dims_json.ArraySize(); i++) {
     int64_t dim;
-    dims_json.IndexAsInt(i, &dim);
+    RETURN_IF_ERROR(dims_json.IndexAsInt(i, &dim));
     dims->push_back(dim);
   }
+  return nullptr;
 }
 
 
@@ -491,7 +511,11 @@ const std::string
 DimsJsonToString(common::TritonJson::Value& dims)
 {
   std::vector<int64_t> dims_vec;
-  DimsJsonToDimVec(dims, &dims_vec);
+  auto err = DimsJsonToDimVec(dims, &dims_vec);
+  if (err != nullptr) {
+    TRITONSERVER_ErrorDelete(err);
+    return std::string("UNPARSABLE");
+  }
   return ShapeToString(dims_vec);
 }
 
