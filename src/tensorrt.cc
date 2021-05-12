@@ -802,8 +802,8 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
 
-  (*state)->completion_thread_ = std::thread(
-      &ModelInstanceState::ProcessResponse, *state);
+  (*state)->completion_thread_ =
+      std::thread(&ModelInstanceState::ProcessResponse, *state);
 
   // CUDA 10.1 starts to support CUDA graphs.
   // If enabled, build CUDA graphs with a set of graph specs.
@@ -3941,12 +3941,19 @@ ModelInstanceState::InitializeGraphSpecs(
       common::TritonJson::Value inputs;
       RETURN_IF_ERROR(config_spec.MemberAsArray("input", &inputs));
       for (size_t j = 0; j < inputs.ArraySize(); j++) {
-        // FIXME
-        // std::vector<int64_t> input_shape;
-        // for (const auto& dim : input.second.dim()) {
-        //   input_shape.emplace_back(dim);
-        // }
-        // graph_spec.shapes_[input.first] = std::move(input_shape);
+        triton::common::TritonJson::Value input;
+        RETURN_IF_ERROR(config_inputs.IndexAsObject(j, &input));
+        std::string input_name;
+        RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
+        std::vector<int64_t> input_shape;
+        common::TritonJson::Value dims;
+        RETURN_IF_ERROR(input.MemberAsArray("dims", &dims));
+        for (size_t i = 0; i < dims.ArraySize(); i++) {
+          int64_t dim;
+          RETURN_IF_ERROR(dims.IndexAsInt(i, &dim));
+          input_shape.push_back(dim);
+        }
+        graph_spec.shapes_[input_name] = std::move(input_shape);
       }
 
       common::TritonJson::Value lower_bound_spec;
@@ -3957,18 +3964,23 @@ ModelInstanceState::InitializeGraphSpecs(
         common::TritonJson::Value inputs;
         RETURN_IF_ERROR(lower_bound_spec.MemberAsArray("input", &inputs));
         for (size_t j = 0; j < inputs.ArraySize(); j++) {
-          // FIXME
-          // std::vector<int64_t> input_shape;
-          // for (const auto& dim : input.second.dim()) {
-          //   input_shape.emplace_back(dim);
-          // }
-          // graph_spec.shapes_[input.first] = std::move(input_shape);
+          triton::common::TritonJson::Value input;
+          RETURN_IF_ERROR(config_inputs.IndexAsObject(j, &input));
+          std::string input_name;
+          RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
+          std::vector<int64_t> input_shape;
+          common::TritonJson::Value dims;
+          RETURN_IF_ERROR(input.MemberAsArray("dims", &dims));
+          for (size_t i = 0; i < dims.ArraySize(); i++) {
+            int64_t dim;
+            RETURN_IF_ERROR(dims.IndexAsInt(i, &dim));
+            input_shape.push_back(dim);
+          }
+          graph_spec.lower_bound_shapes_[input_name] = std::move(input_shape);
         }
       } else {
-        // FIXME
-        // graph_spec.lower_bound_batch_size_ =
-        // graph_spec.batch_size_; graph_spec.lower_bound_shapes_ =
-        // graph_spec.shapes_;
+        graph_spec.lower_bound_batch_size_ = graph_spec.batch_size_;
+        graph_spec.lower_bound_shapes_ = graph_spec.shapes_;
       }
     }
   }
@@ -4404,6 +4416,10 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         TRITONSERVER_ERROR_UNSUPPORTED,
         "triton backend API version does not support this backend");
   }
+
+  // Set the execution policy as device blocking for the backend.
+  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
+      backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
 
   return nullptr;  // success
 }
