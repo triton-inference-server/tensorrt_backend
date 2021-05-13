@@ -805,7 +805,8 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), model_path, (*state)->EnginePtr()));
   std::cerr << "A1 " << (*state)->Engine() << std::endl;
-  std::cerr << "turant " << (*state)->Engine()->getNbOptimizationProfiles() << std::endl;
+  std::cerr << "turant " << (*state)->Engine()->getNbOptimizationProfiles()
+            << std::endl;
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -2397,7 +2398,7 @@ ModelInstanceState::RegisterSlots()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
-  std::cerr << "Tebug " << engine_ << std::endl; 
+  std::cerr << "Tebug " << engine_ << std::endl;
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
 
@@ -3945,21 +3946,23 @@ ModelInstanceState::InitializeGraphSpecs(
       RETURN_IF_ERROR(
           config_spec.MemberAsInt("batch_size", &graph_spec.batch_size_));
       common::TritonJson::Value inputs;
-      RETURN_IF_ERROR(config_spec.MemberAsArray("input", &inputs));
-      for (size_t j = 0; j < inputs.ArraySize(); j++) {
-        triton::common::TritonJson::Value input;
-        RETURN_IF_ERROR(inputs.IndexAsObject(j, &input));
-        std::string input_name;
-        RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
-        std::vector<int64_t> input_shape;
-        common::TritonJson::Value dims;
-        RETURN_IF_ERROR(input.MemberAsArray("dims", &dims));
-        for (size_t i = 0; i < dims.ArraySize(); i++) {
-          int64_t dim;
-          RETURN_IF_ERROR(dims.IndexAsInt(i, &dim));
-          input_shape.push_back(dim);
+      if (config_spec.Find("input", &inputs)) {
+        std::vector<std::string> input_names;
+        RETURN_IF_ERROR(inputs.Members(&input_names));
+        for (const auto& input_name : input_names) {
+          common::TritonJson::Value input;
+          RETURN_IF_ERROR(
+              inputs.MemberAsObject(input_name.c_str(), &input));
+          std::vector<int64_t> input_shape;
+          common::TritonJson::Value dims;
+          RETURN_IF_ERROR(input.MemberAsArray("dim", &dims));
+          for (size_t i = 0; i < dims.ArraySize(); i++) {
+            std::string dim;
+            RETURN_IF_ERROR(dims.IndexAsString(i, &dim));
+            input_shape.push_back(std::stoi(dim));
+          }
+          graph_spec.shapes_[input_name] = std::move(input_shape);
         }
-        graph_spec.shapes_[input_name] = std::move(input_shape);
       }
 
       common::TritonJson::Value lower_bound_spec;
@@ -3968,21 +3971,23 @@ ModelInstanceState::InitializeGraphSpecs(
         lower_bound_spec.MemberAsInt(
             "batch_size", &graph_spec.lower_bound_batch_size_);
         common::TritonJson::Value inputs;
-        RETURN_IF_ERROR(lower_bound_spec.MemberAsArray("input", &inputs));
-        for (size_t j = 0; j < inputs.ArraySize(); j++) {
-          triton::common::TritonJson::Value input;
-          RETURN_IF_ERROR(inputs.IndexAsObject(j, &input));
-          std::string input_name;
-          RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
-          std::vector<int64_t> input_shape;
-          common::TritonJson::Value dims;
-          RETURN_IF_ERROR(input.MemberAsArray("dims", &dims));
-          for (size_t i = 0; i < dims.ArraySize(); i++) {
-            int64_t dim;
-            RETURN_IF_ERROR(dims.IndexAsInt(i, &dim));
-            input_shape.push_back(dim);
+        if (lower_bound_spec.Find("input", &inputs)) {
+          std::vector<std::string> input_names;
+          RETURN_IF_ERROR(inputs.Members(&input_names));
+          for (const auto& input_name : input_names) {
+            common::TritonJson::Value input;
+            RETURN_IF_ERROR(
+                inputs.MemberAsObject(input_name.c_str(), &input));
+            std::vector<int64_t> input_shape;
+            common::TritonJson::Value dims;
+            RETURN_IF_ERROR(input.MemberAsArray("dim", &dims));
+            for (size_t i = 0; i < dims.ArraySize(); i++) {
+              std::string dim;
+              RETURN_IF_ERROR(dims.IndexAsString(i, &dim));
+              input_shape.push_back(std::stoi(dim));
+            }
+            graph_spec.lower_bound_shapes_[input_name] = std::move(input_shape);
           }
-          graph_spec.lower_bound_shapes_[input_name] = std::move(input_shape);
         }
       } else {
         graph_spec.lower_bound_batch_size_ = graph_spec.batch_size_;
