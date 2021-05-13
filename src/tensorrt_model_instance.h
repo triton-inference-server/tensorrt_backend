@@ -28,7 +28,7 @@
 #include "tensorrt_model.h"
 #include "triton/backend/backend_model_instance.h"
 
-#include <vector>
+#include <set>
 
 namespace triton { namespace backend { namespace tensorrt {
 
@@ -40,11 +40,11 @@ class TensorRTModelInstance : public BackendModelInstance {
   virtual ~TensorRTModelInstance() = default;
 
   TensorRTModel* Model() { return tensorrt_model_; }
-  std::vector<std::string>& ProfileNames() { return profile_names_; }
+  std::set<std::string>& ProfileNames() { return profile_names_; }
 
  protected:
   TensorRTModel* tensorrt_model_;
-  std::vector<std::string> profile_names_;
+  std::set<std::string> profile_names_;
 };
 
 }}}  // namespace triton::backend::tensorrt

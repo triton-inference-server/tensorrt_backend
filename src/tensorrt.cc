@@ -325,7 +325,7 @@ ModelState::CreateEngine(
               .first;
   }
   if (eit->second.second == nullptr) {
-    // Create a CUDA engine shared by all contexts
+    // Create a CUDA engine shared by all instances on de device
     auto cuerr = cudaSetDevice(gpu_device);
     if (cuerr != cudaSuccess) {
       return TRITONSERVER_ErrorNew(
@@ -361,7 +361,6 @@ ModelState::CreateEngine(
       // Set to engine to 'nullptr' as hint, but keeping runtime as it
       // can be used repeatedly
       if (eit->second.second != nullptr) {
-        eit->second.second->destroy();
         eit->second.second = nullptr;
       }
     }
@@ -375,6 +374,13 @@ ModelState::CreateEngine(
 TRITONSERVER_Error*
 ModelState::ValidateModelConfig()
 {
+  // We have the json DOM for the model configuration...
+  triton::common::TritonJson::WriteBuffer buffer;
+  RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_VERBOSE,
+      (std::string("model configuration:\n") + buffer.Contents()).c_str());
+
   return nullptr;  // success
 }
 
@@ -798,6 +804,8 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), model_path, (*state)->EnginePtr()));
+  std::cerr << "A1 " << (*state)->Engine() << std::endl;
+  std::cerr << "turant " << (*state)->Engine()->getNbOptimizationProfiles() << std::endl;
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -2389,6 +2397,7 @@ ModelInstanceState::RegisterSlots()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
+  std::cerr << "Tebug " << engine_ << std::endl; 
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
 
@@ -2408,12 +2417,8 @@ ModelInstanceState::InitOptimizationProfiles()
     num_expected_bindings_ = total_bindings_ / total_profiles;
   }
 
-  // FIXME: Get the profile names here. Using empty for now which will
-  // slect the first profile by default.
-  std::set<std::string> profile_names;
-
   // No optimization profile is set for this TensorRT plan
-  if ((total_profiles == 0) || profile_names.empty()) {
+  if ((total_profiles == 0) || ProfileNames().empty()) {
     auto it =
         trt_contexts_
             .emplace(
@@ -2444,7 +2449,8 @@ ModelInstanceState::InitOptimizationProfiles()
     }
   } else {
     // Create one TRT context for each specified profile
-    for (const auto& profile_name : profile_names) {
+    for (const auto& profile_name : ProfileNames()) {
+      std::cerr << "Tebuggggg =====> " << profile_name << std::endl;
       int profile_index = 0;
       RETURN_IF_ERROR(GetProfileIndex(profile_name, &profile_index));
       auto res = trt_contexts_.emplace(
@@ -3942,7 +3948,7 @@ ModelInstanceState::InitializeGraphSpecs(
       RETURN_IF_ERROR(config_spec.MemberAsArray("input", &inputs));
       for (size_t j = 0; j < inputs.ArraySize(); j++) {
         triton::common::TritonJson::Value input;
-        RETURN_IF_ERROR(config_inputs.IndexAsObject(j, &input));
+        RETURN_IF_ERROR(inputs.IndexAsObject(j, &input));
         std::string input_name;
         RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
         std::vector<int64_t> input_shape;
@@ -3965,7 +3971,7 @@ ModelInstanceState::InitializeGraphSpecs(
         RETURN_IF_ERROR(lower_bound_spec.MemberAsArray("input", &inputs));
         for (size_t j = 0; j < inputs.ArraySize(); j++) {
           triton::common::TritonJson::Value input;
-          RETURN_IF_ERROR(config_inputs.IndexAsObject(j, &input));
+          RETURN_IF_ERROR(inputs.IndexAsObject(j, &input));
           std::string input_name;
           RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
           std::vector<int64_t> input_shape;
@@ -4418,8 +4424,8 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // Set the execution policy as device blocking for the backend.
-  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
-      backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
+  // RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
+  //    backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
 
   return nullptr;  // success
 }

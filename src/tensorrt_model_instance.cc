@@ -34,7 +34,14 @@ TensorRTModelInstance::TensorRTModelInstance(
     : BackendModelInstance(tensorrt_model, triton_model_instance),
       tensorrt_model_(tensorrt_model)
 {
-  // FIXME; Populate the profile names
+  uint32_t profile_count;
+  THROW_IF_BACKEND_MODEL_ERROR(TRITONBACKEND_ModelInstanceProfileCount(triton_model_instance, &profile_count));
+  for (uint32_t index = 0; index < profile_count;  index++) {
+    const char* profile_name;
+    THROW_IF_BACKEND_MODEL_ERROR(TRITONBACKEND_ModelInstanceProfileName(triton_model_instance, index, &profile_name));
+    profile_names_.insert(profile_name);
+  }
 }
+
 
 }}}  // namespace triton::backend::tensorrt
