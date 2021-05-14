@@ -325,7 +325,7 @@ ModelState::CreateEngine(
               .first;
   }
   if (eit->second.second == nullptr) {
-    // Create a CUDA engine shared by all instances on de device
+    // Create a CUDA engine shared by all instances on a device
     auto cuerr = cudaSetDevice(gpu_device);
     if (cuerr != cudaSuccess) {
       return TRITONSERVER_ErrorNew(
@@ -804,9 +804,6 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), model_path, (*state)->EnginePtr()));
-  std::cerr << "A1 " << (*state)->Engine() << std::endl;
-  std::cerr << "turant " << (*state)->Engine()->getNbOptimizationProfiles()
-            << std::endl;
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -2398,7 +2395,6 @@ ModelInstanceState::RegisterSlots()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
-  std::cerr << "Tebug " << engine_ << std::endl;
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
 
@@ -2451,7 +2447,6 @@ ModelInstanceState::InitOptimizationProfiles()
   } else {
     // Create one TRT context for each specified profile
     for (const auto& profile_name : ProfileNames()) {
-      std::cerr << "Tebuggggg =====> " << profile_name << std::endl;
       int profile_index = 0;
       RETURN_IF_ERROR(GetProfileIndex(profile_name, &profile_index));
       auto res = trt_contexts_.emplace(
@@ -2477,8 +2472,8 @@ ModelInstanceState::InitOptimizationProfiles()
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
         }
-        if (!res.first->second.context_->setOptimizationProfileAsync(
-                profile_index, CudaStream())) {
+        if (!res.first->second.context_->setOptimizationProfile(
+                profile_index)) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INVALID_ARG,
               (std::string("Can not set the specified optimization "
@@ -2990,12 +2985,12 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       std::string io_data_type;
       RETURN_IF_ERROR(io.MemberAsString("data_type", &io_data_type));
 
-      if (io_data_type.compare("INT32") != 0) {
+      if (io_data_type.compare("TYPE_INT32") != 0) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("unexpected datatype '") + io_data_type +
              "  in model configuration for shape output '" + io_name +
-             "', expecting INT32 for " + Name())
+             "', expecting TYPE_INT32 for " + Name())
                 .c_str());
       }
 
@@ -3238,7 +3233,7 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
         byte_size = GetByteSize(dt, dim_vec);
       } else {
         std::vector<int64_t> dim_vec;
-        DimsJsonToDimVec(model_config_dims, &dim_vec);
+        RETURN_IF_ERROR(DimsJsonToDimVec(model_config_dims, &dim_vec));
         std::vector<int64_t> dim_vec_with_mbs;
         if (support_batching_) {
           dim_vec_with_mbs.push_back(model_state_->MaxBatchSize());
@@ -3456,7 +3451,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     int64_t byte_size = 0;
 
     std::vector<int64_t> config_dims_vec;
-    DimsJsonToDimVec(input_dims, &config_dims_vec);
+    RETURN_IF_ERROR(DimsJsonToDimVec(input_dims, &config_dims_vec));
 
     if (UseTensorRTv2API(engine_)) {
       std::vector<int64_t> maximum_dims;
@@ -3643,7 +3638,7 @@ ModelInstanceState::InitializeShapeInputBinding(
           (std::string("unexpected datatype '") +
            TRITONSERVER_DataTypeString(input_datatype) +
            "  in model configuration for shape input '" + input_name +
-           "', expecting INT32 for " + Name())
+           "', expecting TYPE_INT32 for " + Name())
               .c_str());
     }
 
@@ -3951,8 +3946,7 @@ ModelInstanceState::InitializeGraphSpecs(
         RETURN_IF_ERROR(inputs.Members(&input_names));
         for (const auto& input_name : input_names) {
           common::TritonJson::Value input;
-          RETURN_IF_ERROR(
-              inputs.MemberAsObject(input_name.c_str(), &input));
+          RETURN_IF_ERROR(inputs.MemberAsObject(input_name.c_str(), &input));
           std::vector<int64_t> input_shape;
           common::TritonJson::Value dims;
           RETURN_IF_ERROR(input.MemberAsArray("dim", &dims));
@@ -3976,8 +3970,7 @@ ModelInstanceState::InitializeGraphSpecs(
           RETURN_IF_ERROR(inputs.Members(&input_names));
           for (const auto& input_name : input_names) {
             common::TritonJson::Value input;
-            RETURN_IF_ERROR(
-                inputs.MemberAsObject(input_name.c_str(), &input));
+            RETURN_IF_ERROR(inputs.MemberAsObject(input_name.c_str(), &input));
             std::vector<int64_t> input_shape;
             common::TritonJson::Value dims;
             RETURN_IF_ERROR(input.MemberAsArray("dim", &dims));

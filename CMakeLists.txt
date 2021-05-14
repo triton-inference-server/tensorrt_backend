@@ -130,7 +130,7 @@ target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_11)
 target_compile_options(
   triton-tensorrt-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror>
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror -Wno-deprecated-declarations>
 )
 
 # C/C++ defines that are used directly by this backend.
@@ -156,7 +156,8 @@ FOREACH(p ${TRITON_TENSORRT_LIB_PATHS})
     set(TRITON_TENSORRT_LDFLAGS ${TRITON_TENSORRT_LDFLAGS} "-L${p}")
 ENDFOREACH(p)
 
-
+find_library(NVINFER_LIBRARY NAMES nvinfer)
+find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin)
 target_link_libraries(
   triton-tensorrt-backend
   PRIVATE
@@ -164,6 +165,8 @@ target_link_libraries(
     triton-core-serverstub  # from repo-core
     triton-backend-utils    # from repo-backend
     -lpthread
+    ${NVINFER_LIBRARY}
+    ${NVINFER_PLUGIN_LIBRARY}
 )
 
 target_link_libraries(

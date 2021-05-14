@@ -421,16 +421,17 @@ DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims)
   }
 }
 
-void
+TRITONSERVER_Error*
 DimsJsonToDimVec(
     common::TritonJson::Value& dims_json, std::vector<int64_t>* dims)
 {
   dims->clear();
   for (size_t i = 0; i < dims_json.ArraySize(); i++) {
     int64_t dim;
-    dims_json.IndexAsInt(i, &dim);
+    RETURN_IF_ERROR(dims_json.IndexAsInt(i, &dim));
     dims->push_back(dim);
   }
+  return nullptr;
 }
 
 
@@ -491,7 +492,11 @@ const std::string
 DimsJsonToString(common::TritonJson::Value& dims)
 {
   std::vector<int64_t> dims_vec;
-  DimsJsonToDimVec(dims, &dims_vec);
+  auto err = DimsJsonToDimVec(dims, &dims_vec);
+  if (err != nullptr) {
+    TRITONSERVER_ErrorDelete(err);
+    return std::string("UNPARSABLE");
+  }
   return ShapeToString(dims_vec);
 }
 
