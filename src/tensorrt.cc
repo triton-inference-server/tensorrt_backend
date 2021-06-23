@@ -486,7 +486,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   }
 
   // For batching support, the number of dimensions specified in model config
-  // match should be 1 less than the number of dimensions specified in engine.
+  // should be 1 less than the number of dimensions present in engine.
   // Will use that as a hint to ascertain whether or not to enable batching.
   bool config_batch_hint = false;
   // The number of IO Tensors with shape specification in config
@@ -538,7 +538,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     max_batch_size = engine->getMaxBatchSize();
   } else {
     // Assuming the first dimension to be batch dimension, until and unless
-    // proven otherwise.
+    // proven the batching is not supported.
     RETURN_IF_ERROR(
         GetMaxSupportedBatchSize(engine, num_profiles, &max_batch_size));
   }
@@ -546,8 +546,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   if (config_batch_hint && max_batch_size == 0) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
-        (std::string("unable to autofill for '") + Name() +
-         "', model tensor  shape configuration hints for dynamic batching "
+        (std::string("autofill failed for model '") + Name() +
+         "': model tensor shape configuration hints for dynamic batching "
          "but the underlying engine doesn't support batching.")
             .c_str());
   } else if (tensors_with_config_shape_cnt != 0 && !config_batch_hint) {
@@ -568,8 +568,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   } else if (MaxBatchSize() > max_batch_size) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
-        (std::string("unable to autofill for '") + Name() +
-         "', configuration specified max-batch " +
+        (std::string("autofill failed for model '") + Name() +
+         "': configuration specified max-batch " +
          std::to_string(MaxBatchSize()) +
          " but TensorRT engine only supports max-batch " +
          std::to_string(max_batch_size))
