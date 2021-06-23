@@ -223,6 +223,28 @@ class ModelState : public TensorRTModel {
 
   // Auto-complete the model configuration
   TRITONSERVER_Error* AutoCompleteConfig();
+  TRITONSERVER_Error* AutoCompleteConfigHelper(const std::string& model_path);
+  TRITONSERVER_Error* GetMaxSupportedBatchSize(
+      nvinfer1::ICudaEngine* engine, const int num_profiles,
+      int* max_batch_size);
+  TRITONSERVER_Error* GetProfileIndices(
+      const int num_profiles, std::set<int>* profile_indices);
+  TRITONSERVER_Error* GetProfileMaxBatchSize(
+      nvinfer1::ICudaEngine* engine, int profile_index, int* max_batch_size);
+  TRITONSERVER_Error* ExtractBatchHintFromIOConfig(
+      nvinfer1::ICudaEngine* engine, const std::string& tensor_name,
+      const common::TritonJson::Value& dims, bool* config_batch_hint);
+  TRITONSERVER_Error* GetRefIO(
+      const bool is_input, nvinfer1::ICudaEngine* engine,
+      triton::common::TritonJson::Value* ref_io);
+  TRITONSERVER_Error* InitIODims(
+      nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims,
+      bool is_shape_binding, triton::common::TritonJson::Value* io);
+  TRITONSERVER_Error* FixIO(
+      nvinfer1::ICudaEngine* engine,
+      triton::common::TritonJson::Value& reference_ios,
+      triton::common::TritonJson::Value* mutable_ios);
+
 
   // Validate that model configuration is supported by this backend.
   TRITONSERVER_Error* ValidateModelConfig();
@@ -394,15 +416,500 @@ ModelState::ParseParameters()
 TRITONSERVER_Error*
 ModelState::AutoCompleteConfig()
 {
-  // TODO: Add the support for auto completing config for this
-  // backend.
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_WARN,
-      (std::string("skipping model configuration auto-complete for '") +
-       Name() + "': not supported for this tensorrt backend")
-          .c_str());
+  std::string artifact_name;
+  RETURN_IF_ERROR(
+      ModelConfig().MemberAsString("default_model_filename", &artifact_name));
+
+  // If the model configuration doesn't have an explicit model file specified
+  // then use the default name ("model.plan").
+  std::string cc_model_filename = artifact_name;
+  if (cc_model_filename.empty()) {
+    cc_model_filename = "model.plan";
+  }
+
+  std::string model_path = JoinPath(
+      {RepositoryPath(), std::to_string(Version()), cc_model_filename});
+
+  RETURN_IF_ERROR(AutoCompleteConfigHelper(model_path));
+
+  if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
+    triton::common::TritonJson::WriteBuffer buffer;
+    RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("post auto-complete:\n") + buffer.Contents()).c_str());
+  }
 
   return nullptr;  // success
+}
+
+TRITONSERVER_Error*
+ModelState::AutoCompleteConfigHelper(const std::string& model_path)
+{
+  nvinfer1::IRuntime* runtime = nullptr;
+  nvinfer1::ICudaEngine* engine = nullptr;
+  if (LoadPlan(model_path, &runtime, &engine) != nullptr) {
+    if (engine != nullptr) {
+      engine->destroy();
+      engine = nullptr;
+    }
+    if (runtime != nullptr) {
+      runtime->destroy();
+      runtime = nullptr;
+    }
+    TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string(
+             "unable to load plan file to auto complete config: " + model_path)
+             .c_str()));
+  }
+
+  // If the model configuration already specifies inputs and outputs
+  // then don't perform any auto-completion.
+  size_t input_cnt = 0;
+  size_t output_cnt = 0;
+  {
+    triton::common::TritonJson::Value inputs;
+    if (ModelConfig().Find("input", &inputs)) {
+      input_cnt = inputs.ArraySize();
+    }
+
+    triton::common::TritonJson::Value config_batch_inputs;
+    if (ModelConfig().Find("batch_input", &config_batch_inputs)) {
+      input_cnt += config_batch_inputs.ArraySize();
+    }
+
+    triton::common::TritonJson::Value outputs;
+    if (ModelConfig().Find("output", &outputs)) {
+      output_cnt = outputs.ArraySize();
+    }
+  }
+
+  // For batching support, the number of dimensions specified in model config
+  // match should be 1 less than the number of dimensions specified in engine.
+  // Will use that as a hint to ascertain whether or not to enable batching.
+  bool config_batch_hint = false;
+  // The number of IO Tensors with shape specification in config
+  int tensors_with_config_shape_cnt = 0;
+
+  if ((input_cnt != 0) || (output_cnt != 0)) {
+    std::vector<std::string> io_types{"input", "output"};
+    for (const auto& io_type : io_types) {
+      triton::common::TritonJson::Value config_io;
+      RETURN_IF_ERROR(ModelConfig().MemberAsArray(io_type.c_str(), &config_io));
+      for (size_t i = 0; i < config_io.ArraySize(); i++) {
+        triton::common::TritonJson::Value io;
+        RETURN_IF_ERROR(config_io.IndexAsObject(i, &io));
+        common::TritonJson::Value dims;
+        io.MemberAsArray("dims", &dims);
+        if (dims.ArraySize() != 0) {
+          tensors_with_config_shape_cnt++;
+        }
+        std::string name;
+        RETURN_IF_ERROR(io.MemberAsString("name", &name));
+        RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
+            engine, name, dims, &config_batch_hint));
+      }
+    }
+  }
+
+  // Validate cases with incomplete input and output shapes
+  int num_profile_bindings = 0;
+  int num_profiles = 0;
+  if (!UseTensorRTv2API(engine)) {
+    num_profile_bindings = engine->getNbBindings();
+  } else {
+    num_profiles = engine->getNbOptimizationProfiles();
+    num_profile_bindings = engine->getNbBindings() / num_profiles;
+  }
+  if (tensors_with_config_shape_cnt != 0 &&
+      tensors_with_config_shape_cnt != num_profile_bindings) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to autofill for '") + Name() +
+         "', either all model tensor configuration should specify their "
+         "dims or none.")
+            .c_str());
+  }
+
+  int max_batch_size = 0;
+  if (engine->hasImplicitBatchDimension()) {
+    // If engine has implicit batch dimension then retrieve the value and exit
+    max_batch_size = engine->getMaxBatchSize();
+  } else {
+    // Assuming the first dimension to be batch dimension, until and unless
+    // proven otherwise.
+    RETURN_IF_ERROR(
+        GetMaxSupportedBatchSize(engine, num_profiles, &max_batch_size));
+  }
+
+  if (config_batch_hint && max_batch_size == 0) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to autofill for '") + Name() +
+         "', model tensor  shape configuration hints for dynamic batching "
+         "but the underlying engine doesn't support batching.")
+            .c_str());
+  } else if (tensors_with_config_shape_cnt != 0 && !config_batch_hint) {
+    // if no hint for batching in config io
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_WARN,
+        (std::string("The specified dimensions in model config for ") + Name() +
+         " hints that batching is unavailable")
+            .c_str());
+    max_batch_size = 0;
+  }
+
+  if (MaxBatchSize() == 0) {
+    triton::common::TritonJson::Value mbs_value;
+    ModelConfig().Find("max_batch_size", &mbs_value);
+    mbs_value.SetInt(max_batch_size);
+    SetMaxBatchSize(max_batch_size);
+  } else if (MaxBatchSize() > max_batch_size) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to autofill for '") + Name() +
+         "', configuration specified max-batch " +
+         std::to_string(MaxBatchSize()) +
+         " but TensorRT engine only supports max-batch " +
+         std::to_string(max_batch_size))
+            .c_str());
+  }
+
+  triton::common::TritonJson::Value ref_inputs(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  RETURN_IF_ERROR(GetRefIO(true /*is_input*/, engine, &ref_inputs));
+  triton::common::TritonJson::Value mutable_inputs(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  bool found_inputs = ModelConfig().Find("input", &mutable_inputs);
+  RETURN_IF_ERROR(FixIO(engine, ref_inputs, &mutable_inputs));
+  if (!found_inputs) {
+    ModelConfig().Add("input", std::move(mutable_inputs));
+  }
+
+  triton::common::TritonJson::Value ref_outputs(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  RETURN_IF_ERROR(GetRefIO(false /*is_input*/, engine, &ref_outputs));
+  triton::common::TritonJson::Value mutable_outputs(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  bool found_outputs = ModelConfig().Find("output", &mutable_outputs);
+  RETURN_IF_ERROR(FixIO(engine, ref_outputs, &mutable_outputs));
+  if (!found_outputs) {
+    ModelConfig().Add("output", std::move(mutable_outputs));
+  }
+
+  if (engine != nullptr) {
+    engine->destroy();
+    engine = nullptr;
+  }
+  if (runtime != nullptr) {
+    runtime->destroy();
+    runtime = nullptr;
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::GetMaxSupportedBatchSize(
+    nvinfer1::ICudaEngine* engine, const int num_profiles, int* max_batch_size)
+{
+  std::set<int> profile_indices;
+  RETURN_IF_ERROR(GetProfileIndices(num_profiles, &profile_indices));
+
+  int running_max = 0;
+  for (const auto profile_index : profile_indices) {
+    int max_profile_batch_size;
+    RETURN_IF_ERROR(
+        GetProfileMaxBatchSize(engine, profile_index, &max_profile_batch_size));
+    if (max_profile_batch_size > running_max) {
+      running_max = max_profile_batch_size;
+    }
+  }
+
+  *max_batch_size = running_max;
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::GetProfileIndices(
+    const int num_profiles, std::set<int>* profile_indices)
+{
+  common::TritonJson::Value groups;
+  RETURN_IF_ERROR(ModelConfig().MemberAsArray("instance_group", &groups));
+  for (size_t i = 0; i < groups.ArraySize(); i++) {
+    common::TritonJson::Value group;
+    RETURN_IF_ERROR(groups.IndexAsObject(i, &group));
+    common::TritonJson::Value profiles;
+    RETURN_IF_ERROR(group.MemberAsArray("profile", &profiles));
+    for (size_t j = 0; j < profiles.ArraySize(); j++) {
+      std::string profile;
+      RETURN_IF_ERROR(profiles.IndexAsString(i, &profile));
+      int profile_idx;
+      RETURN_IF_ERROR(GetProfileIndex(profile, &profile_idx));
+      if (profile_idx < 0 || profile_idx >= num_profiles) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("unable to autofill for '") + Name() +
+             "', configuration specified invalid profile " + profile +
+             " . Number of profiles supported by TensorRT engine: " +
+             std::to_string(num_profiles))
+                .c_str());
+      }
+      profile_indices->insert(profile_idx);
+    }
+  }
+
+  if (profile_indices->empty()) {
+    // If not specified then use the default.
+    profile_indices->insert(0);
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::GetProfileMaxBatchSize(
+    nvinfer1::ICudaEngine* engine, int profile_index, int* max_batch_size)
+{
+  *max_batch_size = INT_MAX;
+
+  int num_profiles = engine->getNbOptimizationProfiles();
+  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+
+  // Visit all the bindings of the profile to capture the maximum and
+  // minimum batch size supported.
+  for (int binding_index = 0; binding_index < num_profile_bindings;
+       binding_index++) {
+    int effective_binding_index =
+        (profile_index * num_profile_bindings) + binding_index;
+    if (engine->bindingIsInput(effective_binding_index)) {
+      if (!engine->isShapeBinding(effective_binding_index)) {
+        nvinfer1::Dims max_shape = engine->getProfileDimensions(
+            effective_binding_index, profile_index,
+            nvinfer1::OptProfileSelector::kMAX);
+        if (*max_batch_size > max_shape.d[0]) {
+          *max_batch_size = max_shape.d[0];
+        }
+
+      } else {
+        const int32_t* max_shapes = engine->getProfileShapeValues(
+            effective_binding_index, profile_index,
+            nvinfer1::OptProfileSelector::kMAX);
+        if (*max_batch_size > *max_shapes) {
+          *max_batch_size = *max_shapes;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::ExtractBatchHintFromIOConfig(
+    nvinfer1::ICudaEngine* engine, const std::string& tensor_name,
+    const common::TritonJson::Value& dims, bool* config_batch_hint)
+{
+  // look up corresponding io info from model
+  int num_profiles = engine->getNbOptimizationProfiles();
+  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+
+  for (int binding_index = 0; binding_index < num_profile_bindings;
+       binding_index++) {
+    if (tensor_name == engine->getBindingName(binding_index)) {
+      nvinfer1::Dims shape = engine->getBindingDimensions(binding_index);
+      bool should_batch;
+      if (!engine->isShapeBinding(binding_index)) {
+        should_batch = (shape.nbDims == ((int32_t)dims.ArraySize() + 1));
+      } else {
+        int64_t first_dim;
+        RETURN_IF_ERROR(dims.IndexAsInt(0, &first_dim));
+        should_batch = (shape.d[0] == (first_dim + 1));
+      }
+      if (should_batch) {
+        *config_batch_hint = true;
+      }
+      if (*config_batch_hint && (!should_batch)) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("unable to autofill for '") + Name() +
+             "', model tensor configurations are contradicting " +
+             "each other in terms of whether batching is supported")
+                .c_str());
+      }
+    }
+  }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::GetRefIO(
+    const bool is_input, nvinfer1::ICudaEngine* engine,
+    triton::common::TritonJson::Value* ref_io)
+{
+  int num_profiles = engine->getNbOptimizationProfiles();
+  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+
+  for (int i = 0; i < num_profile_bindings; ++i) {
+    nvinfer1::Dims dims = engine->getBindingDimensions(i);
+    bool is_shape_binding = engine->isShapeBinding(i);
+    if ((is_input && (!engine->bindingIsInput(i))) ||
+        ((!is_input) && (engine->bindingIsInput(i)))) {
+      continue;
+    }
+    triton::common::TritonJson::Value io(
+        ModelConfig(), triton::common::TritonJson::ValueType::OBJECT);
+    std::string input_name{engine->getBindingName(i)};
+    RETURN_IF_ERROR(
+        io.AddString("name", input_name.substr(0, input_name.find(" "))));
+    RETURN_IF_ERROR(io.AddString(
+        "data_type",
+        ConvertTrtTypeToConfigDataType(engine->getBindingDataType(i))));
+    RETURN_IF_ERROR(InitIODims(engine, dims, is_shape_binding, &io));
+    RETURN_IF_ERROR(io.AddBool("is_shape_tensor", is_shape_binding));
+
+    RETURN_IF_ERROR(ref_io->Append(std::move(io)));
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::InitIODims(
+    nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims, bool is_shape_binding,
+    triton::common::TritonJson::Value* io)
+{
+  bool skip_first =
+      (MaxBatchSize() != 0) && (!engine->hasImplicitBatchDimension());
+  triton::common::TritonJson::Value config_dims(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  if (!is_shape_binding) {
+    for (int didx = (skip_first ? 1 : 0); didx < dims.nbDims; ++didx) {
+      RETURN_IF_ERROR(config_dims.AppendInt(dims.d[didx]));
+    }
+    // If tensor dims are empty then must use a reshape for the
+    // tensor, since 'dims' is not allowed to be empty.
+    if (config_dims.ArraySize() == 0) {
+      RETURN_IF_ERROR(config_dims.AppendInt(1));
+      triton::common::TritonJson::Value reshape(
+          ModelConfig(), triton::common::TritonJson::ValueType::OBJECT);
+      triton::common::TritonJson::Value reshape_dims(
+          ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+      RETURN_IF_ERROR(reshape.Add("shape", std::move(reshape_dims)));
+      RETURN_IF_ERROR(io->Add("reshape", std::move(reshape)));
+    }
+  } else {
+    if (dims.nbDims != 0) {
+      if (skip_first) {
+        RETURN_IF_ERROR(config_dims.AppendInt(dims.d[0] - 1));
+      } else {
+        RETURN_IF_ERROR(config_dims.AppendInt(dims.d[0]));
+      }
+    }
+  }
+  RETURN_IF_ERROR(io->Add("dims", std::move(config_dims)));
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelState::FixIO(
+    nvinfer1::ICudaEngine* engine,
+    triton::common::TritonJson::Value& reference_ios,
+    triton::common::TritonJson::Value* mutable_ios)
+{
+  if (mutable_ios->ArraySize() == 0) {
+    RETURN_IF_ERROR(mutable_ios->Swap(reference_ios));
+  } else {
+    for (size_t i = 0; i < mutable_ios->ArraySize(); i++) {
+      triton::common::TritonJson::Value mutable_io;
+      RETURN_IF_ERROR(mutable_ios->IndexAsObject(i, &mutable_io));
+      std::string io_name;
+      RETURN_IF_ERROR(mutable_io.MemberAsString("name", &io_name));
+      for (size_t j = 0; j < reference_ios.ArraySize(); j++) {
+        triton::common::TritonJson::Value io_ref;
+        RETURN_IF_ERROR(reference_ios.IndexAsObject(j, &io_ref));
+        std::string ref_name;
+        RETURN_IF_ERROR(io_ref.MemberAsString("name", &ref_name));
+        if (io_name.compare(ref_name) == 0) {
+          // only set type and shape if they are not set
+          common::TritonJson::Value data_type;
+          if (mutable_io.Find("data_type", &data_type)) {
+            std::string dt_str;
+            RETURN_IF_ERROR(data_type.AsString(&dt_str));
+            if (dt_str.empty()) {
+              common::TritonJson::Value ref_data_type;
+              RETURN_IF_ERROR(
+                  io_ref.MemberAsObject("data_type", &ref_data_type));
+              RETURN_IF_ERROR(data_type.Swap(ref_data_type));
+            }
+          } else {
+            std::string ref_data_type;
+            RETURN_IF_ERROR(io_ref.MemberAsString("data_type", &ref_data_type));
+            RETURN_IF_ERROR(mutable_io.AddString("data_type", ref_data_type));
+          }
+
+          common::TritonJson::Value dims;
+          if (mutable_io.Find("dims", &dims)) {
+            if (dims.ArraySize() == 0) {
+              common::TritonJson::Value ref_dims;
+              RETURN_IF_ERROR(io_ref.MemberAsObject("dims", &ref_dims));
+              RETURN_IF_ERROR(dims.Swap(ref_dims));
+              common::TritonJson::Value reshape;
+              if (io_ref.Find("reshape", &reshape)) {
+                mutable_io.Add("reshape", std::move(reshape));
+              }
+            }
+          } else {
+            common::TritonJson::Value ref_dims;
+            RETURN_IF_ERROR(io_ref.MemberAsObject("dims", &ref_dims));
+            RETURN_IF_ERROR(mutable_io.Add("dims", std::move(ref_dims)));
+            common::TritonJson::Value reshape;
+            if (io_ref.Find("reshape", &reshape)) {
+              mutable_io.Add("reshape", std::move(reshape));
+            }
+          }
+
+          // Check if the IO is a shape tensor.
+          bool is_shape_tensor = false;
+          int io_index = engine->getBindingIndex(io_name.c_str());
+          if (io_index == -1) {
+            return TRITONSERVER_ErrorNew(
+                TRITONSERVER_ERROR_INVALID_ARG,
+                (std::string("binding for '") + io_name +
+                 "' not found in the model.")
+                    .c_str());
+          }
+          is_shape_tensor = engine->isShapeBinding(io_index);
+
+          common::TritonJson::Value shape_tensor;
+          if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
+            bool shape_tensor_val;
+            RETURN_IF_ERROR(shape_tensor.AsBool(&shape_tensor_val));
+            if (shape_tensor_val && (!is_shape_tensor)) {
+              return TRITONSERVER_ErrorNew(
+                  TRITONSERVER_ERROR_INVALID_ARG,
+                  (std::string("'") + io_name +
+                   "' is incorrectly specified as a shape tensor.")
+                      .c_str());
+            } else if (!shape_tensor_val && is_shape_tensor) {
+              return TRITONSERVER_ErrorNew(
+                  TRITONSERVER_ERROR_INVALID_ARG,
+                  (std::string("'") + io_name +
+                   "' is incorrectly specified as an execution tensor.")
+                      .c_str());
+            }
+          } else {
+            mutable_io.AddBool("is_shape_tensor", is_shape_tensor);
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  return nullptr;
 }
 
 //

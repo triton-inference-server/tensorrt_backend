@@ -49,6 +49,25 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
   return TRITONSERVER_TYPE_INVALID;
 }
 
+std::string
+ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
+{
+  switch (trt_type) {
+    case nvinfer1::DataType::kFLOAT:
+      return "TYPE_FP32";
+    case nvinfer1::DataType::kHALF:
+      return "TYPE_FP16";
+    case nvinfer1::DataType::kINT8:
+      return "TYPE_INT8";
+    case nvinfer1::DataType::kINT32:
+      return "TYPE_INT32";
+    case nvinfer1::DataType::kBOOL:
+      return "TYPE_BOOL";
+  }
+
+  return "TYPE_INVALID";
+}
+
 bool
 UseTensorRTv2API(const nvinfer1::ICudaEngine* engine)
 {

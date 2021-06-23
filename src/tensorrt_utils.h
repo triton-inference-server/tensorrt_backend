@@ -42,6 +42,8 @@ TRITONSERVER_Error* GetProfileIndex(
 
 TRITONSERVER_DataType ConvertTrtTypeToDataType(nvinfer1::DataType trt_type);
 
+std::string ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type);
+
 std::pair<bool, nvinfer1::DataType> ConvertDataTypeToTrtType(
     const TRITONSERVER_DataType& dtype);
 
