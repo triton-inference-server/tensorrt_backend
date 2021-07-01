@@ -712,7 +712,7 @@ ModelState::ExtractBatchHintFromIOConfig(
       if (!engine->isShapeBinding(binding_index)) {
         should_batch = (shape.nbDims == ((int32_t)dims.ArraySize() + 1));
       } else {
-        int64_t first_dim;
+        int64_t first_dim = 0;
         RETURN_IF_ERROR(dims.IndexAsInt(0, &first_dim));
         should_batch = (shape.d[0] == (first_dim + 1));
       }
@@ -874,7 +874,7 @@ ModelState::FixIO(
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
-            bool shape_tensor_val;
+            bool shape_tensor_val= false;
             RETURN_IF_ERROR(shape_tensor.AsBool(&shape_tensor_val));
             if (shape_tensor_val && (!is_shape_tensor)) {
               return TRITONSERVER_ErrorNew(
