@@ -212,12 +212,6 @@ class ModelState : public TensorRTModel {
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
 
-  std::map<int, std::shared_ptr<triton::common::SyncQueue<size_t>>>*
-  AvailableSlotsPerDeviceQueue()
-  {
-    return &available_slots_per_device_queue_;
-  };
-
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
@@ -256,11 +250,6 @@ class ModelState : public TensorRTModel {
   std::map<int, std::pair<nvinfer1::IRuntime*, nvinfer1::ICudaEngine*>>
       device_engines_;
   bool engine_sharing_;
-
-  // vector for storing available slots associated with a
-  // device
-  std::map<int, std::shared_ptr<triton::common::SyncQueue<size_t>>>
-      available_slots_per_device_queue_;
 };
 
 TRITONSERVER_Error*
@@ -723,7 +712,7 @@ ModelState::ExtractBatchHintFromIOConfig(
       if (!engine->isShapeBinding(binding_index)) {
         should_batch = (shape.nbDims == ((int32_t)dims.ArraySize() + 1));
       } else {
-        int64_t first_dim;
+        int64_t first_dim = 0;
         RETURN_IF_ERROR(dims.IndexAsInt(0, &first_dim));
         should_batch = (shape.d[0] == (first_dim + 1));
       }
@@ -885,7 +874,7 @@ ModelState::FixIO(
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
-            bool shape_tensor_val;
+            bool shape_tensor_val= false;
             RETURN_IF_ERROR(shape_tensor.AsBool(&shape_tensor_val));
             if (shape_tensor_val && (!is_shape_tensor)) {
               return TRITONSERVER_ErrorNew(
@@ -946,7 +935,7 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   void Run(
       TRITONBACKEND_Request** requests, const uint32_t request_count,
-      const size_t allocated_slot);
+      const size_t context_idx);
 
  private:
   struct TensorRTContext;
@@ -955,7 +944,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       ModelState* model_state,
       TRITONBACKEND_ModelInstance* triton_model_instance);
 
-  void RegisterSlots();
+  void RegisterContexts();
   TRITONSERVER_Error* InitStreamsAndEvents();
   TRITONSERVER_Error* InitEventSet(bool busy_wait_events);
   TRITONSERVER_Error* DestroyEventSet();
@@ -1176,16 +1165,19 @@ class ModelInstanceState : public TensorRTModelInstance {
   // executions' event states.
   std::thread completion_thread_;
 
+  triton::common::SyncQueue<size_t> context_queue_;
+  size_t next_context_idx_;
+
   // The details needed by the completion thread to finalize the
   // response for a model execution.
   struct Payload {
     explicit Payload(
         size_t event_set_idx, TRITONBACKEND_Request** requests,
-        uint32_t request_count, size_t allocated_slot)
+        uint32_t request_count, size_t context_idx)
         : event_set_idx_(event_set_idx), total_batch_size_(0),
           compute_start_ns_(0), compute_input_end_ns_(0),
           compute_output_start_ns_(0), requests_(requests),
-          request_count_(request_count), allocated_slot_(allocated_slot)
+          request_count_(request_count), context_idx_(context_idx)
     {
     }
 
@@ -1203,9 +1195,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     // All the composing InferenceRequest objects
     TRITONBACKEND_Request** requests_;
     uint32_t request_count_;
-    size_t allocated_slot_;
-
-    std::promise<void>* barrier_;
+    size_t context_idx_;
 
     // All the generated InferenceResponse objects
     std::vector<TRITONBACKEND_Response*> responses_;
@@ -1307,7 +1297,7 @@ ModelInstanceState::Create(
             "' for model instance '" + (*state)->Name() + "'");
   }
 
-  (*state)->RegisterSlots();
+  (*state)->RegisterContexts();
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), model_path, (*state)->EnginePtr()));
@@ -1506,27 +1496,9 @@ ModelInstanceState::ProcessRequests(
        std::to_string(request_count) + " requests")
           .c_str());
 
-  const auto& it =
-      model_state_->AvailableSlotsPerDeviceQueue()->find(DeviceId());
-  if (it == model_state_->AvailableSlotsPerDeviceQueue()->end()) {
-    RequestsRespondWithError(
-        requests, request_count,
-        TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            "No available slots queue found for the device"));
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_ERROR,
-        "No available slots queue found for the device... error in "
-        "backend "
-        "logic");
-    return;
-  }
+  auto context_idx = next_context_idx_;
 
-  // Block the execution if there are no available slots for the
-  // device.
-  auto allocated_slot = it->second->Get();
-
-  Run(requests, request_count, allocated_slot);
+  Run(requests, request_count, context_idx);
 
   bool run_failed = true;
   for (size_t i = 0; i < request_count; ++i) {
@@ -1542,29 +1514,25 @@ ModelInstanceState::ProcessRequests(
   if (run_failed) {
     // On inference error, place the slot back to the queue
     // immediately as all works for the slot should be ignored.
-    it->second->Put(allocated_slot);
+    context_queue_.Put(context_idx);
   } else {
     auto event_set_idx = next_set_;
     next_set_ = (event_set_idx + 1) % EVENT_SET_COUNT;
-    std::promise<void> barrier;
-    std::future<void> barrier_future = barrier.get_future();
-    payload_->barrier_ = &barrier;
     // Put the details needed by the ProcessResponse thread on the
     // queue
     completion_queue_.Put(std::move(payload_));
     next_buffer_binding_set_ =
         (next_buffer_binding_set_ + 1) % num_copy_streams_;
-
-    // FIXME.. This is to block the execution till the response is not
-    // ready..
-    barrier_future.wait();
   }
+
+  // Block the execution if there are no available contexts.
+  next_context_idx_ = context_queue_.Get();
 }
 
 void
 ModelInstanceState::Run(
     TRITONBACKEND_Request** requests, const uint32_t request_count,
-    const size_t allocated_slot)
+    const size_t context_idx)
 {
   LOG_MESSAGE(
       TRITONSERVER_LOG_VERBOSE,
@@ -1577,8 +1545,7 @@ ModelInstanceState::Run(
 
   // Need to move the TRITONBACKEND_Request objects as the lifetime
   // must be extended till ProcessResponse completes.
-  payload_.reset(
-      new Payload(next_set_, requests, request_count, allocated_slot));
+  payload_.reset(new Payload(next_set_, requests, request_count, context_idx));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
   cudaSetDevice(DeviceId());
@@ -1715,7 +1682,8 @@ ModelInstanceState::Run(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
       model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
       input_copy_stream_, events_[next_set_].input_ready_,
-      prev_input_ready_event, model_state_->GatherKernelBufferThreshold()));
+      prev_input_ready_event, model_state_->GatherKernelBufferThreshold(),
+      HostPolicyName().c_str()));
   // For each input, concatenate input values from each request into
   // the corresponding binding.
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
@@ -2453,8 +2421,7 @@ ModelInstanceState::ProcessResponse()
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
-    (*(model_state_->AvailableSlotsPerDeviceQueue()))[DeviceId()]->Put(
-        payload->allocated_slot_);
+    context_queue_.Put(payload->context_idx_);
     // FIXME: NVTX
     // NVTX_MARKER("plan_input_available");
 
@@ -2515,8 +2482,6 @@ ModelInstanceState::ProcessResponse()
         (std::string("TRITONBACKEND_ModelExecute: model ") + Name() +
          " released " + std::to_string(payload->request_count_) + " requests")
             .c_str());
-
-    payload->barrier_->set_value();
   }
 }
 
@@ -2875,26 +2840,19 @@ ModelInstanceState::DestroyEventSet()
 }
 
 void
-ModelInstanceState::RegisterSlots()
+ModelInstanceState::RegisterContexts()
 {
-  if (model_state_->AvailableSlotsPerDeviceQueue()->find(DeviceId()) ==
-      model_state_->AvailableSlotsPerDeviceQueue()->end()) {
-    size_t slot_idx = 0;
-    model_state_->AvailableSlotsPerDeviceQueue()->emplace(
-        DeviceId(), new triton::common::SyncQueue<size_t>);
-    (*(model_state_->AvailableSlotsPerDeviceQueue()))[DeviceId()]->Put(
-        slot_idx++);
-    // If eager batching is set, we add additional slots per device
-    // which allows to start preparing next batch before the previous
-    // batch has completed. The number of duplicates are limitedby
-    // number of event sets to prevent too many iterations are run
-    // ahead and to avoid interference of the event communication in
-    // the previous execution
-    if (model_state_->EagerBatching()) {
-      for (int count = 1; count < EVENT_SET_COUNT; ++count) {
-        (*(model_state_->AvailableSlotsPerDeviceQueue()))[DeviceId()]->Put(
-            slot_idx++);
-      }
+  size_t context_idx = 0;
+  context_queue_.Put(context_idx++);
+  // If eager batching is set, we add additional slots per device
+  // which allows to start preparing next batch before the previous
+  // batch has completed. The number of duplicates are limitedby
+  // number of event sets to prevent too many iterations are run
+  // ahead and to avoid interference of the event communication in
+  // the previous execution
+  if (model_state_->EagerBatching()) {
+    for (int count = 1; count < EVENT_SET_COUNT; ++count) {
+      context_queue_.Put(context_idx++);
     }
   }
 }
@@ -4929,8 +4887,8 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // Set the execution policy as device blocking for the backend.
-  // RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
-  //    backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
+  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
+      backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
 
   return nullptr;  // success
 }
@@ -4941,10 +4899,6 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 TRITONSERVER_Error*
 TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
-  // void* vstate;
-  // RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-  // auto config = reinterpret_cast<BackendConfiguration*>(vstate);
-  // delete config;
   return nullptr;  // success
 }
 
