@@ -139,18 +139,31 @@ target_compile_definitions(
     PRIVATE TRITON_ENABLE_GPU=1
 )
 
-set_target_properties(
-  triton-tensorrt-backend
-  PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME ${TRITON_TENSORRT_BACKEND_LIBNAME}
-    SKIP_BUILD_RPATH TRUE
-    BUILD_WITH_INSTALL_RPATH TRUE
-    INSTALL_RPATH_USE_LINK_PATH FALSE
-    INSTALL_RPATH "$\{ORIGIN\}"
-    LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_tensorrt.ldscript
-    LINK_FLAGS "-Wl,--version-script libtriton_tensorrt.ldscript"
-)
+if (WIN32)
+  set_target_properties(
+    triton-tensorrt-backend
+    PROPERTIES
+      POSITION_INDEPENDENT_CODE ON
+      OUTPUT_NAME triton_tensorrt
+      SKIP_BUILD_RPATH TRUE
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH_USE_LINK_PATH FALSE
+      INSTALL_RPATH "$\{ORIGIN\}"
+  )
+else ()
+  set_target_properties(
+    triton-tensorrt-backend
+    PROPERTIES
+      POSITION_INDEPENDENT_CODE ON
+      OUTPUT_NAME ${TRITON_TENSORRT_BACKEND_LIBNAME}
+      SKIP_BUILD_RPATH TRUE
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH_USE_LINK_PATH FALSE
+      INSTALL_RPATH "$\{ORIGIN\}"
+      LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_tensorrt.ldscript
+      LINK_FLAGS "-Wl,--version-script libtriton_tensorrt.ldscript"
+  )
+endif()
 
 FOREACH(p ${TRITON_TENSORRT_LIB_PATHS})
     set(TRITON_TENSORRT_LDFLAGS ${TRITON_TENSORRT_LDFLAGS} "-L${p}")
