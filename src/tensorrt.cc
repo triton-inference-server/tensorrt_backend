@@ -874,7 +874,7 @@ ModelState::FixIO(
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
-            bool shape_tensor_val= false;
+            bool shape_tensor_val = false;
             RETURN_IF_ERROR(shape_tensor.AsBool(&shape_tensor_val));
             if (shape_tensor_val && (!is_shape_tensor)) {
               return TRITONSERVER_ErrorNew(

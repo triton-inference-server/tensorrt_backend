@@ -144,7 +144,7 @@ if (WIN32)
     triton-tensorrt-backend
     PROPERTIES
       POSITION_INDEPENDENT_CODE ON
-      OUTPUT_NAME triton_tensorrt
+      OUTPUT_NAME ${TRITON_TENSORRT_BACKEND_LIBNAME}
       SKIP_BUILD_RPATH TRUE
       BUILD_WITH_INSTALL_RPATH TRUE
       INSTALL_RPATH_USE_LINK_PATH FALSE
@@ -200,14 +200,25 @@ target_link_libraries(
 include(GNUInstallDirs)
 set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/TritonTensorRTBackend)
 
-install(
-  TARGETS
-    triton-tensorrt-backend
-  EXPORT
-    triton-tensorrt-backend-targets
-  LIBRARY DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
-  ARCHIVE DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
-)
+if (NOT WIN32)
+  install(
+    TARGETS
+      triton-tensorrt-backend
+    EXPORT
+      triton-tensorrt-backend-targets
+    LIBRARY DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+    ARCHIVE DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+  )
+else()
+  install(
+    TARGETS
+      triton-tensorrt-backend
+    EXPORT
+      triton-tensorrt-backend-targets
+    RUNTIME DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+    ARCHIVE DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+  )
+endif() # WIN32
 
 install(
   EXPORT
