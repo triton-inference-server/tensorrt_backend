@@ -522,9 +522,11 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   }
 
   int max_batch_size = 0;
+  bool has_implicit_batch_dim = false;
   if (engine->hasImplicitBatchDimension()) {
     // If engine has implicit batch dimension then retrieve the value and exit
     max_batch_size = engine->getMaxBatchSize();
+    has_implicit_batch_dim = true;
   } else {
     // Assuming the first dimension to be batch dimension, until and unless
     // proven the batching is not supported.
@@ -539,7 +541,9 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
          "': model tensor shape configuration hints for dynamic batching "
          "but the underlying engine doesn't support batching.")
             .c_str());
-  } else if (tensors_with_config_shape_cnt != 0 && !config_batch_hint) {
+  } else if (
+      (tensors_with_config_shape_cnt != 0) && (!config_batch_hint) &&
+      (!has_implicit_batch_dim)) {
     // if no hint for batching in config io
     LOG_MESSAGE(
         TRITONSERVER_LOG_WARN,
