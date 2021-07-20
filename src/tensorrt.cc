@@ -73,6 +73,7 @@ namespace {
             TRITONBACKEND_RequestRelease(                                      \
                 REQUESTS[r], TRITONSERVER_REQUEST_RELEASE_ALL),                \
             "failed releasing request");                                       \
+        REQUESTS[r] = nullptr;                                                 \
       }                                                                        \
       TRITONSERVER_ErrorDelete(farie_err_);                                    \
       return;                                                                  \
@@ -104,6 +105,7 @@ TimestampCaptureCallback(void* data)
             TRITONBACKEND_RequestRelease(                             \
                 REQUESTS[r], TRITONSERVER_REQUEST_RELEASE_ALL),       \
             "failed releasing request");                              \
+        REQUESTS[r] = nullptr;                                        \
       }                                                               \
       TRITONSERVER_ErrorDelete(farie_err_);                           \
       return;                                                         \
