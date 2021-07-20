@@ -640,7 +640,7 @@ ModelState::GetProfileIndices(
     RETURN_IF_ERROR(group.MemberAsArray("profile", &profiles));
     for (size_t j = 0; j < profiles.ArraySize(); j++) {
       std::string profile;
-      RETURN_IF_ERROR(profiles.IndexAsString(i, &profile));
+      RETURN_IF_ERROR(profiles.IndexAsString(j, &profile));
       int profile_idx;
       RETURN_IF_ERROR(GetProfileIndex(profile, &profile_idx));
       if (profile_idx < 0 || profile_idx >= num_profiles) {
