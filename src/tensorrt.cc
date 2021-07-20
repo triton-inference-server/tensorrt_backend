@@ -2689,7 +2689,7 @@ ModelInstanceState::EvaluateTensorRTContext(
                                    ((int64_t)total_batch_size <=
                                     citr->second.max_dims_[io_index].d[0]));
 
-      TRITONSERVER_Error* shape_err;
+      TRITONSERVER_Error* shape_err = nullptr;
       bool missing_shape_values = false;
       if (engine_->isShapeBinding(io_index)) {
         auto it = request_shape_values.find(io_index);
