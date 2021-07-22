@@ -455,8 +455,6 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
              .c_str()));
   }
 
-  // If the model configuration already specifies inputs and outputs
-  // then don't perform any auto-completion.
   size_t input_cnt = 0;
   size_t output_cnt = 0;
   {
@@ -476,6 +474,15 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
+  int num_profile_bindings = 0;
+  int num_profiles = 0;
+  if (!UseTensorRTv2API(engine)) {
+    num_profile_bindings = engine->getNbBindings();
+  } else {
+    num_profiles = engine->getNbOptimizationProfiles();
+    num_profile_bindings = engine->getNbBindings() / num_profiles;
+  }
+
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
   // Will use that as a hint to ascertain whether or not to enable batching.
@@ -485,6 +492,14 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
   if ((input_cnt != 0) || (output_cnt != 0)) {
     std::vector<std::string> io_types{"input", "output"};
+    std::map<std::string, std::set<std::string>> allowed_tensors;
+    for (int i = 0; i < num_profile_bindings; ++i) {
+      if (engine->bindingIsInput(i)) {
+        allowed_tensors["input"].emplace(engine->getBindingName(i));
+      } else {
+        allowed_tensors["output"].emplace(engine->getBindingName(i));
+      }
+    }
     for (const auto& io_type : io_types) {
       triton::common::TritonJson::Value config_io;
       RETURN_IF_ERROR(ModelConfig().MemberAsArray(io_type.c_str(), &config_io));
@@ -498,29 +513,18 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
         }
         std::string name;
         RETURN_IF_ERROR(io.MemberAsString("name", &name));
-        RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
-            engine, name, dims, &config_batch_hint));
+        if (io_type.compare("input") == 0) {
+          RETURN_IF_ERROR(CheckAllowedModelInput(io, allowed_tensors[io_type]));
+        } else {
+          RETURN_IF_ERROR(
+              CheckAllowedModelOutput(io, allowed_tensors[io_type]));
+        }
+        if (dims.ArraySize() != 0) {
+          RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
+              engine, name, dims, &config_batch_hint));
+        }
       }
     }
-  }
-
-  // Validate cases with incomplete input and output shapes
-  int num_profile_bindings = 0;
-  int num_profiles = 0;
-  if (!UseTensorRTv2API(engine)) {
-    num_profile_bindings = engine->getNbBindings();
-  } else {
-    num_profiles = engine->getNbOptimizationProfiles();
-    num_profile_bindings = engine->getNbBindings() / num_profiles;
-  }
-  if (tensors_with_config_shape_cnt != 0 &&
-      tensors_with_config_shape_cnt != num_profile_bindings) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("unable to autofill for '") + Name() +
-         "', either all model tensor configuration should specify their "
-         "dims or none.")
-            .c_str());
   }
 
   int max_batch_size = 0;
@@ -833,11 +837,11 @@ ModelState::FixIO(
           if (mutable_io.Find("data_type", &data_type)) {
             std::string dt_str;
             RETURN_IF_ERROR(data_type.AsString(&dt_str));
-            if (dt_str.empty()) {
-              common::TritonJson::Value ref_data_type;
+            if (dt_str.empty() || (dt_str.compare("TYPE_INVALID") == 0)) {
+              std::string ref_data_type;
               RETURN_IF_ERROR(
-                  io_ref.MemberAsObject("data_type", &ref_data_type));
-              RETURN_IF_ERROR(data_type.Swap(ref_data_type));
+                  io_ref.MemberAsString("data_type", &ref_data_type));
+              RETURN_IF_ERROR(data_type.SetString(ref_data_type));
             }
           } else {
             std::string ref_data_type;
@@ -849,7 +853,7 @@ ModelState::FixIO(
           if (mutable_io.Find("dims", &dims)) {
             if (dims.ArraySize() == 0) {
               common::TritonJson::Value ref_dims;
-              RETURN_IF_ERROR(io_ref.MemberAsObject("dims", &ref_dims));
+              RETURN_IF_ERROR(io_ref.MemberAsArray("dims", &ref_dims));
               RETURN_IF_ERROR(dims.Swap(ref_dims));
               common::TritonJson::Value reshape;
               if (io_ref.Find("reshape", &reshape)) {
@@ -858,7 +862,7 @@ ModelState::FixIO(
             }
           } else {
             common::TritonJson::Value ref_dims;
-            RETURN_IF_ERROR(io_ref.MemberAsObject("dims", &ref_dims));
+            RETURN_IF_ERROR(io_ref.MemberAsArray("dims", &ref_dims));
             RETURN_IF_ERROR(mutable_io.Add("dims", std::move(ref_dims)));
             common::TritonJson::Value reshape;
             if (io_ref.Find("reshape", &reshape)) {
@@ -1633,7 +1637,6 @@ ModelInstanceState::Run(
   if (err != nullptr) {
     RequestsRespondWithError(
         payload_->requests_, payload_->request_count_, err);
-    TRITONSERVER_ErrorDelete(err);
     return;
   }
 
@@ -1922,8 +1925,9 @@ ModelInstanceState::Run(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             CopyBuffer(
                 name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
-                io_binding_info.memory_type_id_, total_byte_size,
-                (void*)&request_shape_values[io_index],
+                io_binding_info.memory_type_id_,
+                (request_shape_values[io_index].size() - 1) * sizeof(int32_t),
+                (void*)(&request_shape_values[io_index] + 1),
                 (static_cast<char*>(io_binding_info.buffer_) + sizeof(int32_t)),
                 input_copy_stream_, &cuda_used),
             "error input data for the batch");
@@ -2550,21 +2554,32 @@ ModelInstanceState::GetRequestShapeValues(
       }
 
       // Shape tensors datatype is INT32.
-      const int64_t element_cnt = backend::GetElementCount(shape, dims_count);
+      int64_t element_cnt = backend::GetElementCount(shape, dims_count);
+      if (support_batching_) {
+        element_cnt /= shape[0];
+      }
       const size_t expected_byte_size =
           element_cnt * GetByteSize(TRITONSERVER_TYPE_INT32, {1});
 
+      bool includes_batch_shape_value = false;
       if (expected_byte_size != data_byte_size) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("shape tensor for input '") + input_name +
-             "' expected byte size is " + std::to_string(expected_byte_size) +
-             ", got " + std::to_string(data_byte_size))
-                .c_str());
+        if (expected_byte_size == (data_byte_size - sizeof(int32_t))) {
+          includes_batch_shape_value = true;
+        } else {
+          return TRITONSERVER_ErrorNew(
+              TRITONSERVER_ERROR_INVALID_ARG,
+              (std::string("shape tensor for input '") + input_name +
+               "' expected byte size is " + std::to_string(expected_byte_size) +
+               " [ or " + std::to_string(expected_byte_size + sizeof(int32_t)) +
+               " if input includes batch shape value] " + ", got " +
+               std::to_string(data_byte_size))
+                  .c_str());
+        }
       }
 
       const int32_t* dims = reinterpret_cast<const int32_t*>(data_buffer);
-      for (int64_t i = 0; i < element_cnt; ++i) {
+      int64_t offset = includes_batch_shape_value ? 1 : 0;
+      for (int64_t i = offset; i < element_cnt; ++i) {
         it->second.push_back(dims[i]);
       }
     }
@@ -2682,13 +2697,9 @@ ModelInstanceState::EvaluateTensorRTContext(
       TRITONSERVER_Error* err;
       err = ValidateDimension(
           input_shape_vec, citr->second.min_dims_[io_index],
-          citr->second.max_dims_[io_index], support_batching_);
-      bool valid_bs =
-          (!support_batching_) || (((int64_t)total_batch_size >=
-                                    citr->second.min_dims_[io_index].d[0]) &&
-                                   ((int64_t)total_batch_size <=
-                                    citr->second.max_dims_[io_index].d[0]));
+          citr->second.max_dims_[io_index], false);
 
+      bool valid_bs = true;
       TRITONSERVER_Error* shape_err = nullptr;
       bool missing_shape_values = false;
       if (engine_->isShapeBinding(io_index)) {
@@ -3460,7 +3471,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("unexpected datatype '") + io_data_type +
-             "  in model configuration for shape output '" + io_name +
+             " in model configuration for shape output '" + io_name +
              "', expecting TYPE_INT32 for " + Name())
                 .c_str());
       }
@@ -3472,9 +3483,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected datatype '") +
-             TRITONSERVER_DataTypeString(dt) + "  for inference output '" +
-             io_name + "', expecting " +
+            (std::string("unexpected datatype TYPE_") +
+             TRITONSERVER_DataTypeString(dt) + " for inference output '" +
+             io_name + "', expecting TYPE_" +
              TRITONSERVER_DataTypeString(config_dt) + " for " + Name())
                 .c_str());
       }
@@ -3643,9 +3654,9 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
       if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected datatype '") +
-             TRITONSERVER_DataTypeString(dt) + "  or inference output '" +
-             io_name + "', expecting " +
+            (std::string("unexpected datatype TYPE_") +
+             TRITONSERVER_DataTypeString(dt) + " for inference output '" +
+             io_name + "', expecting TYPE_" +
              TRITONSERVER_DataTypeString(config_dt) + " for " + Name())
                 .c_str());
       }
@@ -3848,9 +3859,9 @@ ModelInstanceState::InitializeExecuteInputBinding(
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("unexpected datatype '") +
-           TRITONSERVER_DataTypeString(dt) + "  for inference input '" +
-           input_name + "', expecting " +
+          (std::string("unexpected datatype TYPE_") +
+           TRITONSERVER_DataTypeString(dt) + " for inference input '" +
+           input_name + "', expecting TYPE_" +
            TRITONSERVER_DataTypeString(config_dt) + " for " + Name())
               .c_str());
     }
@@ -3935,7 +3946,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
               TRITONSERVER_ERROR_INVALID_ARG,
               (std::string("model configuration specified invalid shape for "
                            "input '") +
-               input_name + "' for model " + model_state_->Name() + ": " +
+               input_name + "' for model " + model_state_->Name() + ". Error details: " +
                TRITONSERVER_ErrorMessage(err))
                   .c_str());
 
@@ -4106,7 +4117,7 @@ ModelInstanceState::InitializeShapeInputBinding(
     if (input_datatype != TRITONSERVER_TYPE_INT32) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("unexpected datatype '") +
+          (std::string("unexpected datatype TYPE_") +
            TRITONSERVER_DataTypeString(input_datatype) +
            "  in model configuration for shape input '" + input_name +
            "', expecting TYPE_INT32 for " + Name())
@@ -4118,9 +4129,9 @@ ModelInstanceState::InitializeShapeInputBinding(
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != input_datatype)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("unexpected datatype '") +
+          (std::string("unexpected datatype TYPE_") +
            TRITONSERVER_DataTypeString(dt) + " in engine for shape input '" +
-           input_name + "', expecting " +
+           input_name + "', expecting TYPE_" +
            TRITONSERVER_DataTypeString(input_datatype) + " for " + Name())
               .c_str());
     }
