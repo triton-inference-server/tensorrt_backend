@@ -1203,6 +1203,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     uint64_t compute_output_start_ns_;
 
     // All the composing InferenceRequest objects
+    std::vector<TRITONBACKEND_Request*> requests_list_;
     TRITONBACKEND_Request** requests_;
     uint32_t request_count_;
     size_t context_idx_;
@@ -1528,6 +1529,11 @@ ModelInstanceState::ProcessRequests(
   } else {
     auto event_set_idx = next_set_;
     next_set_ = (event_set_idx + 1) % EVENT_SET_COUNT;
+    payload_->requests_list_.reserve(payload_->request_count_);
+    for (uint32_t i = 0; i < payload_->request_count_; i++) {
+      payload_->requests_list_.push_back(payload_->requests_[i]);
+    }
+    payload_->requests_ = &payload_->requests_list_[0];
     // Put the details needed by the ProcessResponse thread on the
     // queue
     completion_queue_.Put(std::move(payload_));
@@ -3946,8 +3952,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
               TRITONSERVER_ERROR_INVALID_ARG,
               (std::string("model configuration specified invalid shape for "
                            "input '") +
-               input_name + "' for model " + model_state_->Name() + ". Error details: " +
-               TRITONSERVER_ErrorMessage(err))
+               input_name + "' for model " + model_state_->Name() +
+               ". Error details: " + TRITONSERVER_ErrorMessage(err))
                   .c_str());
 
           TRITONSERVER_ErrorDelete(err);
