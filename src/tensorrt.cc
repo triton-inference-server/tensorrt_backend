@@ -26,6 +26,7 @@
 
 #include <future>
 #include "loader.h"
+#include "logging.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
 #include "tensorrt_utils.h"
@@ -33,6 +34,7 @@
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
 
+#include <NvInferPlugin.h>
 #include <cuda_runtime_api.h>
 #include <atomic>
 #include <chrono>
@@ -4912,6 +4914,21 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   // Set the execution policy as device blocking for the backend.
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
       backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
+
+  // Register all the default plugins that come with TensorRT
+  bool success = true;
+  std::once_flag onceFlag;
+  {
+    std::call_once(onceFlag, [&success] {
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Registering TensorRT Plugins");
+      success = initLibNvInferPlugins(&tensorrt_logger, "");
+    });
+  }
+  if (!success) {
+    TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        "unable to register default TensorRT Plugins");
+  }
 
   return nullptr;  // success
 }
