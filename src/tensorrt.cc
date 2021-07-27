@@ -3098,7 +3098,7 @@ ModelInstanceState::ValidateIOHelper(
 
     // Check the shape tensor specification
     if (allowed_shape_tensors.find(io_name) != allowed_shape_tensors.end()) {
-      bool is_shape_tensor;
+      bool is_shape_tensor = false;
       RETURN_IF_ERROR(io.MemberAsBool("is_shape_tensor", &is_shape_tensor));
       if (!is_shape_tensor) {
         return TRITONSERVER_ErrorNew(
@@ -3110,7 +3110,7 @@ ModelInstanceState::ValidateIOHelper(
                 .c_str());
       }
     } else {
-      bool is_shape_tensor;
+      bool is_shape_tensor = false;
       RETURN_IF_ERROR(io.MemberAsBool("is_shape_tensor", &is_shape_tensor));
       if (is_shape_tensor) {
         return TRITONSERVER_ErrorNew(
@@ -3257,7 +3257,7 @@ ModelInstanceState::InitializeConfigExecuteInputBindings(
     } else {
       io.MemberAsArray("dims", &model_config_dims);
     }
-    bool io_allow_ragged_batch;
+    bool io_allow_ragged_batch = false;
     io.MemberAsBool("allow_ragged_batch", &io_allow_ragged_batch);
 
     RETURN_IF_ERROR(InitializeExecuteInputBinding(
@@ -3433,7 +3433,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     std::string io_name;
     RETURN_IF_ERROR(io.MemberAsString("name", &io_name));
 
-    bool is_shape_tensor;
+    bool is_shape_tensor = false;
     RETURN_IF_ERROR(io.MemberAsBool("is_shape_tensor", &is_shape_tensor));
     // Skip if this output is not a shape tensor
     if (!is_shape_tensor) {
@@ -3615,7 +3615,7 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
     std::string io_datatype;
     RETURN_IF_ERROR(io.MemberAsString("data_type", &io_datatype));
 
-    bool is_shape_tensor;
+    bool is_shape_tensor = false;
     RETURN_IF_ERROR(io.MemberAsBool("is_shape_tensor", &is_shape_tensor));
     // Skip if the output is specified to be a shape tensor
     if (is_shape_tensor) {
