@@ -3357,9 +3357,10 @@ ModelInstanceState::InitializeBatchInputBindings(
         dims.AppendInt(-1);
       }
 
+      std::string data_type_str("TYPE_");
+      data_type_str.append(TRITONSERVER_DataTypeString(tensor_datatype));
       RETURN_IF_ERROR(InitializeExecuteInputBinding(
-          tensor_name, TRITONSERVER_DataTypeString(tensor_datatype), dims,
-          false, true));
+          tensor_name, data_type_str, dims, false, true));
 
       int io_index = engine_->getBindingIndex(tensor_name.c_str());
       auto& io_binding_info =
