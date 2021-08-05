@@ -35,8 +35,8 @@ namespace triton { namespace backend { namespace tensorrt {
 
 TRITONSERVER_Error*
 LoadPlan(
-    const std::string& plan_path, nvinfer1::IRuntime** runtime,
-    nvinfer1::ICudaEngine** engine)
+    const std::string& plan_path, const int64_t dla_core_id,
+    nvinfer1::IRuntime** runtime, nvinfer1::ICudaEngine** engine)
 {
   // Create runtime only if it is not provided
   if (*runtime == nullptr) {
@@ -44,6 +44,21 @@ LoadPlan(
     if (*runtime == nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT runtime");
+    }
+  }
+
+  // Report error if 'dla_core_id' >= number of DLA cores
+  if (dla_core_id != -1) {
+    auto dla_core_count = (*runtime)->getNbDLACores();
+    if (dla_core_id < dla_core_count) {
+      (*runtime)->setDLACore(dla_core_id);
+    } else {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unable to create TensorRT runtime with DLA Core ID: ") +
+           std::to_string(dla_core_id) +
+           ", available number of DLA cores: " + std::to_string(dla_core_count))
+              .c_str());
     }
   }
 

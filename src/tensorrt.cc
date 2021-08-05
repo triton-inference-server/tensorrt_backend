@@ -210,7 +210,7 @@ class ModelState : public TensorRTModel {
   virtual ~ModelState();
 
   TRITONSERVER_Error* CreateEngine(
-      int gpu_device, const std::string& model_path,
+      int gpu_device, const int64_t dla_core_id, const std::string& model_path,
       nvinfer1::ICudaEngine** engine);
 
   void DisableEngineSharing() { engine_sharing_ = false; }
@@ -250,8 +250,12 @@ class ModelState : public TensorRTModel {
   // Parses the parameters in config
   TRITONSERVER_Error* ParseParameters();
 
-  // CUDA engine shared across all model instances on the same device.
-  std::map<int, std::pair<nvinfer1::IRuntime*, nvinfer1::ICudaEngine*>>
+  // CUDA engine shared across all model instances using the same (or no) DLA
+  // core on same GPU. The first element in the key pair is the GPU ID, the
+  // second is the DLA core ID.
+  std::map<
+      std::pair<int, int64_t>,
+      std::pair<nvinfer1::IRuntime*, nvinfer1::ICudaEngine*>>
       device_engines_;
   bool engine_sharing_;
 };
@@ -308,7 +312,7 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
 ModelState::~ModelState()
 {
   for (auto& device_engine : device_engines_) {
-    cudaSetDevice(device_engine.first);
+    cudaSetDevice(device_engine.first.first);
     auto& runtime = device_engine.second.first;
     auto& engine = device_engine.second.second;
     if (engine != nullptr) {
@@ -324,7 +328,7 @@ ModelState::~ModelState()
 
 TRITONSERVER_Error*
 ModelState::CreateEngine(
-    int gpu_device, const std::string& model_path,
+    int gpu_device, const int64_t dla_core_id, const std::string& model_path,
     nvinfer1::ICudaEngine** engine)
 {
   // TensorRT engine creation is not thread-safe, so multiple creations
@@ -334,13 +338,16 @@ ModelState::CreateEngine(
 
 
   // Create shared engine for the device if haven't tried so.
-  auto eit = device_engines_.find(gpu_device);
+  auto device_pair = std::make_pair(gpu_device, dla_core_id);
+  auto eit = device_engines_.find(device_pair);
   if (eit == device_engines_.end()) {
-    eit = device_engines_.emplace(gpu_device, std::make_pair(nullptr, nullptr))
+    eit = device_engines_.emplace(device_pair, std::make_pair(nullptr, nullptr))
               .first;
   }
+
+  // We share the engine (for models that don't have dynamic shapes) and
+  // runtime across instances that have access to the same GPU/NVDLA.
   if (eit->second.second == nullptr) {
-    // Create a CUDA engine shared by all instances on a device
     auto cuerr = cudaSetDevice(gpu_device);
     if (cuerr != cudaSuccess) {
       return TRITONSERVER_ErrorNew(
@@ -350,9 +357,25 @@ ModelState::CreateEngine(
               .c_str());
     }
 
-    RETURN_IF_ERROR(
-        LoadPlan(model_path, &eit->second.first, &eit->second.second));
+    const bool new_runtime = (eit->second.first == nullptr);
+    RETURN_IF_ERROR(LoadPlan(
+        model_path, dla_core_id, &eit->second.first, &eit->second.second));
     *engine = eit->second.second;
+
+    if (new_runtime) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_VERBOSE,
+          (std::string("Created new runtime on GPU device ") +
+           std::to_string(gpu_device) + ", NVDLA core " +
+           std::to_string(dla_core_id) + " for " + Name())
+              .c_str());
+    }
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_VERBOSE,
+        (std::string("Created new engine on GPU device ") +
+         std::to_string(gpu_device) + ", NVDLA core " +
+         std::to_string(dla_core_id) + " for " + Name())
+            .c_str());
 
     if (IsEngineSharingEnabled()) {
       // This logic runs atleast once to validate whether the engine
@@ -441,7 +464,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 {
   nvinfer1::IRuntime* runtime = nullptr;
   nvinfer1::ICudaEngine* engine = nullptr;
-  if (LoadPlan(model_path, &runtime, &engine) != nullptr) {
+  if (LoadPlan(model_path, -1 /* dla_core_id */, &runtime, &engine) !=
+      nullptr) {
     if (engine != nullptr) {
       engine->destroy();
       engine = nullptr;
@@ -1258,8 +1282,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   // safely.
   int next_buffer_binding_set_;
 
-  // The aer Context::num_expected_bindings_ number of IOBindingInfo
-  // elements for copy stream
+  // There are Context::num_expected_bindings_ number of IOBindingInfo
+  // elements for copy stream.
   std::vector<std::vector<IOBindingInfo>> io_binding_infos_;
 
   // The pointer to the CUDA buffer for each binding index of the
@@ -1271,6 +1295,9 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   // The request details of the ongoing model execution
   std::unique_ptr<Payload> payload_;
+
+  // Whether zero copy is supported on this device
+  bool zero_copy_support_;
 
   ModelState* model_state_;
 };
@@ -1313,7 +1340,8 @@ ModelInstanceState::Create(
   (*state)->RegisterContexts();
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
-      (*state)->DeviceId(), model_path, (*state)->EnginePtr()));
+      (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
+      (*state)->EnginePtr()));
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -1379,6 +1407,19 @@ ModelInstanceState::ModelInstanceState(
     events_[idx].timestamp_signal_ = nullptr;
   }
   support_batching_ = (model_state_->MaxBatchSize() > 0);
+
+  TRITONSERVER_Error* err =
+      SupportsIntegratedZeroCopy(DeviceId(), &zero_copy_support_);
+  if (err != nullptr) {
+    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+    TRITONSERVER_ErrorDelete(err);
+    err = nullptr;
+    zero_copy_support_ = false;
+  } else if (zero_copy_support_) {
+    LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is enabled");
+  } else {
+    LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is disabled");
+  }
 }
 
 ModelInstanceState::~ModelInstanceState()
@@ -1700,7 +1741,7 @@ ModelInstanceState::Run(
       model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
       input_copy_stream_, events_[next_set_].input_ready_,
       prev_input_ready_event, model_state_->GatherKernelBufferThreshold(),
-      HostPolicyName().c_str()));
+      HostPolicyName().c_str(), zero_copy_support_));
   // For each input, concatenate input values from each request into
   // the corresponding binding.
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
@@ -2161,13 +2202,14 @@ ModelInstanceState::Run(
 
   const auto output_stream =
       model_state_->SeparateOutputStream() ? output_copy_stream_ : stream_;
+
   // For each requested output verify that the output can accept the
   // actual model output and then copy that output from the GPU
   payload_->responder_.reset(new BackendOutputResponder(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
       model_state_->MaxBatchSize(), model_state_->TritonMemoryManager(),
       model_state_->EnablePinnedOutput(), output_stream,
-      events_[next_set_].output_ready_));
+      events_[next_set_].output_ready_, zero_copy_support_));
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
@@ -2268,13 +2310,14 @@ ModelInstanceState::Run(
     } else if (io_binding_info.buffer_is_ragged_) {
       // FIXME add correctness checking like below
       io_binding_info.batch_output_ = model_state_->FindBatchOutput(name);
-      // Process the output tensors with the device memory address
-      // even if zero-copy may be used, so that the memory copies
-      // perform asynchronously and wait for model execution.
+
+      // Process the output tensors with pinned memory address if zero-copy is
+      // supported, otherwise use device memory. Peform memory copies
+      // asynchronously and wait for model execution.
       payload_->responder_->ProcessBatchOutput(
           name, *(io_binding_info.batch_output_),
-          static_cast<const char*>(io_binding_info.device_buffer_),
-          TRITONSERVER_MEMORY_GPU, DeviceId());
+          static_cast<const char*>(io_binding_info.buffer_),
+          io_binding_info.memory_type_, io_binding_info.memory_type_id_);
     } else {
       std::vector<int64_t> batchn_shape;
 
@@ -2312,13 +2355,13 @@ ModelInstanceState::Run(
             "failed to run TRT response");
       }
 
-      // Process the output tensors with the device memory address
-      // even if zero-copy may be used, so that the memory copies
-      // perform asynchronously and wait for model execution.
+      // Process the output tensors with pinned memory address if zero-copy is
+      // supported, otherwise use device memory. Peform memory copies
+      // asynchronously and wait for model execution.
       payload_->responder_->ProcessTensor(
           name, dt, batchn_shape,
-          static_cast<const char*>(io_binding_info.device_buffer_),
-          TRITONSERVER_MEMORY_GPU, DeviceId());
+          static_cast<const char*>(io_binding_info.buffer_),
+          io_binding_info.memory_type_, io_binding_info.memory_type_id_);
     }
   }
 }
@@ -3548,12 +3591,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       // supported. We rely on buffer_bindings_ being non-nullptr to
       // indicate that the buffer has been correctly initalized so
       // even for zero-sized tensors always allocate something.
-      bool zero_copy_support = false;
-      RETURN_IF_ERROR(
-          SupportsIntegratedZeroCopy(DeviceId(), &zero_copy_support));
       void* buffer = nullptr;
       cudaError_t err = cudaSuccess;
-      if (zero_copy_support) {
+      if (zero_copy_support_) {
         err = cudaHostAlloc(
             &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
       } else {
@@ -3570,7 +3610,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       io_binding_info.byte_size_ = max_byte_size;
       io_binding_info.buffer_ = buffer;
       io_binding_info.device_buffer_ = buffer;
-      if (zero_copy_support) {
+      if (zero_copy_support_) {
         io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
         io_binding_info.memory_type_id_ = 0;
         err = cudaHostGetDevicePointer(
@@ -3748,11 +3788,9 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
     // We rely on buffer_bindings_ being non-nullptr to indicate that
     // the buffer has been correctly initalized so even for zero-sized
     // tensors always allocate something.
-    bool zero_copy_support = false;
-    RETURN_IF_ERROR(SupportsIntegratedZeroCopy(DeviceId(), &zero_copy_support));
     void* buffer = nullptr;
     cudaError_t err = cudaSuccess;
-    if (zero_copy_support) {
+    if (zero_copy_support_) {
       err = cudaHostAlloc(
           &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
     } else {
@@ -3789,7 +3827,7 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
       }
       io_binding_info.io_shape_mapping_.second = output_shape;
     }
-    if (zero_copy_support) {
+    if (zero_copy_support_) {
       io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
       io_binding_info.memory_type_id_ = 0;
       err = cudaHostGetDevicePointer(
@@ -4024,11 +4062,9 @@ ModelInstanceState::InitializeExecuteInputBinding(
   // We rely on buffer_bindings_ being non-nullptr to indicate that
   // the buffer has been correctly initalized so even for zero-sized
   // tensors always allocate something.
-  bool zero_copy_support = false;
-  RETURN_IF_ERROR(SupportsIntegratedZeroCopy(DeviceId(), &zero_copy_support));
   void* buffer = nullptr;
   cudaError_t err = cudaSuccess;
-  if (zero_copy_support) {
+  if (zero_copy_support_) {
     err = cudaHostAlloc(
         &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
   } else {
@@ -4046,7 +4082,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
   io_binding_info.buffer_ = buffer;
   io_binding_info.device_buffer_ = buffer;
   io_binding_info.buffer_is_ragged_ = is_ragged;
-  if (zero_copy_support) {
+  if (zero_copy_support_) {
     io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
     io_binding_info.memory_type_id_ = 0;
     err = cudaHostGetDevicePointer(
@@ -4224,11 +4260,9 @@ ModelInstanceState::InitializeShapeInputBinding(
     // We rely on buffer_bindings_ being non-nullptr to indicate that
     // the buffer has been correctly initalized so even for zero-sized
     // tensors always allocate something.
-    bool zero_copy_support = false;
-    RETURN_IF_ERROR(SupportsIntegratedZeroCopy(DeviceId(), &zero_copy_support));
     void* buffer = nullptr;
     cudaError_t err = cudaSuccess;
-    if (zero_copy_support) {
+    if (zero_copy_support_) {
       err = cudaHostAlloc(
           &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
     } else {
@@ -4245,7 +4279,7 @@ ModelInstanceState::InitializeShapeInputBinding(
     io_binding_info.byte_size_ = max_byte_size;
     io_binding_info.buffer_ = buffer;
     io_binding_info.device_buffer_ = buffer;
-    if (zero_copy_support) {
+    if (zero_copy_support_) {
       io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
       io_binding_info.memory_type_id_ = 0;
       err = cudaHostGetDevicePointer(

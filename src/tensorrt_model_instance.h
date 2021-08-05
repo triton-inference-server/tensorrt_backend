@@ -39,12 +39,15 @@ class TensorRTModelInstance : public BackendModelInstance {
       TRITONBACKEND_ModelInstance* triton_model_instance);
   virtual ~TensorRTModelInstance() = default;
 
+  void Initialize();
   TensorRTModel* Model() { return tensorrt_model_; }
   std::set<std::string>& ProfileNames() { return profile_names_; }
+  int64_t DLACoreId() { return dla_core_id_; }
 
  protected:
   TensorRTModel* tensorrt_model_;
   std::set<std::string> profile_names_;
+  int64_t dla_core_id_;
 };
 
 }}}  // namespace triton::backend::tensorrt
