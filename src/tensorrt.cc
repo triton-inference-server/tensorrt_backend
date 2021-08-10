@@ -3330,7 +3330,8 @@ ModelInstanceState::InitializeSequenceControlInputBindings(
       std::string tensor_datatype;
       RETURN_IF_ERROR(GetBooleanSequenceControlProperties(
           sequence_batching, model_state_->Name(), control_kind, required,
-          &tensor_name, &tensor_datatype, nullptr, nullptr, nullptr, nullptr));
+          &tensor_name, &tensor_datatype, nullptr, nullptr, nullptr, nullptr,
+          nullptr, nullptr));
       if (!tensor_name.empty()) {
         // Control tensors must have shape [1].
         common::TritonJson::Value dims{
