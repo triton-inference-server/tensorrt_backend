@@ -1,4 +1,4 @@
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -130,7 +130,8 @@ target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_11)
 target_compile_options(
   triton-tensorrt-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror>
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror -Wno-deprecated-declarations>
+  $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc>
 )
 
 # C/C++ defines that are used directly by this backend.
@@ -139,24 +140,38 @@ target_compile_definitions(
     PRIVATE TRITON_ENABLE_GPU=1
 )
 
-set_target_properties(
-  triton-tensorrt-backend
-  PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME ${TRITON_TENSORRT_BACKEND_LIBNAME}
-    SKIP_BUILD_RPATH TRUE
-    BUILD_WITH_INSTALL_RPATH TRUE
-    INSTALL_RPATH_USE_LINK_PATH FALSE
-    INSTALL_RPATH "$\{ORIGIN\}"
-    LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_tensorrt.ldscript
-    LINK_FLAGS "-Wl,--version-script libtriton_tensorrt.ldscript"
-)
+if (WIN32)
+  set_target_properties(
+    triton-tensorrt-backend
+    PROPERTIES
+      POSITION_INDEPENDENT_CODE ON
+      OUTPUT_NAME ${TRITON_TENSORRT_BACKEND_LIBNAME}
+      SKIP_BUILD_RPATH TRUE
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH_USE_LINK_PATH FALSE
+      INSTALL_RPATH "$\{ORIGIN\}"
+  )
+else ()
+  set_target_properties(
+    triton-tensorrt-backend
+    PROPERTIES
+      POSITION_INDEPENDENT_CODE ON
+      OUTPUT_NAME ${TRITON_TENSORRT_BACKEND_LIBNAME}
+      SKIP_BUILD_RPATH TRUE
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH_USE_LINK_PATH FALSE
+      INSTALL_RPATH "$\{ORIGIN\}"
+      LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_tensorrt.ldscript
+      LINK_FLAGS "-Wl,--version-script libtriton_tensorrt.ldscript"
+  )
+endif()
 
 FOREACH(p ${TRITON_TENSORRT_LIB_PATHS})
     set(TRITON_TENSORRT_LDFLAGS ${TRITON_TENSORRT_LDFLAGS} "-L${p}")
 ENDFOREACH(p)
 
-
+find_library(NVINFER_LIBRARY NAMES nvinfer)
+find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin)
 target_link_libraries(
   triton-tensorrt-backend
   PRIVATE
@@ -164,6 +179,8 @@ target_link_libraries(
     triton-core-serverstub  # from repo-core
     triton-backend-utils    # from repo-backend
     -lpthread
+    ${NVINFER_LIBRARY}
+    ${NVINFER_PLUGIN_LIBRARY}
 )
 
 target_link_libraries(
@@ -184,14 +201,25 @@ target_link_libraries(
 include(GNUInstallDirs)
 set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/TritonTensorRTBackend)
 
-install(
-  TARGETS
-    triton-tensorrt-backend
-  EXPORT
-    triton-tensorrt-backend-targets
-  LIBRARY DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
-  ARCHIVE DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
-)
+if (NOT WIN32)
+  install(
+    TARGETS
+      triton-tensorrt-backend
+    EXPORT
+      triton-tensorrt-backend-targets
+    LIBRARY DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+    ARCHIVE DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+  )
+else()
+  install(
+    TARGETS
+      triton-tensorrt-backend
+    EXPORT
+      triton-tensorrt-backend-targets
+    RUNTIME DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+    ARCHIVE DESTINATION ${TRITON_TENSORRT_BACKEND_INSTALLDIR}
+  )
+endif() # WIN32
 
 install(
   EXPORT

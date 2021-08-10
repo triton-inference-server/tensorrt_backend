@@ -1,4 +1,4 @@
-// Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -41,6 +41,8 @@ TRITONSERVER_Error* GetProfileIndex(
     const std::string& profile_name, int* profile_index);
 
 TRITONSERVER_DataType ConvertTrtTypeToDataType(nvinfer1::DataType trt_type);
+
+std::string ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type);
 
 std::pair<bool, nvinfer1::DataType> ConvertDataTypeToTrtType(
     const TRITONSERVER_DataType& dtype);
@@ -90,7 +92,7 @@ TRITONSERVER_Error* MaximumDims(
 
 void DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims);
 
-void DimsJsonToDimVec(
+TRITONSERVER_Error* DimsJsonToDimVec(
     common::TritonJson::Value& dims_json, std::vector<int64_t>* dims);
 
 bool DimVecToDims(const std::vector<int64_t>& dim_vec, nvinfer1::Dims* dims);

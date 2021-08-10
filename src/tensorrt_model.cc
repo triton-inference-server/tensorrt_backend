@@ -1,4 +1,4 @@
-// Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -28,6 +28,27 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
+TensorRTModel::Priority
+ParsePriority(const std::string& priority)
+{
+  TensorRTModel::Priority trt_priority = TensorRTModel::Priority::DEFAULT;
+
+  if (priority.compare("PRIORITY_MAX") == 0) {
+    trt_priority = TensorRTModel::Priority::MAX;
+  } else if (priority.compare("PRIORITY_MIN") == 0) {
+    trt_priority = TensorRTModel::Priority::MIN;
+  } else if (priority.compare("PRIORITY_DEFAULT") != 0) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_WARN,
+        (std::string(
+             "TRT backend does not support the provided stream priority '") +
+         priority + "', using 'PRIORITY_DEFAULT'.")
+            .c_str());
+  }
+
+  return trt_priority;
+}
+
 TensorRTModel::TensorRTModel(TRITONBACKEND_Model* triton_model)
     : BackendModel(triton_model), priority_(Priority::DEFAULT),
       use_cuda_graphs_(false), gather_kernel_buffer_threshold_(0),
@@ -45,7 +66,9 @@ TensorRTModel::ParseModelConfig()
     optimization.MemberAsUInt(
         "gather_kernel_buffer_threshold", &gather_kernel_buffer_threshold_);
     optimization.MemberAsBool("eager_batching", &eager_batching_);
-    // FIXME: Capture ModelPriority
+    std::string priority;
+    optimization.MemberAsString("priority", &priority);
+    priority_ = ParsePriority(priority);
     triton::common::TritonJson::Value cuda;
     if (optimization.Find("cuda", &cuda)) {
       cuda.MemberAsBool("graphs", &use_cuda_graphs_);
