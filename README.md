@@ -30,11 +30,6 @@
 
 # TensorRT Backend
 
-**WORK IN PROGRESS: This repository tracks the development of TensorRT
-Backend using new TRITONBACKEND API and is not fit for use yet. The
-source for current TensorRT backend can be found
-[here](https://github.com/triton-inference-server/server/tree/master/src/backends/tensorrt).**
-
 The Triton backend for [TensorRT](https://github.com/NVIDIA/TensorRT). 
 You can learn more about Triton backends in the [backend
 repo](https://github.com/triton-inference-server/backend). Ask
