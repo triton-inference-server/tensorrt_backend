@@ -33,6 +33,7 @@ project(tritontensorrtbackend LANGUAGES C CXX)
 #
 option(TRITON_ENABLE_GPU "Enable GPU support in backend." ON)
 option(TRITON_ENABLE_STATS "Include statistics collections in backend." ON)
+option(TRITON_ENABLE_NVTX "Include nvtx markers collection in backend." OFF)
 set(TRITON_TENSORRT_LIB_PATHS "" CACHE PATH "Paths to TensorRT libraries. Multiple paths may be specified by separating them with a semicolon.")
 set(TRITON_TENSORRT_INCLUDE_PATHS "" CACHE PATH "Paths to TensorRT includes. Multiple paths may be specified by separating them with a semicolon.")
 
@@ -91,6 +92,10 @@ if(${TRITON_ENABLE_GPU})
 else()
   message( FATAL_ERROR "TensorRT backend requires TRITON_ENABLE_GPU=1, CMake will exit." )
 endif() # TRITON_ENABLE_GPU
+
+if(${TRITON_ENABLE_NVTX})
+  add_definitions(-DTRITON_ENABLE_NVTX=1)
+endif() # TRITON_ENABLE_NVTX
 
 #
 # Shared library implementing the Triton Backend API

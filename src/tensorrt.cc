@@ -33,6 +33,7 @@
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
+#include "triton/common/nvtx.h"
 
 #include <NvInferPlugin.h>
 #include <cuda_runtime_api.h>
@@ -1599,8 +1600,7 @@ ModelInstanceState::Run(
        std::to_string(request_count) + " requests")
           .c_str());
 
-  // FIXME, enable NVTX by moving nvtx to common repo
-  // NVTX_RANGE(nvtx_, "Run " + name_);
+  NVTX_RANGE(nvtx_, "Run " + Name());
 
   // Need to move the TRITONBACKEND_Request objects as the lifetime
   // must be extended till ProcessResponse completes.
@@ -2469,8 +2469,7 @@ void
 ModelInstanceState::ProcessResponse()
 {
   while (true) {
-    // FIXME: NVTX
-    // NVTX_RANGE(nvtx_, "ProcessResponse " + context_idx);
+    NVTX_RANGE(nvtx_, "ProcessResponse " + Name());
     auto payload = std::move(completion_queue_.Get());
     if (payload.get() == nullptr) {
       break;
@@ -2483,17 +2482,15 @@ ModelInstanceState::ProcessResponse()
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
     context_queue_.Put(payload->context_idx_);
-    // FIXME: NVTX
-    // NVTX_MARKER("plan_input_available");
+    NVTX_MARKER("plan_input_available");
 
     // Call Finalize() here to defer CUDA synchronization as much as
     // possible
     payload->responder_->Finalize();
     cudaEventSynchronize(event_set.output_ready_);
-    // FIXME: NVTX
-    // NVTX_MARKER("plan_output_ready");
-    // Compute ends when the output data copy is completed
+    NVTX_MARKER("plan_output_ready");
 
+    // Compute ends when the output data copy is completed
 #ifdef TRITON_ENABLE_STATS
     cudaEventSynchronize(event_set.timestamp_signal_);
     uint64_t compute_end_ns = 0;
