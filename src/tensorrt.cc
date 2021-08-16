@@ -212,7 +212,7 @@ class ModelState : public TensorRTModel {
 
   TRITONSERVER_Error* CreateEngine(
       int gpu_device, const int64_t dla_core_id, const std::string& model_path,
-      nvinfer1::ICudaEngine** engine);
+      std::shared_ptr<nvinfer1::ICudaEngine>* engine);
 
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
@@ -255,8 +255,9 @@ class ModelState : public TensorRTModel {
   // core on same GPU. The first element in the key pair is the GPU ID, the
   // second is the DLA core ID.
   std::map<
-      std::pair<int, int64_t>,
-      std::pair<nvinfer1::IRuntime*, nvinfer1::ICudaEngine*>>
+      std::pair<int, int64_t>, std::pair<
+                                   std::shared_ptr<nvinfer1::IRuntime>,
+                                   std::shared_ptr<nvinfer1::ICudaEngine>>>
       device_engines_;
   bool engine_sharing_;
 };
@@ -316,13 +317,12 @@ ModelState::~ModelState()
     cudaSetDevice(device_engine.first.first);
     auto& runtime = device_engine.second.first;
     auto& engine = device_engine.second.second;
+    // Need to reset explicitly to ensure proper destruction order
     if (engine != nullptr) {
-      engine->destroy();
-      engine = nullptr;
+      engine.reset();
     }
     if (runtime != nullptr) {
-      runtime->destroy();
-      runtime = nullptr;
+      runtime.reset();
     }
   }
 }
@@ -330,7 +330,7 @@ ModelState::~ModelState()
 TRITONSERVER_Error*
 ModelState::CreateEngine(
     int gpu_device, const int64_t dla_core_id, const std::string& model_path,
-    nvinfer1::ICudaEngine** engine)
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine)
 {
   // TensorRT engine creation is not thread-safe, so multiple creations
   // are serialized with a global lock.
@@ -400,7 +400,7 @@ ModelState::CreateEngine(
       // Set to engine to 'nullptr' as hint, but keeping runtime as it
       // can be used repeatedly
       if (eit->second.second != nullptr) {
-        eit->second.second = nullptr;
+        eit->second.second.reset();
       }
     }
   } else {
@@ -463,17 +463,15 @@ ModelState::AutoCompleteConfig()
 TRITONSERVER_Error*
 ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 {
-  nvinfer1::IRuntime* runtime = nullptr;
-  nvinfer1::ICudaEngine* engine = nullptr;
+  std::shared_ptr<nvinfer1::IRuntime> runtime;
+  std::shared_ptr<nvinfer1::ICudaEngine> engine;
   if (LoadPlan(model_path, -1 /* dla_core_id */, &runtime, &engine) !=
       nullptr) {
-    if (engine != nullptr) {
-      engine->destroy();
-      engine = nullptr;
+    if (engine.get() != nullptr) {
+      engine.reset();
     }
-    if (runtime != nullptr) {
-      runtime->destroy();
-      runtime = nullptr;
+    if (runtime.get() != nullptr) {
+      runtime.reset();
     }
     TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
@@ -548,7 +546,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
         }
         if (dims.ArraySize() != 0) {
           RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
-              engine, name, dims, &config_batch_hint));
+              engine.get(), name, dims, &config_batch_hint));
         }
       }
     }
@@ -564,7 +562,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     // Assuming the first dimension to be batch dimension, until and unless
     // proven the batching is not supported.
     RETURN_IF_ERROR(
-        GetMaxSupportedBatchSize(engine, num_profiles, &max_batch_size));
+        GetMaxSupportedBatchSize(engine.get(), num_profiles, &max_batch_size));
   }
 
   if (config_batch_hint && max_batch_size == 0) {
@@ -604,33 +602,31 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
   triton::common::TritonJson::Value ref_inputs(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
-  RETURN_IF_ERROR(GetRefIO(true /*is_input*/, engine, &ref_inputs));
+  RETURN_IF_ERROR(GetRefIO(true /*is_input*/, engine.get(), &ref_inputs));
   triton::common::TritonJson::Value mutable_inputs(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
   bool found_inputs = ModelConfig().Find("input", &mutable_inputs);
-  RETURN_IF_ERROR(FixIO(engine, ref_inputs, &mutable_inputs));
+  RETURN_IF_ERROR(FixIO(engine.get(), ref_inputs, &mutable_inputs));
   if (!found_inputs) {
     ModelConfig().Add("input", std::move(mutable_inputs));
   }
 
   triton::common::TritonJson::Value ref_outputs(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
-  RETURN_IF_ERROR(GetRefIO(false /*is_input*/, engine, &ref_outputs));
+  RETURN_IF_ERROR(GetRefIO(false /*is_input*/, engine.get(), &ref_outputs));
   triton::common::TritonJson::Value mutable_outputs(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
   bool found_outputs = ModelConfig().Find("output", &mutable_outputs);
-  RETURN_IF_ERROR(FixIO(engine, ref_outputs, &mutable_outputs));
+  RETURN_IF_ERROR(FixIO(engine.get(), ref_outputs, &mutable_outputs));
   if (!found_outputs) {
     ModelConfig().Add("output", std::move(mutable_outputs));
   }
 
   if (engine != nullptr) {
-    engine->destroy();
-    engine = nullptr;
+    engine.reset();
   }
   if (runtime != nullptr) {
-    runtime->destroy();
-    runtime = nullptr;
+    runtime.reset();
   }
 
   return nullptr;
@@ -964,8 +960,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Get the state of the model that corresponds to this instance.
   ModelState* StateForModel() const { return model_state_; }
 
-  nvinfer1::ICudaEngine** EnginePtr() { return &engine_; }
-  nvinfer1::ICudaEngine* Engine() { return engine_; }
+  std::shared_ptr<nvinfer1::ICudaEngine>* EnginePtr() { return &engine_; }
+  std::shared_ptr<nvinfer1::ICudaEngine> Engine() { return engine_; }
 
   void ProcessRequests(
       TRITONBACKEND_Request** requests, const uint32_t request_count);
@@ -1063,7 +1059,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     }
     std::string profile_name_;
     int profile_idx_;
-    nvinfer1::IExecutionContext* context_;
+    std::shared_ptr<nvinfer1::IExecutionContext> context_;
 
     // Struct that holds cudaGraphExec_t and the dimensions of the
     // inputs used to capture the graph
@@ -1145,7 +1141,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   // the engine is shared across all contexts and it must not be
   // destroyed by the instance. In the future version of TensorRT, the
   // engine may be shared even in the dynamic shape case.
-  nvinfer1::ICudaEngine* engine_;
+  std::shared_ptr<nvinfer1::ICudaEngine> engine_;
 
   // Map from profile index to the corresponding TensorRT context. Use
   // map to ensure each profile index is mapped to exactly one
@@ -1472,11 +1468,6 @@ ModelInstanceState::~ModelInstanceState()
       }
     }
     trt_context.second.cuda_graphs_.clear();
-
-    if (trt_context.second.context_ != nullptr) {
-      trt_context.second.context_->destroy();
-      trt_context.second.context_ = nullptr;
-    }
   }
 
   if (stream_ != nullptr) {
@@ -1525,11 +1516,6 @@ ModelInstanceState::~ModelInstanceState()
               .c_str());
     }
     output_copy_stream_ = nullptr;
-  }
-
-  if ((engine_ != nullptr) && (!model_state_->IsEngineSharingEnabled())) {
-    engine_->destroy();
-    engine_ = nullptr;
   }
 
   DestroyEventSet();
@@ -2932,7 +2918,8 @@ ModelInstanceState::InitOptimizationProfiles()
   // the first context creation. As currently triton supports one
   // context per engine, in order to set the specified profile_index,
   // another context is created and the previous context is destroyed.
-  auto default_trt_context = engine_->createExecutionContext();
+  std::shared_ptr<nvinfer1::IExecutionContext> default_trt_context(
+      engine_->createExecutionContext());
   if (default_trt_context == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
@@ -2952,8 +2939,7 @@ ModelInstanceState::InitOptimizationProfiles()
                 0, TensorRTContext(
                        "default", 0, num_expected_bindings_, EVENT_SET_COUNT))
             .first;
-    it->second.context_ = default_trt_context;
-    default_trt_context = nullptr;
+    it->second.context_ = std::move(default_trt_context);
     if (UseTensorRTv2API(engine_)) {
       // Store the profile dimensions and set binding dimensions to
       // max dims for later initializing the input bindings
@@ -2994,16 +2980,15 @@ ModelInstanceState::InitOptimizationProfiles()
         continue;
       }
       if (profile_index == 0) {
-        res.first->second.context_ = default_trt_context;
-        default_trt_context = nullptr;
+        res.first->second.context_ = std::move(default_trt_context);
       } else {
-        res.first->second.context_ = engine_->createExecutionContext();
+        res.first->second.context_.reset(engine_->createExecutionContext());
         if (res.first->second.context_ == nullptr) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
         }
-        if (!res.first->second.context_->setOptimizationProfile(
-                profile_index)) {
+        if (!res.first->second.context_->setOptimizationProfileAsync(
+                profile_index, stream_)) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INVALID_ARG,
               (std::string("Can not set the specified optimization "
@@ -3039,7 +3024,7 @@ ModelInstanceState::InitOptimizationProfiles()
 
     // profile 0 is not specified
     if (default_trt_context != nullptr) {
-      default_trt_context->destroy();
+      default_trt_context.reset();
     }
   }
 

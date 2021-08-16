@@ -27,6 +27,7 @@
 #include "loader.h"
 
 #include <NvInferPlugin.h>
+#include <memory>
 #include <mutex>
 #include "logging.h"
 #include "triton/backend/backend_common.h"
@@ -36,11 +37,12 @@ namespace triton { namespace backend { namespace tensorrt {
 TRITONSERVER_Error*
 LoadPlan(
     const std::string& plan_path, const int64_t dla_core_id,
-    nvinfer1::IRuntime** runtime, nvinfer1::ICudaEngine** engine)
+    std::shared_ptr<nvinfer1::IRuntime>* runtime,
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine)
 {
   // Create runtime only if it is not provided
   if (*runtime == nullptr) {
-    *runtime = nvinfer1::createInferRuntime(tensorrt_logger);
+    runtime->reset(nvinfer1::createInferRuntime(tensorrt_logger));
     if (*runtime == nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT runtime");
@@ -66,8 +68,8 @@ LoadPlan(
   RETURN_IF_ERROR(ReadTextFile(plan_path, &model_data_str));
   std::vector<char> model_data(model_data_str.begin(), model_data_str.end());
 
-  *engine =
-      (*runtime)->deserializeCudaEngine(&model_data[0], model_data.size());
+  engine->reset(
+      (*runtime)->deserializeCudaEngine(&model_data[0], model_data.size()));
   if (*engine == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT engine");

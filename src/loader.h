@@ -26,6 +26,7 @@
 #pragma once
 
 #include <NvInfer.h>
+#include <memory>
 #include <string>
 #include <vector>
 #include "triton/core/tritonserver.h"
@@ -47,6 +48,7 @@ namespace triton { namespace backend { namespace tensorrt {
 /// \return Error status.
 TRITONSERVER_Error* LoadPlan(
     const std::string& plan_path, const int64_t dla_core_id,
-    nvinfer1::IRuntime** runtime, nvinfer1::ICudaEngine** engine);
+    std::shared_ptr<nvinfer1::IRuntime>* runtime,
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine);
 
 }}}  // namespace triton::backend::tensorrt

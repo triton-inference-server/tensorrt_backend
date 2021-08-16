@@ -35,7 +35,7 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-bool UseTensorRTv2API(const nvinfer1::ICudaEngine* engine);
+bool UseTensorRTv2API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine);
 
 TRITONSERVER_Error* GetProfileIndex(
     const std::string& profile_name, int* profile_index);
