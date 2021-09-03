@@ -2906,6 +2906,7 @@ ModelInstanceState::RegisterContexts()
       context_queue_.Put(context_idx++);
     }
   }
+  next_context_idx_ = context_queue_.Get();
 }
 
 TRITONSERVER_Error*
