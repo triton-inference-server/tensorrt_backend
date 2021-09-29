@@ -115,11 +115,6 @@ TimestampCaptureCallback(void* data)
     }                                                                 \
   } while (false)
 
-void CUDART_CB
-TimestampCaptureCallback(void* data)
-{
-  SET_TIMESTAMP(*(reinterpret_cast<uint64_t*>(data)));
-}
 #endif  // TRITON_ENABLE_STATS
 
 // Number of CUDA event set for each instance.
@@ -2477,9 +2472,9 @@ ModelInstanceState::ProcessResponse()
     NVTX_MARKER("plan_output_ready");
 
     // Compute ends when the output data copy is completed
+    uint64_t compute_end_ns = 0;
 #ifdef TRITON_ENABLE_STATS
     cudaEventSynchronize(event_set.timestamp_signal_);
-    uint64_t compute_end_ns = 0;
     SET_TIMESTAMP(compute_end_ns);
 #endif  // TRITON_ENABLE_STATS
 
