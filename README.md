@@ -52,8 +52,10 @@ backend that are then applied to all models that use the backend.
 
 ##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>
 
-Instruct TensorRT to consider the request inputs as one contiguous buffer if
-their memory addresses align with each other.
+Instruct TensorRT to consider the requests' inputs with the same name as
+one contiguous buffer if their memory addresses align with each other.
+This option should only be enabled if all requests' input tensors are allocated
+from the same memory region. Default value is false.
 
 ## Build the TensorRT Backend
 
