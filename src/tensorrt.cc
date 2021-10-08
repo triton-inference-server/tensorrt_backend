@@ -193,6 +193,18 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 }  // namespace
 
 //
+// BackendConfiguration
+//
+// Struct to hold value specified via backend config
+struct BackendConfiguration {
+  BackendConfiguration()
+      : coalesce_request_input_(false)
+  {
+  }
+  bool coalesce_request_input_;
+};
+
+//
 // ModelState
 //
 // State associated with a model that is using this backend. An object
@@ -1291,6 +1303,10 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether zero copy is supported on this device
   bool zero_copy_support_;
 
+  // Whether the input collector will coalesce request inputs as if they form
+  // one contiguous buffer when possible
+  bool coalesce_request_input_;
+
   ModelState* model_state_;
 };
 
@@ -1376,6 +1392,17 @@ ModelInstanceState::ModelInstanceState(
     : TensorRTModelInstance(model_state, triton_model_instance),
       total_bindings_(0), num_expected_bindings_(0), model_state_(model_state)
 {
+  // 'coalesce_request_input_' is set at backend level
+  {
+    TRITONBACKEND_Model* model;
+    THROW_IF_BACKEND_INSTANCE_ERROR(TRITONBACKEND_ModelInstanceModel(triton_model_instance, &model));
+    TRITONBACKEND_Backend* backend;
+    THROW_IF_BACKEND_INSTANCE_ERROR(TRITONBACKEND_ModelBackend(model, &backend));
+    void* state;
+    THROW_IF_BACKEND_INSTANCE_ERROR(TRITONBACKEND_BackendState(backend, &state));
+    coalesce_request_input_ = reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
+  }
+
   if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
     throw triton::backend::BackendModelInstanceException(TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INVALID_ARG,
@@ -1722,7 +1749,7 @@ ModelInstanceState::Run(
       model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
       input_copy_stream_, events_[next_set_].input_ready_,
       prev_input_ready_event, model_state_->GatherKernelBufferThreshold(),
-      HostPolicyName().c_str(), zero_copy_support_));
+      HostPolicyName().c_str(), zero_copy_support_, coalesce_request_input_));
   // For each input, concatenate input values from each request into
   // the corresponding binding.
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
@@ -4944,6 +4971,40 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         "unable to register default TensorRT Plugins");
   }
 
+  // The backend configuration may contain information needed by the
+  // backend, such a command-line arguments.
+  TRITONSERVER_Message* backend_config_message;
+  RETURN_IF_ERROR(
+      TRITONBACKEND_BackendConfig(backend, &backend_config_message));
+
+  const char* buffer;
+  size_t byte_size;
+  RETURN_IF_ERROR(TRITONSERVER_MessageSerializeToJson(
+      backend_config_message, &buffer, &byte_size));
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("backend configuration:\n") + buffer).c_str());
+
+  triton::common::TritonJson::Value backend_config;
+  if (byte_size != 0) {
+    RETURN_IF_ERROR(backend_config.Parse(buffer, byte_size));
+  }
+
+  std::unique_ptr<BackendConfiguration> lconfig(new BackendConfiguration());
+  triton::common::TritonJson::Value cmdline;
+  if (backend_config.Find("cmdline", &cmdline)) {
+    triton::common::TritonJson::Value value;
+    std::string value_str;
+    if (cmdline.Find("coalesce-request-input", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      RETURN_IF_ERROR(
+          ParseBoolValue(value_str, &lconfig->coalesce_request_input_));
+    }
+  }
+  RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
+      backend, reinterpret_cast<void*>(lconfig.get())));
+
+  lconfig.release();
   return nullptr;  // success
 }
 
@@ -4953,6 +5014,9 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
+  void* vstate;
+  RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
+  delete reinterpret_cast<BackendConfiguration*>(vstate);
   return nullptr;  // success
 }
 

@@ -45,6 +45,18 @@ available in the main [server](https://github.com/triton-inference-server/server
 repo. If you don't find your answer there you can ask questions on the
 main Triton [issues page](https://github.com/triton-inference-server/server/issues).
 
+## Command-line Options
+
+The command-line options configure properties of the TensorRT
+backend that are then applied to all models that use the backend.
+
+##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>
+
+Instruct TensorRT to consider the requests' inputs with the same name as
+one contiguous buffer if their memory addresses align with each other.
+This option should only be enabled if all requests' input tensors are allocated
+from the same memory region. Default value is false.
+
 ## Build the TensorRT Backend
 
 Appropriate version of TensorRT must be installed on the system. Check the support matrix to find the correct version of TensorRT to be installed.
