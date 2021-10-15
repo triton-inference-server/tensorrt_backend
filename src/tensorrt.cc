@@ -1206,7 +1206,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   std::thread completion_thread_;
 
   triton::common::SyncQueue<size_t> context_queue_;
-  size_t next_context_idx_;
 
   // The details needed by the completion thread to finalize the
   // response for a model execution.
@@ -1559,7 +1558,7 @@ ModelInstanceState::ProcessRequests(
        std::to_string(request_count) + " requests")
           .c_str());
 
-  auto context_idx = next_context_idx_;
+  auto context_idx = context_queue_.Get();
 
   Run(requests, request_count, context_idx);
 
@@ -1592,9 +1591,6 @@ ModelInstanceState::ProcessRequests(
     next_buffer_binding_set_ =
         (next_buffer_binding_set_ + 1) % num_copy_streams_;
   }
-
-  // Block the execution if there are no available contexts.
-  next_context_idx_ = context_queue_.Get();
 }
 
 void
@@ -2928,7 +2924,6 @@ ModelInstanceState::RegisterContexts()
       context_queue_.Put(context_idx++);
     }
   }
-  next_context_idx_ = context_queue_.Get();
 }
 
 TRITONSERVER_Error*
