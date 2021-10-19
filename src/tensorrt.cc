@@ -197,10 +197,7 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 //
 // Struct to hold value specified via backend config
 struct BackendConfiguration {
-  BackendConfiguration()
-      : coalesce_request_input_(false)
-  {
-  }
+  BackendConfiguration() : coalesce_request_input_(false) {}
   bool coalesce_request_input_;
 };
 
@@ -1395,12 +1392,16 @@ ModelInstanceState::ModelInstanceState(
   // 'coalesce_request_input_' is set at backend level
   {
     TRITONBACKEND_Model* model;
-    THROW_IF_BACKEND_INSTANCE_ERROR(TRITONBACKEND_ModelInstanceModel(triton_model_instance, &model));
+    THROW_IF_BACKEND_INSTANCE_ERROR(
+        TRITONBACKEND_ModelInstanceModel(triton_model_instance, &model));
     TRITONBACKEND_Backend* backend;
-    THROW_IF_BACKEND_INSTANCE_ERROR(TRITONBACKEND_ModelBackend(model, &backend));
+    THROW_IF_BACKEND_INSTANCE_ERROR(
+        TRITONBACKEND_ModelBackend(model, &backend));
     void* state;
-    THROW_IF_BACKEND_INSTANCE_ERROR(TRITONBACKEND_BackendState(backend, &state));
-    coalesce_request_input_ = reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
+    THROW_IF_BACKEND_INSTANCE_ERROR(
+        TRITONBACKEND_BackendState(backend, &state));
+    coalesce_request_input_ =
+        reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
   }
 
   if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
@@ -3415,13 +3416,20 @@ ModelInstanceState::InitializeBatchInputBindings(
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
 
-      // FIXME.. Don't allocate new backend memory when the original
-      // memory is writable. zero-copy case
       BackendMemory* bm;
-      BackendMemory::Create(
-          model_state_->TritonMemoryManager(),
-          {BackendMemory::AllocationType::CPU_PINNED_POOL},
-          0 /* memory_type_id */, io_binding_info.byte_size_, &bm);
+      if (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_GPU) {
+        // zero-copy is used so the input buffer is direct-writable
+        BackendMemory::Create(
+            model_state_->TritonMemoryManager(),
+            BackendMemory::AllocationType::CPU_PINNED_POOL,
+            0 /* memory_type_id */, io_binding_info.buffer_,
+            io_binding_info.byte_size_, &bm);
+      } else {
+        BackendMemory::Create(
+            model_state_->TritonMemoryManager(),
+            {BackendMemory::AllocationType::CPU_PINNED_POOL},
+            0 /* memory_type_id */, io_binding_info.byte_size_, &bm);
+      }
       io_binding_info.batch_input_.reset(new BatchInputData(batch_input, bm));
     }
   }
