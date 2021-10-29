@@ -4043,8 +4043,10 @@ ModelInstanceState::InitializeExecuteInputBinding(
       }
     } else {
       std::vector<int64_t> config_dims_vec_with_mbs;
+      int vectorized_dim = io_binding_info.vectorized_dim_;
       if (support_batching_) {
         config_dims_vec_with_mbs.push_back(model_state_->MaxBatchSize());
+        vectorized_dim += 1;
       }
       config_dims_vec_with_mbs.insert(
           config_dims_vec_with_mbs.end(), config_dims_vec.begin(),
@@ -4053,7 +4055,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
         byte_size = GetByteSize(dt, config_dims_vec_with_mbs);
       } else {
         auto dims = config_dims_vec_with_mbs;
-        dims[io_binding_info.vectorized_dim_] +=
+        dims[vectorized_dim] +=
             (io_binding_info.components_per_element_ -
              (dims[io_binding_info.vectorized_dim_] %
               io_binding_info.components_per_element_));
