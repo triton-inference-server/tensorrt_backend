@@ -220,9 +220,20 @@ class ModelState : public TensorRTModel {
 
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
+  const std::map<std::string, std::pair<int64_t, int64_t>>& ModelOutputs()
+  {
+    return model_outputs_;
+  }
 
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
+
+  // model_outputs is a map that contains unique outputs that the model must
+  // provide. In the model configuration, the output in the state configuration
+  // can have intersection with the outputs section of the model. If an output
+  // is specified both in the output section and state section, it indicates
+  // that the backend must return the output state to the client too.
+  std::map<std::string, std::pair<int64_t, int64_t>> model_outputs_;
 
   // Auto-complete the model configuration
   TRITONSERVER_Error* AutoCompleteConfig();
@@ -299,6 +310,47 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
   RETURN_IF_ERROR((*state)->ValidateModelConfig());
   RETURN_IF_ERROR((*state)->ParseParameters());
 
+  auto& model_outputs = (*state)->model_outputs_;
+
+  // Parse the output states in the model configuration
+  triton::common::TritonJson::Value sequence_batching;
+  if ((*state)->ModelConfig().Find("sequence_batching", &sequence_batching)) {
+    triton::common::TritonJson::Value states;
+    if (sequence_batching.Find("state", &states)) {
+      for (size_t i = 0; i < states.ArraySize(); i++) {
+        triton::common::TritonJson::Value state;
+        RETURN_IF_ERROR(states.IndexAsObject(i, &state));
+        std::string output_state_name;
+        RETURN_IF_ERROR(
+            state.MemberAsString("output_name", &output_state_name));
+        auto it = model_outputs.find(output_state_name);
+        if (it == model_outputs.end()) {
+          model_outputs.insert({output_state_name, std::make_pair(-1, i)});
+        } else {
+          it->second.second = i;
+        }
+      }
+    }
+  }
+
+  // Parse the output names in the model configuration
+  triton::common::TritonJson::Value outputs;
+  RETURN_IF_ERROR((*state)->ModelConfig().MemberAsArray("output", &outputs));
+  for (size_t i = 0; i < outputs.ArraySize(); i++) {
+    triton::common::TritonJson::Value output;
+    RETURN_IF_ERROR(outputs.IndexAsObject(i, &output));
+
+    std::string output_name_str;
+
+    RETURN_IF_ERROR(output.MemberAsString("name", &output_name_str));
+    auto it = model_outputs.find(output_name_str);
+    if (it == model_outputs.end()) {
+      model_outputs.insert({output_name_str, {i, -1}});
+    } else {
+      it->second.first = i;
+    }
+  }
+
   return nullptr;  // success
 }
 
@@ -309,10 +361,6 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
   TRITONBACKEND_Backend* backend;
   THROW_IF_BACKEND_MODEL_ERROR(
       TRITONBACKEND_ModelBackend(triton_model, &backend));
-  // void* vstate;
-  // THROW_IF_BACKEND_MODEL_ERROR(TRITONBACKEND_BackendState(backend,
-  // &vstate)); backend_config_ =
-  // reinterpret_cast<BackendConfiguration*>(vstate);
 }
 
 ModelState::~ModelState()
@@ -340,7 +388,6 @@ ModelState::CreateEngine(
   // are serialized with a global lock.
   static std::mutex global_context_mu;
   std::lock_guard<std::mutex> glock(global_context_mu);
-
 
   // Create shared engine for the device if haven't tried so.
   auto device_pair = std::make_pair(gpu_device, dla_core_id);
@@ -999,6 +1046,8 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config_inputs);
   TRITONSERVER_Error* InitializeSequenceControlInputBindings(
       common::TritonJson::Value& config);
+  TRITONSERVER_Error* InitializeSequenceStateIOBindings(
+      common::TritonJson::Value& config);
   TRITONSERVER_Error* InitializeBatchInputBindings(
       common::TritonJson::Value& config);
   TRITONSERVER_Error* InitializeBatchOutputBindings(
@@ -1011,10 +1060,12 @@ class ModelInstanceState : public TensorRTModelInstance {
       const std::string& input_name, const std::string& input_datatype,
       common::TritonJson::Value& input_dims, const bool is_control = false,
       const bool is_ragged = false);
+  TRITONSERVER_Error* InitializeExecuteOutputBinding(
+      const std::string& output_name, const std::string& output_datatype,
+      common::TritonJson::Value& output_dims);
   TRITONSERVER_Error* InitializeShapeInputBinding(
       const std::string& input_name, const TRITONSERVER_DataType input_datatype,
       common::TritonJson::Value& model_config_dims);
-
 
   TRITONSERVER_Error* GetProfileDimensions(
       const int io_index, const int profile_index, TensorRTContext* context);
@@ -2177,7 +2228,6 @@ ModelInstanceState::Run(
 
   // Collect the names of requested outputs. Do not include outputs
   // for requests that have already responded with an error.
-  std::set<std::string> required_outputs;
   std::vector<std::set<std::string>> request_required_outputs(
       payload_->request_count_);
   for (size_t idx = 0; idx < payload_->request_count_; idx++) {
@@ -2194,7 +2244,6 @@ ModelInstanceState::Run(
               &response, TRITONBACKEND_RequestOutputName(
                              request, output_idx, &output_name));
           if (response != nullptr) {
-            required_outputs.insert(output_name);
             request_required_outputs[idx].insert(output_name);
           }
         }
@@ -2219,6 +2268,7 @@ ModelInstanceState::Run(
       model_state_->MaxBatchSize(), model_state_->TritonMemoryManager(),
       model_state_->EnablePinnedOutput(), output_stream,
       events_[next_set_].output_ready_, zero_copy_support_));
+  auto& model_outputs = StateForModel()->ModelOutputs();
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
@@ -2364,13 +2414,38 @@ ModelInstanceState::Run(
             "failed to run TRT response");
       }
 
-      // Process the output tensors with pinned memory address if zero-copy is
-      // supported, otherwise use device memory. Peform memory copies
-      // asynchronously and wait for model execution.
-      payload_->responder_->ProcessTensor(
-          name, dt, batchn_shape,
-          static_cast<const char*>(io_binding_info.buffer_),
-          io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+      // Custom handling for state outputs. If the first element in the pair is
+      // greater than zero, it indicates that the tensor must be process using
+      // ProcessTensor. If the second element in the pair is larger than zero,
+      // it indicates that it must be processed using ProcessStateTensor.
+      auto model_output_type_itr = model_outputs.find(name);
+      bool is_output_tensor = model_output_type_itr->second.first != -1;
+      bool is_state_tensor = model_output_type_itr->second.second != -1;
+
+      if (is_output_tensor) {
+        // Process the output tensors with pinned memory address if zero-copy is
+        // supported, otherwise use device memory. Peform memory copies
+        // asynchronously and wait for model execution.
+        payload_->responder_->ProcessTensor(
+            name, dt, batchn_shape,
+            static_cast<const char*>(io_binding_info.buffer_),
+            io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+      }
+
+      if (is_state_tensor) {
+        auto states = payload_->responder_->ProcessStateTensor(
+            name, dt, batchn_shape,
+            static_cast<const char*>(io_binding_info.buffer_),
+            io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+
+        // Update the states
+        for (auto& state : states) {
+          FAIL_ALL_AND_RETURN_IF_ERROR(
+              payload_->requests_, payload_->request_count_,
+              payload_->responses_, TRITONBACKEND_StateUpdate(state),
+              "failed to update state");
+        }
+      }
     }
   }
 }
@@ -3207,6 +3282,8 @@ ModelInstanceState::InitIOBindingBuffers()
     RETURN_IF_ERROR(InitializeConfigShapeInputBindings(config_inputs));
     RETURN_IF_ERROR(InitializeConfigExecuteInputBindings(config_inputs));
     RETURN_IF_ERROR(
+        InitializeSequenceStateIOBindings(model_state_->ModelConfig()));
+    RETURN_IF_ERROR(
         InitializeSequenceControlInputBindings(model_state_->ModelConfig()));
     RETURN_IF_ERROR(InitializeBatchInputBindings(model_state_->ModelConfig()));
   }
@@ -3370,6 +3447,41 @@ ModelInstanceState::InitializeSequenceControlInputBindings(
       }
     }
   }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelInstanceState::InitializeSequenceStateIOBindings(
+    common::TritonJson::Value& config)
+{
+  common::TritonJson::Value sequence_batching;
+  if (model_state_->ModelConfig().Find(
+          "sequence_batching", &sequence_batching)) {
+    triton::common::TritonJson::Value states;
+    if (sequence_batching.Find("state", &states)) {
+      for (size_t i = 0; i < states.ArraySize(); i++) {
+        triton::common::TritonJson::Value io;
+        RETURN_IF_ERROR(states.IndexAsObject(i, &io));
+        std::string input_name;
+        RETURN_IF_ERROR(io.MemberAsString("input_name", &input_name));
+        std::string output_name;
+        RETURN_IF_ERROR(io.MemberAsString("output_name", &output_name));
+        std::string io_datatype;
+        RETURN_IF_ERROR(io.MemberAsString("data_type", &io_datatype));
+
+        common::TritonJson::Value model_config_dims;
+        RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
+
+        RETURN_IF_ERROR(InitializeExecuteInputBinding(
+            input_name, io_datatype, model_config_dims, false /* is_control */,
+            false /* is_ragged */));
+
+        RETURN_IF_ERROR(InitializeExecuteOutputBinding(
+            output_name, io_datatype, model_config_dims));
+      }
+    }
+  }
+
   return nullptr;
 }
 
@@ -3663,8 +3775,6 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
   for (size_t i = 0; i < config_output.ArraySize(); i++) {
     triton::common::TritonJson::Value io;
     RETURN_IF_ERROR(config_output.IndexAsObject(i, &io));
-    // the maximum byte sizes across all profiles
-    int64_t max_byte_size = 0;
 
     std::string io_name;
     RETURN_IF_ERROR(io.MemberAsString("name", &io_name));
@@ -3674,198 +3784,22 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
 
     bool is_shape_tensor = false;
     RETURN_IF_ERROR(io.MemberAsBool("is_shape_tensor", &is_shape_tensor));
+
+    common::TritonJson::Value model_config_dims;
+    common::TritonJson::Value reshape;
+    if (io.Find("reshape", &reshape)) {
+      reshape.MemberAsArray("shape", &model_config_dims);
+    } else {
+      io.MemberAsArray("dims", &model_config_dims);
+    }
+
     // Skip if the output is specified to be a shape tensor
     if (is_shape_tensor) {
       continue;
     }
 
-    int io_index = engine_->getBindingIndex(io_name.c_str());
-
-    auto& io_binding_info =
-        io_binding_infos_[next_buffer_binding_set_][io_index];
-    for (auto& trt_context : trt_contexts_) {
-      auto& profile_index = trt_context.first;
-      auto& context = trt_context.second;
-      int binding_index = num_expected_bindings_ * profile_index + io_index;
-      if (binding_index < 0) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_NOT_FOUND,
-            (std::string("output '") + io_name + "' not found for " + Name())
-                .c_str());
-      }
-
-      if (io_binding_info.buffer_ != nullptr) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("output '") + io_name +
-             "'  has already appeared as an input or output for " + Name())
-                .c_str());
-      }
-
-      if (engine_->bindingIsInput(binding_index)) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("output '") + io_name +
-             "' is expected to be an input in model for " + Name())
-                .c_str());
-      }
-
-      TRITONSERVER_DataType dt =
-          ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
-      TRITONSERVER_DataType config_dt =
-          ModelConfigDataTypeToTritonServerDataType(io_datatype);
-      if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected datatype TYPE_") +
-             TRITONSERVER_DataTypeString(dt) + " for inference output '" +
-             io_name + "', expecting TYPE_" +
-             TRITONSERVER_DataTypeString(config_dt) + " for " + Name())
-                .c_str());
-      }
-
-      io_binding_info.is_linear_format_ =
-          (engine_->getBindingFormat(binding_index) ==
-           nvinfer1::TensorFormat::kLINEAR);
-      if (!io_binding_info.is_linear_format_) {
-        io_binding_info.vectorized_dim_ =
-            engine_->getBindingVectorizedDim(binding_index);
-        io_binding_info.components_per_element_ =
-            engine_->getBindingComponentsPerElement(binding_index);
-        if (io_binding_info.vectorized_dim_ == -1) {
-          return TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INVALID_ARG,
-              (std::string("unexpected vectorized dim is -1 for non-linear "
-                           "output '") +
-               io_name + "' for " + Name())
-                  .c_str());
-        }
-      }
-
-      common::TritonJson::Value model_config_dims;
-      common::TritonJson::Value reshape;
-      if (io.Find("reshape", &reshape)) {
-        reshape.MemberAsArray("shape", &model_config_dims);
-      } else {
-        io.MemberAsArray("dims", &model_config_dims);
-      }
-
-      nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
-      // Skip 'batch_output' validation as it is not exact match to
-      // model dims
-      if (!io_binding_info.buffer_is_ragged_) {
-        RETURN_IF_ERROR(CompareDimsSupported(
-            name_, io_name, engine_dims, model_config_dims, support_batching_,
-            (!engine_->hasImplicitBatchDimension()),
-            false /* compare_exact */));
-      }
-
-      if (io_binding_info.buffer_is_ragged_ &&
-          !io_binding_info.is_linear_format_) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected allow-ragged for non-linear output '") +
-             io_name + "' for " + Name())
-                .c_str());
-      }
-
-      int64_t byte_size;
-      if (UseTensorRTv2API(engine_)) {
-        const nvinfer1::Dims output_dim =
-            context.context_->getBindingDimensions(binding_index);
-        std::vector<int64_t> dim_vec;
-        DimsToDimVec(output_dim, &dim_vec);
-        byte_size = GetByteSize(dt, dim_vec);
-      } else {
-        std::vector<int64_t> dim_vec;
-        RETURN_IF_ERROR(DimsJsonToDimVec(model_config_dims, &dim_vec));
-        std::vector<int64_t> dim_vec_with_mbs;
-        if (support_batching_) {
-          dim_vec_with_mbs.push_back(model_state_->MaxBatchSize());
-        }
-        dim_vec_with_mbs.insert(
-            dim_vec_with_mbs.end(), dim_vec.begin(), dim_vec.end());
-        byte_size = GetByteSize(dt, dim_vec_with_mbs);
-      }
-
-      if (byte_size == -1) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            (std::string("unable to allocate memory for output '") + io_name +
-             "' for " + Name())
-                .c_str());
-      }
-      max_byte_size = std::max(max_byte_size, byte_size);
-    }
-
-    // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
-    // We rely on buffer_bindings_ being non-nullptr to indicate that
-    // the buffer has been correctly initalized so even for zero-sized
-    // tensors always allocate something.
-    void* buffer = nullptr;
-    cudaError_t err = cudaSuccess;
-    if (zero_copy_support_) {
-      err = cudaHostAlloc(
-          &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
-    } else {
-      err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
-    }
-    if (err != cudaSuccess) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unable to allocate memory for output '") + io_name +
-           "' for " + Name() + ": " + cudaGetErrorString(err))
-              .c_str());
-    }
-
-    io_binding_info.byte_size_ = max_byte_size;
-    io_binding_info.buffer_ = buffer;
-    io_binding_info.device_buffer_ = buffer;
-    // Whether the output needs to be scattered based on input
-    if (io_binding_info.buffer_is_ragged_) {
-      std::vector<int64_t> output_shape;
-      common::TritonJson::Value model_config_dims;
-      common::TritonJson::Value reshape;
-      if (io.Find("reshape", &reshape)) {
-        reshape.MemberAsArray("shape", &model_config_dims);
-      } else {
-        io.MemberAsArray("dims", &model_config_dims);
-      }
-      if (support_batching_) {
-        output_shape.push_back(-1);
-      }
-      for (size_t i = 0; i < model_config_dims.ArraySize(); i++) {
-        int64_t dim;
-        RETURN_IF_ERROR(model_config_dims.IndexAsInt(i, &dim));
-        output_shape.push_back(dim);
-      }
-      io_binding_info.io_shape_mapping_.second = output_shape;
-    }
-    if (zero_copy_support_) {
-      io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
-      io_binding_info.memory_type_id_ = 0;
-      err = cudaHostGetDevicePointer(
-          &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
-      if (err != cudaSuccess) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            (std::string("unable to get mapped device address for output '") +
-             io_name + " for " + Name() + ": " + cudaGetErrorString(err))
-                .c_str());
-      }
-    } else {
-      io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
-      io_binding_info.memory_type_id_ = DeviceId();
-    }
-
-    // Set buffer bindings of all optimization profile since buffer is
-    // allocated
-    for (auto& trt_context : trt_contexts_) {
-      auto binding_index =
-          num_expected_bindings_ * trt_context.first + io_index;
-      buffer_bindings_[next_buffer_binding_set_][binding_index] =
-          io_binding_info.device_buffer_;
-    }
+    RETURN_IF_ERROR(InitializeExecuteOutputBinding(
+        io_name, io_datatype, model_config_dims));
   }
 
   return nullptr;
@@ -4063,7 +3997,6 @@ ModelInstanceState::InitializeExecuteInputBinding(
       }
     }
 
-
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -4120,6 +4053,187 @@ ModelInstanceState::InitializeExecuteInputBinding(
         (std::string("unexpected allow-ragged for non-linear input '") +
          input_name + "' for " + Name())
             .c_str());
+  }
+
+  // Set buffer bindings of all optimization profile since buffer is
+  // allocated
+  for (auto& trt_context : trt_contexts_) {
+    auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
+    buffer_bindings_[next_buffer_binding_set_][binding_index] =
+        io_binding_info.device_buffer_;
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelInstanceState::InitializeExecuteOutputBinding(
+    const std::string& output_name, const std::string& output_datatype,
+    common::TritonJson::Value& output_dims)
+{
+  // the maximum byte sizes across all profiles
+  int64_t max_byte_size = 0;
+
+  int io_index = engine_->getBindingIndex(output_name.c_str());
+
+  auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  for (auto& trt_context : trt_contexts_) {
+    auto& profile_index = trt_context.first;
+    auto& context = trt_context.second;
+    int binding_index = num_expected_bindings_ * profile_index + io_index;
+    if (binding_index < 0) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_NOT_FOUND,
+          (std::string("output '") + output_name + "' not found for " + Name())
+              .c_str());
+    }
+
+    if (io_binding_info.buffer_ != nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("output '") + output_name +
+           "'  has already appeared as an input or output for " + Name())
+              .c_str());
+    }
+
+    if (engine_->bindingIsInput(binding_index)) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("output '") + output_name +
+           "' is expected to be an input in model for " + Name())
+              .c_str());
+    }
+
+    TRITONSERVER_DataType dt =
+        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
+    TRITONSERVER_DataType config_dt =
+        ModelConfigDataTypeToTritonServerDataType(output_datatype);
+    if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unexpected datatype TYPE_") +
+           TRITONSERVER_DataTypeString(dt) + " for inference output '" +
+           output_name + "', expecting TYPE_" +
+           TRITONSERVER_DataTypeString(config_dt) + " for " + Name())
+              .c_str());
+    }
+
+    io_binding_info.is_linear_format_ =
+        (engine_->getBindingFormat(binding_index) ==
+         nvinfer1::TensorFormat::kLINEAR);
+    if (!io_binding_info.is_linear_format_) {
+      io_binding_info.vectorized_dim_ =
+          engine_->getBindingVectorizedDim(binding_index);
+      io_binding_info.components_per_element_ =
+          engine_->getBindingComponentsPerElement(binding_index);
+      if (io_binding_info.vectorized_dim_ == -1) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string("unexpected vectorized dim is -1 for non-linear "
+                         "output '") +
+             output_name + "' for " + Name())
+                .c_str());
+      }
+    }
+
+    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+    // Skip 'batch_output' validation as it is not exact match to
+    // model dims
+    if (!io_binding_info.buffer_is_ragged_) {
+      RETURN_IF_ERROR(CompareDimsSupported(
+          name_, output_name, engine_dims, output_dims, support_batching_,
+          (!engine_->hasImplicitBatchDimension()), false /* compare_exact */));
+    }
+
+    if (io_binding_info.buffer_is_ragged_ &&
+        !io_binding_info.is_linear_format_) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unexpected allow-ragged for non-linear output '") +
+           output_name + "' for " + Name())
+              .c_str());
+    }
+
+    int64_t byte_size;
+    if (UseTensorRTv2API(engine_)) {
+      const nvinfer1::Dims output_dim =
+          context.context_->getBindingDimensions(binding_index);
+      std::vector<int64_t> dim_vec;
+      DimsToDimVec(output_dim, &dim_vec);
+      byte_size = GetByteSize(dt, dim_vec);
+    } else {
+      std::vector<int64_t> dim_vec;
+      RETURN_IF_ERROR(DimsJsonToDimVec(output_dims, &dim_vec));
+      std::vector<int64_t> dim_vec_with_mbs;
+      if (support_batching_) {
+        dim_vec_with_mbs.push_back(model_state_->MaxBatchSize());
+      }
+      dim_vec_with_mbs.insert(
+          dim_vec_with_mbs.end(), dim_vec.begin(), dim_vec.end());
+      byte_size = GetByteSize(dt, dim_vec_with_mbs);
+    }
+
+    if (byte_size == -1) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to allocate memory for output '") + output_name +
+           "' for " + Name())
+              .c_str());
+    }
+    max_byte_size = std::max(max_byte_size, byte_size);
+  }
+
+  // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
+  // We rely on buffer_bindings_ being non-nullptr to indicate that
+  // the buffer has been correctly initalized so even for zero-sized
+  // tensors always allocate something.
+  void* buffer = nullptr;
+  cudaError_t err = cudaSuccess;
+  if (zero_copy_support_) {
+    err = cudaHostAlloc(
+        &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
+  } else {
+    err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
+  }
+  if (err != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to allocate memory for output '") + output_name +
+         "' for " + Name() + ": " + cudaGetErrorString(err))
+            .c_str());
+  }
+
+  io_binding_info.byte_size_ = max_byte_size;
+  io_binding_info.buffer_ = buffer;
+  io_binding_info.device_buffer_ = buffer;
+  // Whether the output needs to be scattered based on input
+  if (io_binding_info.buffer_is_ragged_) {
+    std::vector<int64_t> output_shape;
+    if (support_batching_) {
+      output_shape.push_back(-1);
+    }
+    for (size_t i = 0; i < output_dims.ArraySize(); i++) {
+      int64_t dim;
+      RETURN_IF_ERROR(output_dims.IndexAsInt(i, &dim));
+      output_shape.push_back(dim);
+    }
+    io_binding_info.io_shape_mapping_.second = output_shape;
+  }
+  if (zero_copy_support_) {
+    io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
+    io_binding_info.memory_type_id_ = 0;
+    err = cudaHostGetDevicePointer(
+        &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
+    if (err != cudaSuccess) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to get mapped device address for output '") +
+           output_name + " for " + Name() + ": " + cudaGetErrorString(err))
+              .c_str());
+    }
+  } else {
+    io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
+    io_binding_info.memory_type_id_ = DeviceId();
   }
 
   // Set buffer bindings of all optimization profile since buffer is
