@@ -220,20 +220,9 @@ class ModelState : public TensorRTModel {
 
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
-  const std::map<std::string, std::pair<int64_t, int64_t>>& ModelOutputs()
-  {
-    return model_outputs_;
-  }
 
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
-
-  // model_outputs is a map that contains unique outputs that the model must
-  // provide. In the model configuration, the output in the state configuration
-  // can have intersection with the outputs section of the model. If an output
-  // is specified both in the output section and state section, it indicates
-  // that the backend must return the output state to the client too.
-  std::map<std::string, std::pair<int64_t, int64_t>> model_outputs_;
 
   // Auto-complete the model configuration
   TRITONSERVER_Error* AutoCompleteConfig();
@@ -309,47 +298,6 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 
   RETURN_IF_ERROR((*state)->ValidateModelConfig());
   RETURN_IF_ERROR((*state)->ParseParameters());
-
-  auto& model_outputs = (*state)->model_outputs_;
-
-  // Parse the output states in the model configuration
-  triton::common::TritonJson::Value sequence_batching;
-  if ((*state)->ModelConfig().Find("sequence_batching", &sequence_batching)) {
-    triton::common::TritonJson::Value states;
-    if (sequence_batching.Find("state", &states)) {
-      for (size_t i = 0; i < states.ArraySize(); i++) {
-        triton::common::TritonJson::Value state;
-        RETURN_IF_ERROR(states.IndexAsObject(i, &state));
-        std::string output_state_name;
-        RETURN_IF_ERROR(
-            state.MemberAsString("output_name", &output_state_name));
-        auto it = model_outputs.find(output_state_name);
-        if (it == model_outputs.end()) {
-          model_outputs.insert({output_state_name, std::make_pair(-1, i)});
-        } else {
-          it->second.second = i;
-        }
-      }
-    }
-  }
-
-  // Parse the output names in the model configuration
-  triton::common::TritonJson::Value outputs;
-  RETURN_IF_ERROR((*state)->ModelConfig().MemberAsArray("output", &outputs));
-  for (size_t i = 0; i < outputs.ArraySize(); i++) {
-    triton::common::TritonJson::Value output;
-    RETURN_IF_ERROR(outputs.IndexAsObject(i, &output));
-
-    std::string output_name_str;
-
-    RETURN_IF_ERROR(output.MemberAsString("name", &output_name_str));
-    auto it = model_outputs.find(output_name_str);
-    if (it == model_outputs.end()) {
-      model_outputs.insert({output_name_str, {i, -1}});
-    } else {
-      it->second.first = i;
-    }
-  }
 
   return nullptr;  // success
 }
@@ -1062,7 +1010,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       const bool is_ragged = false);
   TRITONSERVER_Error* InitializeExecuteOutputBinding(
       const std::string& output_name, const std::string& output_datatype,
-      common::TritonJson::Value& output_dims);
+      common::TritonJson::Value& output_dims, bool is_state);
   TRITONSERVER_Error* InitializeShapeInputBinding(
       const std::string& input_name, const TRITONSERVER_DataType input_datatype,
       common::TritonJson::Value& model_config_dims);
@@ -1308,7 +1256,8 @@ class ModelInstanceState : public TensorRTModelInstance {
         : byte_size_(0), buffer_(nullptr), device_buffer_(nullptr),
           memory_type_(TRITONSERVER_MEMORY_GPU), memory_type_id_(0),
           buffer_is_ragged_(false), is_linear_format_(true),
-          vectorized_dim_(-1), components_per_element_(1)
+          vectorized_dim_(-1), components_per_element_(1),
+          is_state_output_(false), is_requested_output_tensor_(false)
     {
     }
     uint64_t byte_size_;
@@ -1327,6 +1276,12 @@ class ModelInstanceState : public TensorRTModelInstance {
     // Store the pair of input name to look up and output shape
     // for output scattering
     std::pair<std::string, std::vector<int64_t>> io_shape_mapping_;
+
+    // Indicates whether the output is a state output.
+    bool is_state_output_;
+
+    // Indicates whether the output is a output tensor.
+    bool is_requested_output_tensor_;
   };
 
   // There will be two sets of input/output buffers when
@@ -2268,7 +2223,6 @@ ModelInstanceState::Run(
       model_state_->MaxBatchSize(), model_state_->TritonMemoryManager(),
       model_state_->EnablePinnedOutput(), output_stream,
       events_[next_set_].output_ready_, zero_copy_support_));
-  auto& model_outputs = StateForModel()->ModelOutputs();
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
@@ -2414,15 +2368,7 @@ ModelInstanceState::Run(
             "failed to run TRT response");
       }
 
-      // Custom handling for state outputs. If the first element in the pair is
-      // greater than zero, it indicates that the tensor must be process using
-      // ProcessTensor. If the second element in the pair is larger than zero,
-      // it indicates that it must be processed using ProcessStateTensor.
-      auto model_output_type_itr = model_outputs.find(name);
-      bool is_output_tensor = model_output_type_itr->second.first != -1;
-      bool is_state_tensor = model_output_type_itr->second.second != -1;
-
-      if (is_output_tensor) {
+      if (io_binding_info.is_requested_output_tensor_) {
         // Process the output tensors with pinned memory address if zero-copy is
         // supported, otherwise use device memory. Peform memory copies
         // asynchronously and wait for model execution.
@@ -2432,7 +2378,7 @@ ModelInstanceState::Run(
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
       }
 
-      if (is_state_tensor) {
+      if (io_binding_info.is_state_output_) {
         auto states = payload_->responder_->ProcessStateTensor(
             name, dt, batchn_shape,
             static_cast<const char*>(io_binding_info.buffer_),
@@ -3477,7 +3423,7 @@ ModelInstanceState::InitializeSequenceStateIOBindings(
             false /* is_ragged */));
 
         RETURN_IF_ERROR(InitializeExecuteOutputBinding(
-            output_name, io_datatype, model_config_dims));
+            output_name, io_datatype, model_config_dims, true /* is_state */));
       }
     }
   }
@@ -3799,7 +3745,7 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
     }
 
     RETURN_IF_ERROR(InitializeExecuteOutputBinding(
-        io_name, io_datatype, model_config_dims));
+        io_name, io_datatype, model_config_dims, false /* is_state */));
   }
 
   return nullptr;
@@ -4069,7 +4015,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
 TRITONSERVER_Error*
 ModelInstanceState::InitializeExecuteOutputBinding(
     const std::string& output_name, const std::string& output_datatype,
-    common::TritonJson::Value& output_dims)
+    common::TritonJson::Value& output_dims, bool is_state)
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
@@ -4077,6 +4023,20 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   int io_index = engine_->getBindingIndex(output_name.c_str());
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+
+  // State output is initialized before the requested output tensor.
+  if (is_state) {
+    io_binding_info.is_state_output_ = true;
+  } else {
+    io_binding_info.is_requested_output_tensor_ = true;
+
+    // If is_state_output_ is true, return to avoid reintialization of the same
+    // io_binding.
+    if (io_binding_info.is_state_output_) {
+      return nullptr;
+    }
+  }
+
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
