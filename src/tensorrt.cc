@@ -994,7 +994,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config_inputs);
   TRITONSERVER_Error* InitializeSequenceControlInputBindings(
       common::TritonJson::Value& config);
-  TRITONSERVER_Error* InitializeSequenceStateIOBindings(
+  TRITONSERVER_Error* InitializeSequenceStateInputBindings(
       common::TritonJson::Value& config);
   TRITONSERVER_Error* InitializeBatchInputBindings(
       common::TritonJson::Value& config);
@@ -1007,13 +1007,15 @@ class ModelInstanceState : public TensorRTModelInstance {
   TRITONSERVER_Error* InitializeExecuteInputBinding(
       const std::string& input_name, const std::string& input_datatype,
       common::TritonJson::Value& input_dims, const bool is_control = false,
-      const bool is_ragged = false);
+      const bool is_ragged = false, const bool is_state = false);
   TRITONSERVER_Error* InitializeExecuteOutputBinding(
       const std::string& output_name, const std::string& output_datatype,
-      common::TritonJson::Value& output_dims, bool is_state);
+      common::TritonJson::Value& output_dims, bool is_state = false);
   TRITONSERVER_Error* InitializeShapeInputBinding(
       const std::string& input_name, const TRITONSERVER_DataType input_datatype,
       common::TritonJson::Value& model_config_dims);
+  TRITONSERVER_Error* InitializeSequenceStateOutputBindings(
+      common::TritonJson::Value& config);
 
   TRITONSERVER_Error* GetProfileDimensions(
       const int io_index, const int profile_index, TensorRTContext* context);
@@ -1236,6 +1238,10 @@ class ModelInstanceState : public TensorRTModelInstance {
 
     // All the generated InferenceResponse objects
     std::vector<TRITONBACKEND_Response*> responses_;
+
+    // The State objects for the inference requests
+    std::vector<TRITONBACKEND_State*> seq_states_;
+
     // The collector and responder of the payload, need to extend
     // their lifetime to match the payload to ensure content is intact
     // until the end of execution.
@@ -1309,6 +1315,12 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible
   bool coalesce_request_input_;
+
+  // Whether or not the model uses implicit state.
+  bool uses_implicit_state_;
+
+  // Holds up the execution on issue thread unless promise is fulfilled.
+  std::unique_ptr<std::promise<void>> barrier_;
 
   ModelState* model_state_;
 };
@@ -1393,7 +1405,8 @@ ModelInstanceState::Create(
 ModelInstanceState::ModelInstanceState(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance)
     : TensorRTModelInstance(model_state, triton_model_instance),
-      total_bindings_(0), num_expected_bindings_(0), model_state_(model_state)
+      total_bindings_(0), num_expected_bindings_(0),
+      uses_implicit_state_(false), model_state_(model_state)
 {
   // 'coalesce_request_input_' is set at backend level
   {
@@ -1598,6 +1611,12 @@ ModelInstanceState::ProcessRequests(
     completion_queue_.Put(std::move(payload_));
     next_buffer_binding_set_ =
         (next_buffer_binding_set_ + 1) % num_copy_streams_;
+
+    // Wait till the states are updated. Barrier is only
+    // engaged when model has an implicit state.
+    if (barrier_.get() != nullptr) {
+      barrier_->get_future().wait();
+    }
   }
 
   // Block the execution if there are no available contexts.
@@ -1616,6 +1635,12 @@ ModelInstanceState::Run(
           .c_str());
 
   NVTX_RANGE(nvtx_, "Run " + Name());
+
+  // Should set a barrier so that instance execution can be blocked till
+  // the state update is completed.
+  if (uses_implicit_state_) {
+    barrier_.reset(new std::promise<void>());
+  }
 
   // Need to move the TRITONBACKEND_Request objects as the lifetime
   // must be extended till ProcessResponse completes.
@@ -2379,18 +2404,10 @@ ModelInstanceState::Run(
       }
 
       if (io_binding_info.is_state_output_) {
-        auto states = payload_->responder_->ProcessStateTensor(
+        payload_->seq_states_ = payload_->responder_->ProcessStateTensor(
             name, dt, batchn_shape,
             static_cast<const char*>(io_binding_info.buffer_),
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
-
-        // Update the states
-        for (auto& state : states) {
-          FAIL_ALL_AND_RETURN_IF_ERROR(
-              payload_->requests_, payload_->request_count_,
-              payload_->responses_, TRITONBACKEND_StateUpdate(state),
-              "failed to update state");
-        }
       }
     }
   }
@@ -2519,6 +2536,17 @@ ModelInstanceState::ProcessResponse()
     payload->responder_->Finalize();
     cudaEventSynchronize(event_set.output_ready_);
     NVTX_MARKER("plan_output_ready");
+
+    // Update the states
+    for (auto& state : payload->seq_states_) {
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload->requests_, payload->request_count_, payload->responses_,
+          TRITONBACKEND_StateUpdate(state), "failed to update state");
+    }
+    // Signal the state update completion.
+    if (barrier_.get() != nullptr) {
+      barrier_->set_value();
+    }
 
     // Compute ends when the output data copy is completed
     uint64_t compute_end_ns = 0;
@@ -3223,15 +3251,16 @@ ModelInstanceState::InitIOBindingBuffers()
     buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
   }
 
+  // Sequence State should be processed at the end.
   for (int s = 0; s < num_copy_streams_; s++) {
     next_buffer_binding_set_ = s;
     RETURN_IF_ERROR(InitializeConfigShapeInputBindings(config_inputs));
     RETURN_IF_ERROR(InitializeConfigExecuteInputBindings(config_inputs));
     RETURN_IF_ERROR(
-        InitializeSequenceStateIOBindings(model_state_->ModelConfig()));
-    RETURN_IF_ERROR(
         InitializeSequenceControlInputBindings(model_state_->ModelConfig()));
     RETURN_IF_ERROR(InitializeBatchInputBindings(model_state_->ModelConfig()));
+    RETURN_IF_ERROR(
+        InitializeSequenceStateInputBindings(model_state_->ModelConfig()));
   }
 
   for (const auto& trt_context : trt_contexts_) {
@@ -3259,12 +3288,15 @@ ModelInstanceState::InitIOBindingBuffers()
             .c_str());
   }
 
-  // Batch output must be processed before other outputs
+  // Batch output must be processed before other outputs and sequence state
+  // should be processed at the end.
   for (int s = 0; s < num_copy_streams_; s++) {
     next_buffer_binding_set_ = s;
     RETURN_IF_ERROR(InitializeBatchOutputBindings(model_state_->ModelConfig()));
     RETURN_IF_ERROR(InitializeConfigShapeOutputBindings(config_outputs));
     RETURN_IF_ERROR(InitializeConfigExecuteOutputBindings(config_outputs));
+    RETURN_IF_ERROR(
+        InitializeSequenceStateOutputBindings(model_state_->ModelConfig()));
   }
   next_buffer_binding_set_ = 0;
   // Make sure every index which corresponds to an execution binding
@@ -3397,7 +3429,7 @@ ModelInstanceState::InitializeSequenceControlInputBindings(
 }
 
 TRITONSERVER_Error*
-ModelInstanceState::InitializeSequenceStateIOBindings(
+ModelInstanceState::InitializeSequenceStateInputBindings(
     common::TritonJson::Value& config)
 {
   common::TritonJson::Value sequence_batching;
@@ -3410,8 +3442,6 @@ ModelInstanceState::InitializeSequenceStateIOBindings(
         RETURN_IF_ERROR(states.IndexAsObject(i, &io));
         std::string input_name;
         RETURN_IF_ERROR(io.MemberAsString("input_name", &input_name));
-        std::string output_name;
-        RETURN_IF_ERROR(io.MemberAsString("output_name", &output_name));
         std::string io_datatype;
         RETURN_IF_ERROR(io.MemberAsString("data_type", &io_datatype));
 
@@ -3420,7 +3450,34 @@ ModelInstanceState::InitializeSequenceStateIOBindings(
 
         RETURN_IF_ERROR(InitializeExecuteInputBinding(
             input_name, io_datatype, model_config_dims, false /* is_control */,
-            false /* is_ragged */));
+            false /* is_ragged */, true /* is_state */));
+      }
+    }
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelInstanceState::InitializeSequenceStateOutputBindings(
+    common::TritonJson::Value& config)
+{
+  common::TritonJson::Value sequence_batching;
+  if (model_state_->ModelConfig().Find(
+          "sequence_batching", &sequence_batching)) {
+    triton::common::TritonJson::Value states;
+    if (sequence_batching.Find("state", &states)) {
+      for (size_t i = 0; i < states.ArraySize(); i++) {
+        uses_implicit_state_ = true;
+        triton::common::TritonJson::Value io;
+        RETURN_IF_ERROR(states.IndexAsObject(i, &io));
+        std::string output_name;
+        RETURN_IF_ERROR(io.MemberAsString("output_name", &output_name));
+        std::string io_datatype;
+        RETURN_IF_ERROR(io.MemberAsString("data_type", &io_datatype));
+
+        common::TritonJson::Value model_config_dims;
+        RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
 
         RETURN_IF_ERROR(InitializeExecuteOutputBinding(
             output_name, io_datatype, model_config_dims, true /* is_state */));
@@ -3745,7 +3802,7 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
     }
 
     RETURN_IF_ERROR(InitializeExecuteOutputBinding(
-        io_name, io_datatype, model_config_dims, false /* is_state */));
+        io_name, io_datatype, model_config_dims));
   }
 
   return nullptr;
@@ -3755,12 +3812,27 @@ TRITONSERVER_Error*
 ModelInstanceState::InitializeExecuteInputBinding(
     const std::string& input_name, const std::string& input_datatype,
     common::TritonJson::Value& input_dims, const bool is_control,
-    const bool is_ragged)
+    const bool is_ragged, const bool is_state)
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
   int io_index = engine_->getBindingIndex(input_name.c_str());
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+
+  if (io_binding_info.buffer_ != nullptr) {
+    if (!is_state) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("input '") + input_name +
+           "'  has already appeared as an input or output for " + Name())
+              .c_str());
+    } else {
+      // The input bindings for the given input is already allocated,
+      // hence, no need to proceed further.
+      return nullptr;
+    }
+  }
+
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
@@ -3777,13 +3849,6 @@ ModelInstanceState::InitializeExecuteInputBinding(
       return nullptr;
     }
 
-    if (io_binding_info.buffer_ != nullptr) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("input '") + input_name +
-           "'  has already appeared as an input or output for " + Name())
-              .c_str());
-    }
 
     if (!engine_->bindingIsInput(binding_index)) {
       return TRITONSERVER_ErrorNew(
@@ -4029,10 +4094,16 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     io_binding_info.is_state_output_ = true;
   } else {
     io_binding_info.is_requested_output_tensor_ = true;
+  }
 
-    // If is_state_output_ is true, return to avoid reintialization of the same
-    // io_binding.
-    if (io_binding_info.is_state_output_) {
+  if (io_binding_info.buffer_ != nullptr) {
+    if (!is_state) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("output '") + output_name +
+           "'  has already appeared as an input or output for " + Name())
+              .c_str());
+    } else {
       return nullptr;
     }
   }
@@ -4045,14 +4116,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_NOT_FOUND,
           (std::string("output '") + output_name + "' not found for " + Name())
-              .c_str());
-    }
-
-    if (io_binding_info.buffer_ != nullptr) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("output '") + output_name +
-           "'  has already appeared as an input or output for " + Name())
               .c_str());
     }
 
