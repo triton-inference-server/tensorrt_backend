@@ -3819,18 +3819,10 @@ ModelInstanceState::InitializeExecuteInputBinding(
   int io_index = engine_->getBindingIndex(input_name.c_str());
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
 
-  if (io_binding_info.buffer_ != nullptr) {
-    if (!is_state) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("input '") + input_name +
-           "'  has already appeared as an input or output for " + Name())
-              .c_str());
-    } else {
-      // The input bindings for the given input is already allocated,
-      // hence, no need to proceed further.
-      return nullptr;
-    }
+  if ((io_binding_info.buffer_ != nullptr) && is_state) {
+    // The input bindings for the given state input is already allocated,
+    // hence, no need to proceed further.
+    return nullptr;
   }
 
   for (auto& trt_context : trt_contexts_) {
@@ -3847,6 +3839,14 @@ ModelInstanceState::InitializeExecuteInputBinding(
     // Skip if shape binding is encountered
     if (engine_->isShapeBinding(binding_index)) {
       return nullptr;
+    }
+
+    if (io_binding_info.buffer_ != nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("input '") + input_name +
+           "'  has already appeared as an input or output for " + Name())
+              .c_str());
     }
 
 
@@ -4096,16 +4096,10 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     io_binding_info.is_requested_output_tensor_ = true;
   }
 
-  if (io_binding_info.buffer_ != nullptr) {
-    if (!is_state) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("output '") + output_name +
-           "'  has already appeared as an input or output for " + Name())
-              .c_str());
-    } else {
-      return nullptr;
-    }
+  if ((io_binding_info.buffer_ != nullptr) && is_state) {
+    // The input bindings for the given state input is already allocated,
+    // hence, no need to proceed further.
+    return nullptr;
   }
 
   for (auto& trt_context : trt_contexts_) {
@@ -4124,6 +4118,14 @@ ModelInstanceState::InitializeExecuteOutputBinding(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("output '") + output_name +
            "' is expected to be an input in model for " + Name())
+              .c_str());
+    }
+
+    if (io_binding_info.buffer_ != nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("output '") + output_name +
+           "'  has already appeared as an input or output for " + Name())
               .c_str());
     }
 
