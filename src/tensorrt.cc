@@ -1265,6 +1265,8 @@ class ModelInstanceState : public TensorRTModelInstance {
     // until the end of execution.
     std::unique_ptr<BackendInputCollector> collector_;
     std::unique_ptr<BackendOutputResponder> responder_;
+
+    std::vector<void*> buffer_bindings_;
   };
 
   // Assume that the lifetime of composing completion data to extend
@@ -2188,6 +2190,12 @@ ModelInstanceState::Run(
               "tensors"),
           "failed to run TRT inference");
     }
+    payload_->buffer_bindings_.push_back(
+        buffer_bindings_[next_buffer_binding_set_][0]);
+    payload_->buffer_bindings_.push_back(
+        buffer_bindings_[next_buffer_binding_set_][1]);
+    payload_->buffer_bindings_.push_back(
+        buffer_bindings_[next_buffer_binding_set_][2]);
     if (UseTensorRTv2API(engine_)) {
       if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
@@ -2550,6 +2558,9 @@ ModelInstanceState::ProcessResponse()
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
+    cudaMemsetAsync(payload->buffer_bindings_[0], 0, 1536, input_copy_stream_);
+    cudaMemsetAsync(payload->buffer_bindings_[1], 0, 1536, input_copy_stream_);
+    cudaMemsetAsync(payload->buffer_bindings_[2], 0, 1536, input_copy_stream_);
     (model_state_->SemaphoreDeviceContext(DeviceId()))
         ->semaphore_list_[payload->sem_idx_]
         ->Release();
