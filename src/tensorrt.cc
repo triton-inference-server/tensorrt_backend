@@ -1266,7 +1266,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     std::unique_ptr<BackendInputCollector> collector_;
     std::unique_ptr<BackendOutputResponder> responder_;
 
-    std::vector<void*> buffer_bindings_;
+    std::vector<std::pair<void*, size_t>> buffer_binding_pairs_;
   };
 
   // Assume that the lifetime of composing completion data to extend
@@ -2190,12 +2190,18 @@ ModelInstanceState::Run(
               "tensors"),
           "failed to run TRT inference");
     }
-    payload_->buffer_bindings_.push_back(
-        buffer_bindings_[next_buffer_binding_set_][0]);
-    payload_->buffer_bindings_.push_back(
-        buffer_bindings_[next_buffer_binding_set_][1]);
-    payload_->buffer_bindings_.push_back(
-        buffer_bindings_[next_buffer_binding_set_][2]);
+    for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
+      auto& io_binding_info =
+          io_binding_infos_[next_buffer_binding_set_][io_index];
+      int binding_index = binding_offset + io_index;
+      if (!engine_->bindingIsInput(binding_index)) {
+        continue;
+      }
+
+      payload_->buffer_binding_pairs_.push_back(std::make_pair(
+          buffer_bindings_[next_buffer_binding_set_][binding_index],
+          io_binding_info.byte_size_));
+    }
     if (UseTensorRTv2API(engine_)) {
       if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
@@ -2558,9 +2564,12 @@ ModelInstanceState::ProcessResponse()
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
-    cudaMemsetAsync(payload->buffer_bindings_[0], 0, 1536, input_copy_stream_);
-    cudaMemsetAsync(payload->buffer_bindings_[1], 0, 1536, input_copy_stream_);
-    cudaMemsetAsync(payload->buffer_bindings_[2], 0, 1536, input_copy_stream_);
+    for (auto& buffer_binding_pair : payload->buffer_binding_pairs_) {
+      cudaMemsetAsync(
+          buffer_binding_pair.first, 0, buffer_binding_pair.second,
+          input_copy_stream_);
+    }
+
     (model_state_->SemaphoreDeviceContext(DeviceId()))
         ->semaphore_list_[payload->sem_idx_]
         ->Release();
