@@ -1266,7 +1266,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     std::unique_ptr<BackendInputCollector> collector_;
     std::unique_ptr<BackendOutputResponder> responder_;
 
-    std::vector<std::pair<void*, size_t>> buffer_binding_pairs_;
+    std::vector<std::pair<void*, size_t>> buffer_input_binding_pairs_;
   };
 
   // Assume that the lifetime of composing completion data to extend
@@ -2193,7 +2193,7 @@ ModelInstanceState::Run(
 
     const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
     size_t reset_buffer = atoi(reset_str);
-    // Only create binding buffers for payload if
+    // Only record input binding buffers in payload if
     // TRITONSERVER_RESET_BINDING_BUFFERS is 1
     if (reset_buffer == 1) {
       for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
@@ -2204,7 +2204,7 @@ ModelInstanceState::Run(
           continue;
         }
 
-        payload_->buffer_binding_pairs_.push_back(std::make_pair(
+        payload_->buffer_input_binding_pairs_.push_back(std::make_pair(
             buffer_bindings_[next_buffer_binding_set_][binding_index],
             io_binding_info.byte_size_));
       }
@@ -2574,7 +2574,7 @@ ModelInstanceState::ProcessResponse()
     cudaEventSynchronize(event_set.ready_for_input_);
 
     // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
-    for (auto& buffer_binding_pair : payload->buffer_binding_pairs_) {
+    for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
       cudaMemsetAsync(
           buffer_binding_pair.first, 0, buffer_binding_pair.second,
           input_copy_stream_);
