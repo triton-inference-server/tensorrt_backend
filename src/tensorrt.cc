@@ -1332,6 +1332,9 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether zero copy is supported on this device
   bool zero_copy_support_;
 
+  // Whether to reset input binding buffers
+  bool reset_input_buffer_;
+
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible
   bool coalesce_request_input_;
@@ -1478,6 +1481,14 @@ ModelInstanceState::ModelInstanceState(
     LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is enabled");
   } else {
     LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is disabled");
+  }
+
+  reset_input_buffer_ = false;
+  const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
+  if (reset_str != nullptr) {
+    if(atoi(reset_str)) {
+      reset_input_buffer_ = true;
+    }
   }
 }
 
@@ -2191,15 +2202,9 @@ ModelInstanceState::Run(
           "failed to run TRT inference");
     }
 
-    size_t reset_buffer = 0;
-    const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
-    if (reset_str != nullptr) {
-      reset_buffer = atoi(reset_str);
-    }
-
     // Only record input binding buffers in payload if
-    // TRITONSERVER_RESET_BINDING_BUFFERS is 1
-    if (reset_buffer == 1) {
+    // TRITONSERVER_RESET_BINDING_BUFFERS is enabled
+    if (reset_input_buffer_) {
       for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
         auto& io_binding_info =
             io_binding_infos_[next_buffer_binding_set_][io_index];
