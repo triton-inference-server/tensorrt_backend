@@ -1483,10 +1483,12 @@ ModelInstanceState::ModelInstanceState(
     LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is disabled");
   }
 
+  // The envvar TRITONSERVER_RESET_BINDING_BUFFERS is used only for testing
+  // purposes and should not be used otherwise
   reset_input_buffer_ = false;
   const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
   if (reset_str != nullptr) {
-    if(atoi(reset_str)) {
+    if (atoi(reset_str)) {
       reset_input_buffer_ = true;
     }
   }
