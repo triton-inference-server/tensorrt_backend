@@ -2191,8 +2191,12 @@ ModelInstanceState::Run(
           "failed to run TRT inference");
     }
 
+    size_t reset_buffer = 0;
     const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
-    size_t reset_buffer = atoi(reset_str);
+    if (reset_str != nullptr) {
+      reset_buffer = atoi(reset_str);
+    }
+
     // Only record input binding buffers in payload if
     // TRITONSERVER_RESET_BINDING_BUFFERS is 1
     if (reset_buffer == 1) {
