@@ -1265,6 +1265,8 @@ class ModelInstanceState : public TensorRTModelInstance {
     // until the end of execution.
     std::unique_ptr<BackendInputCollector> collector_;
     std::unique_ptr<BackendOutputResponder> responder_;
+
+    std::vector<std::pair<void*, size_t>> buffer_input_binding_pairs_;
   };
 
   // Assume that the lifetime of composing completion data to extend
@@ -1329,6 +1331,9 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   // Whether zero copy is supported on this device
   bool zero_copy_support_;
+
+  // Whether to reset input binding buffers
+  bool reset_input_buffer_;
 
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible
@@ -1476,6 +1481,16 @@ ModelInstanceState::ModelInstanceState(
     LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is enabled");
   } else {
     LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is disabled");
+  }
+
+  // The envvar TRITONSERVER_RESET_BINDING_BUFFERS is used only for testing
+  // purposes and should not be used otherwise
+  reset_input_buffer_ = false;
+  const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
+  if (reset_str != nullptr) {
+    if (atoi(reset_str)) {
+      reset_input_buffer_ = true;
+    }
   }
 }
 
@@ -2188,6 +2203,24 @@ ModelInstanceState::Run(
               "tensors"),
           "failed to run TRT inference");
     }
+
+    // Only record input binding buffers in payload if
+    // TRITONSERVER_RESET_BINDING_BUFFERS is enabled
+    if (reset_input_buffer_) {
+      for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
+        auto& io_binding_info =
+            io_binding_infos_[next_buffer_binding_set_][io_index];
+        int binding_index = binding_offset + io_index;
+        if (!engine_->bindingIsInput(binding_index)) {
+          continue;
+        }
+
+        payload_->buffer_input_binding_pairs_.push_back(std::make_pair(
+            buffer_bindings_[next_buffer_binding_set_][binding_index],
+            io_binding_info.byte_size_));
+      }
+    }
+
     if (UseTensorRTv2API(engine_)) {
       if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
@@ -2550,6 +2583,14 @@ ModelInstanceState::ProcessResponse()
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
+
+    // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
+    for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
+      cudaMemsetAsync(
+          buffer_binding_pair.first, 0, buffer_binding_pair.second,
+          input_copy_stream_);
+    }
+
     (model_state_->SemaphoreDeviceContext(DeviceId()))
         ->semaphore_list_[payload->sem_idx_]
         ->Release();
