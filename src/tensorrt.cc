@@ -2300,7 +2300,7 @@ ModelInstanceState::Run(
   // actual model output and then copy that output from the GPU
   payload_->responder_.reset(new BackendOutputResponder(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
-      model_state_->MaxBatchSize(), model_state_->TritonMemoryManager(),
+      model_state_->TritonMemoryManager(), model_state_->MaxBatchSize() > 0,
       model_state_->EnablePinnedOutput(), output_stream,
       events_[next_set_].output_ready_, zero_copy_support_));
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
