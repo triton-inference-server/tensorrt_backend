@@ -40,6 +40,7 @@
 #include <cuda_runtime_api.h>
 #include <atomic>
 #include <chrono>
+#include <dlfcn.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -5429,15 +5430,15 @@ extern "C" {
 
 inline void LoadPlugin(const std::string& path)
 {
-#ifdef _MSC_VER
-#ifdef UNICODE
-void* handle = LoadLibraryA(path.c_str());
-#else
-void* handle = LoadLibrary(path.c_str());
-#endif
-#else
-void* handle = dlopen(path.c_str(), RTLD_LAZY);
-#endif
+  #ifdef _MSC_VER
+  #ifdef UNICODE
+  void* handle = LoadLibraryA(path.c_str());
+  #else
+  void* handle = LoadLibrary(path.c_str());
+  #endif
+  #else
+  void* handle = dlopen(path.c_str(), RTLD_LAZY);
+  #endif
 
 if (handle == nullptr)
   {
@@ -5445,7 +5446,7 @@ if (handle == nullptr)
     std::cout << "Could not load plugin library: " << path << std::endl;
     #else
     std::cout << "Could not load plugin library: " << path << ", due to: " << dlerror() << std::endl;
-    #endif }
+    #endif
   }
 }
 
@@ -5529,10 +5530,10 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       RETURN_IF_ERROR(value.AsString(&value_str));
       size_t pos = 0;
       std::string plugin;
-      while ((pos = s.find(";")) != std::string::npos) {
-        plugin = s.substr(0, pos);
-        loadPlugin(plugin);
-        s.erase(0, pos + 1);
+      while ((pos = value_str.find(";")) != std::string::npos) {
+        plugin = value_str.substr(0, pos);
+        LoadPlugin(plugin);
+        value_str.erase(0, pos + 1);
       }
     }
   }
