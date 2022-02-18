@@ -5427,6 +5427,28 @@ ModelInstanceState::SetCudaGraphShape(
 
 extern "C" {
 
+inline void LoadPlugin(const std::string& path)
+{
+#ifdef _MSC_VER
+#ifdef UNICODE
+void* handle = LoadLibraryA(path.c_str());
+#else
+void* handle = LoadLibrary(path.c_str());
+#endif
+#else
+void* handle = dlopen(path.c_str(), RTLD_LAZY);
+#endif
+
+if (handle == nullptr)
+  {
+    #ifdef _MSC_VER
+    std::cout << "Could not load plugin library: " << path << std::endl;
+    #else
+    std::cout << "Could not load plugin library: " << path << ", due to: " << dlerror() << std::endl;
+    #endif }
+  }
+}
+
 // Implementing TRITONBACKEND_Initialize is optional. The backend
 // should initialize any global state that is intended to be shared
 // across all models and model instances that use the backend. But
@@ -5472,21 +5494,6 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
       backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
 
-  // Register all the default plugins that come with TensorRT
-  bool success = true;
-  std::once_flag onceFlag;
-  {
-    std::call_once(onceFlag, [&success] {
-      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Registering TensorRT Plugins");
-      success = initLibNvInferPlugins(&tensorrt_logger, "");
-    });
-  }
-  if (!success) {
-    TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        "unable to register default TensorRT Plugins");
-  }
-
   // The backend configuration may contain information needed by the
   // backend, such a command-line arguments.
   TRITONSERVER_Message* backend_config_message;
@@ -5511,12 +5518,40 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (backend_config.Find("cmdline", &cmdline)) {
     triton::common::TritonJson::Value value;
     std::string value_str;
+    
     if (cmdline.Find("coalesce-request-input", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(
           ParseBoolValue(value_str, &lconfig->coalesce_request_input_));
     }
+    
+    if (cmdline.Find("plugins", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      size_t pos = 0;
+      std::string plugin;
+      while ((pos = s.find(";")) != std::string::npos) {
+        plugin = s.substr(0, pos);
+        loadPlugin(plugin);
+        s.erase(0, pos + 1);
+      }
+    }
   }
+
+  // Register all the default and custom plugins that come with TensorRT
+  bool success = true;
+  std::once_flag onceFlag;
+  {
+    std::call_once(onceFlag, [&success] {
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Registering TensorRT Plugins");
+      success = initLibNvInferPlugins(&tensorrt_logger, "");
+    });
+  }
+  if (!success) {
+    TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        "unable to register default TensorRT Plugins");
+  }
+
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
       backend, reinterpret_cast<void*>(lconfig.get())));
 
