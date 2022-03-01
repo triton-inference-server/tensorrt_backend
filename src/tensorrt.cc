@@ -5519,13 +5519,13 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (backend_config.Find("cmdline", &cmdline)) {
     triton::common::TritonJson::Value value;
     std::string value_str;
-    
+
     if (cmdline.Find("coalesce-request-input", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(
           ParseBoolValue(value_str, &lconfig->coalesce_request_input_));
     }
-    
+
     if (cmdline.Find("plugins", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
       size_t pos = 0;
@@ -5539,6 +5539,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
           value_str.erase(0, pos + 1);
         }
       }
+      
     }
   }
 
@@ -5554,7 +5555,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (!success) {
     TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
-        "unable to register default TensorRT Plugins");
+        "unable to register TensorRT Plugins");
   }
 
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
