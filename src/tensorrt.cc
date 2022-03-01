@@ -5530,10 +5530,14 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       RETURN_IF_ERROR(value.AsString(&value_str));
       size_t pos = 0;
       std::string plugin;
-      while ((pos = value_str.find(";")) != std::string::npos) {
+      // Load individual plugins
+      while (value_str.length() > 0) {
+        pos = value_str.find(";");
         plugin = value_str.substr(0, pos);
         LoadPlugin(plugin);
-        value_str.erase(0, pos + 1);
+        if(pos != std::string::npos){
+          value_str.erase(0, pos + 1);
+        }
       }
     }
   }
