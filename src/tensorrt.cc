@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -1866,106 +1866,105 @@ ModelInstanceState::Run(
       continue;
     }
 
-    if (io_binding_info.buffer_is_ragged_) {
+    // FIXME inefficient as looping in this way may iterate the same
+    // source_input multiple times
+    if (io_binding_info.batch_input_ != nullptr) {
+      std::vector<int64_t> shape;
+      const auto& batch_input = io_binding_info.batch_input_->first;
+      auto& allocated_memory = io_binding_info.batch_input_->second;
+      TRITONSERVER_MemoryType mem_type = allocated_memory->MemoryType();
+      int64_t mem_type_id = allocated_memory->MemoryTypeId();
+      char* input_buffer = allocated_memory->MemoryPtr();
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          payload_->collector_->BatchInputShape(batch_input, &shape),
+          "error getting the batch input shape");
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          SetBindingDimensions(
+              name, shape, citr->second, io_index, binding_index,
+              &input_dims),
+          "error setting the binding dimension");
+
+      TRITONSERVER_DataType datatype = batch_input.DataType();
+      size_t total_byte_size = GetByteSize(datatype, shape);
+
+      const char* dst_buffer;
+      size_t dst_buffer_byte_size;
+      TRITONSERVER_MemoryType dst_memory_type;
+      int64_t dst_memory_type_id;
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          payload_->collector_->ProcessBatchInput(
+              batch_input, input_buffer, total_byte_size,
+              {{mem_type, mem_type_id}}, &dst_buffer, &dst_buffer_byte_size,
+              &dst_memory_type, &dst_memory_type_id),
+          "error setting the batch input value");
+
+      if ((batch_input.BatchInputKind() !=
+            BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE) &&
+          (io_binding_info.memory_type_ == TRITONSERVER_MEMORY_GPU)) {
+        bool cuda_used = false;
+        FAIL_ALL_AND_RETURN_IF_ERROR(
+            payload_->requests_, payload_->request_count_,
+            payload_->responses_,
+            CopyBuffer(
+                name, mem_type, mem_type_id, io_binding_info.memory_type_,
+                io_binding_info.memory_type_id_, total_byte_size,
+                input_buffer, io_binding_info.buffer_, input_copy_stream_,
+                &cuda_used),
+            "error copying the batch input buffer");
+        if (cuda_used) {
+          cudaEventRecord(
+              events_[next_set_].input_ready_, input_copy_stream_);
+        }
+      }
+    } else if (io_binding_info.buffer_is_ragged_) {
       std::vector<int64_t> ragged_shape{0};
       TRITONSERVER_DataType datatype;
-      // FIXME inefficient as looping in this way may iterate the same
-      // source_input multiple times
-      if (io_binding_info.batch_input_ != nullptr) {
-        const auto& batch_input = io_binding_info.batch_input_->first;
-        auto& allocated_memory = io_binding_info.batch_input_->second;
-        TRITONSERVER_MemoryType mem_type = allocated_memory->MemoryType();
-        int64_t mem_type_id = allocated_memory->MemoryTypeId();
-        char* input_buffer = allocated_memory->MemoryPtr();
+      for (size_t req_idx = 0; req_idx < payload_->request_count_;
+            req_idx++) {
+        TRITONBACKEND_Input* repr_input;
         FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            payload_->collector_->BatchInputShape(batch_input, &ragged_shape),
-            "error getting the batch input shape");
+            payload_->requests_, payload_->request_count_,
+            payload_->responses_,
+            TRITONBACKEND_RequestInput(
+                payload_->requests_[req_idx], name.c_str(), &repr_input),
+            (std::string("failed to obtain the input '") + name + "'")
+                .c_str());
+
+        TRITONSERVER_DataType temp_dt;
+        const int64_t* shape;
+        uint32_t dims_count;
         FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            SetBindingDimensions(
-                name, ragged_shape, citr->second, io_index, binding_index,
-                &input_dims),
-            "error setting the binding dimension");
+            payload_->requests_, payload_->request_count_,
+            payload_->responses_,
+            TRITONBACKEND_InputProperties(
+                repr_input, nullptr, &temp_dt, &shape, &dims_count, nullptr,
+                nullptr),
+            (std::string("failed to obtain the input properties for '") +
+              name + "'")
+                .c_str());
 
-        datatype = batch_input.DataType();
-        size_t total_byte_size = GetByteSize(datatype, ragged_shape);
-
-        const char* dst_buffer;
-        size_t dst_buffer_byte_size;
-        TRITONSERVER_MemoryType dst_memory_type;
-        int64_t dst_memory_type_id;
-        FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            payload_->collector_->ProcessBatchInput(
-                batch_input, input_buffer, total_byte_size,
-                {{mem_type, mem_type_id}}, &dst_buffer, &dst_buffer_byte_size,
-                &dst_memory_type, &dst_memory_type_id),
-            "error setting the batch input value");
-
-        if ((batch_input.BatchInputKind() !=
-             BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE) &&
-            (io_binding_info.memory_type_ == TRITONSERVER_MEMORY_GPU)) {
-          bool cuda_used = false;
-          FAIL_ALL_AND_RETURN_IF_ERROR(
-              payload_->requests_, payload_->request_count_,
-              payload_->responses_,
-              CopyBuffer(
-                  name, mem_type, mem_type_id, io_binding_info.memory_type_,
-                  io_binding_info.memory_type_id_, total_byte_size,
-                  input_buffer, io_binding_info.buffer_, input_copy_stream_,
-                  &cuda_used),
-              "error copying the batch input buffer");
-          if (cuda_used) {
-            cudaEventRecord(
-                events_[next_set_].input_ready_, input_copy_stream_);
-          }
+        ragged_shape[0] += backend::GetElementCount(shape, dims_count);
+        if (req_idx == 0) {
+          datatype = temp_dt;
         }
-      } else {
-        for (size_t req_idx = 0; req_idx < payload_->request_count_;
-             req_idx++) {
-          TRITONBACKEND_Input* repr_input;
-          FAIL_ALL_AND_RETURN_IF_ERROR(
-              payload_->requests_, payload_->request_count_,
-              payload_->responses_,
-              TRITONBACKEND_RequestInput(
-                  payload_->requests_[req_idx], name.c_str(), &repr_input),
-              (std::string("failed to obtain the input '") + name + "'")
-                  .c_str());
-
-          TRITONSERVER_DataType temp_dt;
-          const int64_t* shape;
-          uint32_t dims_count;
-          FAIL_ALL_AND_RETURN_IF_ERROR(
-              payload_->requests_, payload_->request_count_,
-              payload_->responses_,
-              TRITONBACKEND_InputProperties(
-                  repr_input, nullptr, &temp_dt, &shape, &dims_count, nullptr,
-                  nullptr),
-              (std::string("failed to obtain the input properties for '") +
-               name + "'")
-                  .c_str());
-
-          ragged_shape[0] += backend::GetElementCount(shape, dims_count);
-          if (req_idx == 0) {
-            datatype = temp_dt;
-          }
-        }
-
-        FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            SetBindingDimensions(
-                name, ragged_shape, citr->second, io_index, binding_index,
-                &input_dims),
-            "error setting the binding dimension");
-
-        size_t total_byte_size = GetByteSize(datatype, ragged_shape);
-
-        payload_->collector_->ProcessTensor(
-            name.c_str(), static_cast<char*>(io_binding_info.buffer_),
-            total_byte_size, io_binding_info.memory_type_,
-            io_binding_info.memory_type_id_);
       }
+
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          SetBindingDimensions(
+              name, ragged_shape, citr->second, io_index, binding_index,
+              &input_dims),
+          "error setting the binding dimension");
+
+      size_t total_byte_size = GetByteSize(datatype, ragged_shape);
+
+      payload_->collector_->ProcessTensor(
+          name.c_str(), static_cast<char*>(io_binding_info.buffer_),
+          total_byte_size, io_binding_info.memory_type_,
+          io_binding_info.memory_type_id_);
     } else {
       TRITONBACKEND_Input* repr_input;
       FAIL_ALL_AND_RETURN_IF_ERROR(
@@ -3570,11 +3569,16 @@ ModelInstanceState::InitializeBatchInputBindings(
       TRITONSERVER_DataType tensor_datatype = batch_input.DataType();
       common::TritonJson::Value dims{
           triton::common::TritonJson::ValueType::ARRAY};
-      if ((model_state_->MaxBatchSize() == 0) ||
-          (model_state_->MaxBatchSize() == 1)) {
+      // [WIP] fix batch input shape generation
+      // Different batch input expects different shape, note that
+      // we are setting config input shape here so the batch dimension
+      // is not included
+      if (model_state_->MaxBatchSize() == 0) {
         // If the model doesn't support batching, the range of some
         // batch input kind is convergent to a fixed value, need to
         // specify the fixed value in such case.
+        // Note that batch input is intended to be used with batching model,
+        // the following is more for completeness.
         switch (batch_input.BatchInputKind()) {
           case BatchInput::Kind::BATCH_ELEMENT_COUNT:
           case BatchInput::Kind::BATCH_ACCUMULATED_ELEMENT_COUNT:
@@ -3583,24 +3587,102 @@ ModelInstanceState::InitializeBatchInputBindings(
           case BatchInput::Kind::BATCH_ACCUMULATED_ELEMENT_COUNT_WITH_ZERO:
             dims.AppendInt(2);
             break;
-          default:
+          case BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE:
             dims.AppendInt(-1);
             break;
+          case BatchInput::Kind::BATCH_ITEM_SHAPE:
+          case BatchInput::Kind::BATCH_ITEM_SHAPE_FLATTEN: {
+            // Compiler doesn't like switch case fall through,
+            // add conditional handling
+            if (batch_input.BatchInputKind() == BatchInput::Kind::BATCH_ITEM_SHAPE) {
+              dims.AppendInt(1);
+            }
+            triton::common::TritonJson::Value inputs;
+            RETURN_IF_ERROR(config.MemberAsArray("input", &inputs));
+            for (size_t i = 0; i < inputs.ArraySize(); ++i) {
+              triton::common::TritonJson::Value input;
+              RETURN_IF_ERROR(inputs.IndexAsObject(i, &input));
+              std::string input_name;
+              RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
+              if (input_name == batch_input.SourceInputs()[0]) {
+                // Get input config shape
+                common::TritonJson::Value model_config_dims;
+                common::TritonJson::Value reshape;
+                if (input.Find("reshape", &reshape)) {
+                  reshape.MemberAsArray("shape", &model_config_dims);
+                } else {
+                  input.MemberAsArray("dims", &model_config_dims);
+                }
+                if (model_config_dims.ArraySize() != 0) {
+                  dims.AppendInt(model_config_dims.ArraySize());
+                }
+                break;
+              }
+            }
+            break;
+          }
+          default:
+            return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string(
+                 "batch input type '" + batch_input.BatchInputKindString() + "' is not supported"))
+                .c_str());
         }
       } else {
-        // Batch inputs are ragged inputs which will be concatenated
-        // and flatten, so expecting dims to be [-1]
-        dims.AppendInt(-1);
+        // For most type 'dims' will be empty as the full shape
+        // of the batch input is [-1] which will be coverred by
+        // batch dimension.
+        switch (batch_input.BatchInputKind()) {
+          case BatchInput::Kind::BATCH_ELEMENT_COUNT:
+          case BatchInput::Kind::BATCH_ACCUMULATED_ELEMENT_COUNT:
+          case BatchInput::Kind::BATCH_ACCUMULATED_ELEMENT_COUNT_WITH_ZERO:
+          case BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE:
+          case BatchInput::Kind::BATCH_ITEM_SHAPE_FLATTEN:
+            break;
+          case BatchInput::Kind::BATCH_ITEM_SHAPE: {
+            triton::common::TritonJson::Value inputs;
+            RETURN_IF_ERROR(config.MemberAsArray("input", &inputs));
+            for (size_t i = 0; i < inputs.ArraySize(); ++i) {
+              triton::common::TritonJson::Value input;
+              RETURN_IF_ERROR(inputs.IndexAsObject(i, &input));
+              std::string input_name;
+              RETURN_IF_ERROR(input.MemberAsString("name", &input_name));
+              if (input_name == batch_input.SourceInputs()[0]) {
+                // Get input config shape
+                common::TritonJson::Value model_config_dims;
+                common::TritonJson::Value reshape;
+                if (input.Find("reshape", &reshape)) {
+                  reshape.MemberAsArray("shape", &model_config_dims);
+                } else {
+                  input.MemberAsArray("dims", &model_config_dims);
+                }
+                if (model_config_dims.ArraySize() != 0) {
+                  dims.AppendInt(model_config_dims.ArraySize());
+                }
+                break;
+              }
+            }
+            break;
+          }
+          default:
+            return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string(
+                 "batch input type '" + batch_input.BatchInputKindString() + "' is not supported"))
+                .c_str());
+        }
       }
+      int io_index = engine_->getBindingIndex(tensor_name.c_str());
+      auto& io_binding_info =
+          io_binding_infos_[next_buffer_binding_set_][io_index];
+      // Special handling hint for InitializeExecuteInputBinding()
+      io_binding_info.batch_input_.reset(new BatchInputData(batch_input, nullptr));
 
       std::string data_type_str("TYPE_");
       data_type_str.append(TRITONSERVER_DataTypeString(tensor_datatype));
       RETURN_IF_ERROR(InitializeExecuteInputBinding(
-          tensor_name, data_type_str, dims, false, true));
+          tensor_name, data_type_str, dims, false));
 
-      int io_index = engine_->getBindingIndex(tensor_name.c_str());
-      auto& io_binding_info =
-          io_binding_infos_[next_buffer_binding_set_][io_index];
 
       BackendMemory* bm;
       if (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_GPU) {
@@ -3616,7 +3698,7 @@ ModelInstanceState::InitializeBatchInputBindings(
             {BackendMemory::AllocationType::CPU_PINNED_POOL},
             0 /* memory_type_id */, io_binding_info.byte_size_, &bm);
       }
-      io_binding_info.batch_input_.reset(new BatchInputData(batch_input, bm));
+      io_binding_info.batch_input_->second.reset(bm);
     }
   }
 
@@ -4030,6 +4112,10 @@ ModelInstanceState::InitializeExecuteInputBinding(
           TRITONSERVER_ErrorDelete(err);
           return full_err;
         }
+      }
+      // Only "prune" maximum dims for non-ragged and non-batch input,
+      // as config dims does not represent the actual shape well
+      if (!is_ragged && (io_binding_info.batch_input_ == nullptr)) {
         RETURN_IF_ERROR(MaximumDims(
             context.max_dims_[io_index], config_dims_vec, support_batching_,
             model_state_->MaxBatchSize(), &maximum_dims));
@@ -5084,9 +5170,9 @@ ModelInstanceState::SetCudaGraphShape(
       const std::string& name = engine_->getBindingName(io_index);
       auto it = graph_spec.shapes_.find(name);
       if (it != graph_spec.shapes_.end()) {
-        // For ragged input, assume the shape in graph spec is proper
+        // For ragged / batch input, assume the shape in graph spec is proper
         // shape after ragged.
-        if (io_binding_info.buffer_is_ragged_) {
+        if (io_binding_info.buffer_is_ragged_ || (io_binding_info.batch_input_ != nullptr)) {
           cuda_graph->input_dims_.emplace_back();
         } else {
           cuda_graph->input_dims_.emplace_back();
