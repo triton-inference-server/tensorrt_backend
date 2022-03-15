@@ -2835,6 +2835,9 @@ ModelInstanceState::EvaluateTensorRTContext(
     for (uint32_t dim_idx = 0; dim_idx < input_dims_count; dim_idx++) {
       input_shape_vec.push_back(*(input_shape + dim_idx));
     }
+    if (support_batching_) {
+      input_shape_vec[0] = total_batch_size;
+    }
 
     int io_index = engine_->getBindingIndex(input_name);
     auto& io_binding_info =
