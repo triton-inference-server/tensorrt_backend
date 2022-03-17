@@ -4944,6 +4944,8 @@ ModelInstanceState::BuildCudaGraph(
     // double-buffering
     auto buffer_binding_index = num_copy_streams_ == 1 ? 0 : set_idx;
     cudaGraph_t graph;
+    // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
+    // to local CPU thread.
     auto cuerr =
         cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
@@ -4973,15 +4975,18 @@ ModelInstanceState::BuildCudaGraph(
                ": " + cudaGetErrorString(cuerr))
                   .c_str());
         }
+        // There has been an error during graph capture. Below call resets the
+        // sticky error from the cuda runtime.
         cudaGetLastError();
-      }
-      auto cuerr2 = cudaGetLastError();
-      if (cuerr2 != cudaSuccess) {
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            (std::string("unable to clear cuda runtime error for ") + Name() +
-             ": " + cudaGetErrorString(cuerr2))
-                .c_str());
+        // Verify if the  error has been cleared successfully.
+        auto cuerr2 = cudaGetLastError();
+        if (cuerr2 != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to clear cuda runtime error for ") + Name() +
+               ": " + cudaGetErrorString(cuerr2))
+                  .c_str());
+        }
       }
       if (cuerr != cudaSuccess) {
         LOG_MESSAGE(
@@ -5082,6 +5087,8 @@ ModelInstanceState::BuildCudaGraphV2(
   for (int set_idx = 0; set_idx < EVENT_SET_COUNT; set_idx++) {
     cudaGraph_t graph;
     int buffer_bindings_index = num_copy_streams_ == 1 ? 0 : set_idx;
+    // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
+    // to local CPU thread.
     auto cuerr =
         cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
@@ -5111,15 +5118,18 @@ ModelInstanceState::BuildCudaGraphV2(
                ": " + cudaGetErrorString(cuerr))
                   .c_str());
         }
+        // There has been an error during graph capture. Below call resets the
+        // sticky error from the cuda runtime.
         cudaGetLastError();
-      }
-      auto cuerr2 = cudaGetLastError();
-      if (cuerr2 != cudaSuccess) {
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            (std::string("unable to clear cuda runtime error for ") + Name() +
-             ": " + cudaGetErrorString(cuerr2))
-                .c_str());
+        // Verify if the  error has been cleared successfully.
+        auto cuerr2 = cudaGetLastError();
+        if (cuerr2 != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to clear cuda runtime error for ") + Name() +
+               ": " + cudaGetErrorString(cuerr2))
+                  .c_str());
+        }
       }
       if (cuerr != cudaSuccess) {
         LOG_MESSAGE(
