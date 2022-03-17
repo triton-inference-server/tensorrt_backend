@@ -1097,9 +1097,6 @@ class ModelInstanceState : public TensorRTModelInstance {
       cudaGraphExec_t cuda_graph_exec_;
     };
 
-    // The CUDA graphs captured for the model for different
-    // batch-sizes.
-    std::vector<cudaGraph_t> cuda_graphs_;
     // The key is packed input dimensions prepended by batch size, so
     // that uniqueness is guaranteed and the CUDA graphs are sorted to
     // provide convinence to find the closest CUDA graph in the
@@ -1531,18 +1528,6 @@ ModelInstanceState::~ModelInstanceState()
       }
     }
     trt_context.second.cuda_graph_execs_.clear();
-
-    for (const auto& cuda_graph : trt_context.second.cuda_graphs_) {
-      cudaError_t err = cudaGraphDestroy(cuda_graph);
-      if (err != cudaSuccess) {
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            (std::string("Failed to destroy cuda graph: ") +
-             +cudaGetErrorString(err))
-                .c_str());
-      }
-    }
-    trt_context.second.cuda_graphs_.clear();
   }
 
   if (stream_ != nullptr) {
@@ -1882,8 +1867,7 @@ ModelInstanceState::Run(
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           SetBindingDimensions(
-              name, shape, citr->second, io_index, binding_index,
-              &input_dims),
+              name, shape, citr->second, io_index, binding_index, &input_dims),
           "error setting the binding dimension");
 
       TRITONSERVER_DataType datatype = batch_input.DataType();
@@ -1902,48 +1886,41 @@ ModelInstanceState::Run(
           "error setting the batch input value");
 
       if ((batch_input.BatchInputKind() !=
-            BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE) &&
+           BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE) &&
           (io_binding_info.memory_type_ == TRITONSERVER_MEMORY_GPU)) {
         bool cuda_used = false;
         FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_,
-            payload_->responses_,
+            payload_->requests_, payload_->request_count_, payload_->responses_,
             CopyBuffer(
                 name, mem_type, mem_type_id, io_binding_info.memory_type_,
-                io_binding_info.memory_type_id_, total_byte_size,
-                input_buffer, io_binding_info.buffer_, input_copy_stream_,
-                &cuda_used),
+                io_binding_info.memory_type_id_, total_byte_size, input_buffer,
+                io_binding_info.buffer_, input_copy_stream_, &cuda_used),
             "error copying the batch input buffer");
         if (cuda_used) {
-          cudaEventRecord(
-              events_[next_set_].input_ready_, input_copy_stream_);
+          cudaEventRecord(events_[next_set_].input_ready_, input_copy_stream_);
         }
       }
     } else if (io_binding_info.buffer_is_ragged_) {
       std::vector<int64_t> ragged_shape{0};
       TRITONSERVER_DataType datatype;
-      for (size_t req_idx = 0; req_idx < payload_->request_count_;
-            req_idx++) {
+      for (size_t req_idx = 0; req_idx < payload_->request_count_; req_idx++) {
         TRITONBACKEND_Input* repr_input;
         FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_,
-            payload_->responses_,
+            payload_->requests_, payload_->request_count_, payload_->responses_,
             TRITONBACKEND_RequestInput(
                 payload_->requests_[req_idx], name.c_str(), &repr_input),
-            (std::string("failed to obtain the input '") + name + "'")
-                .c_str());
+            (std::string("failed to obtain the input '") + name + "'").c_str());
 
         TRITONSERVER_DataType temp_dt;
         const int64_t* shape;
         uint32_t dims_count;
         FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_,
-            payload_->responses_,
+            payload_->requests_, payload_->request_count_, payload_->responses_,
             TRITONBACKEND_InputProperties(
                 repr_input, nullptr, &temp_dt, &shape, &dims_count, nullptr,
                 nullptr),
-            (std::string("failed to obtain the input properties for '") +
-              name + "'")
+            (std::string("failed to obtain the input properties for '") + name +
+             "'")
                 .c_str());
 
         ragged_shape[0] += backend::GetElementCount(shape, dims_count);
@@ -3594,7 +3571,8 @@ ModelInstanceState::InitializeBatchInputBindings(
           case BatchInput::Kind::BATCH_ITEM_SHAPE_FLATTEN: {
             // Compiler doesn't like switch case fall through,
             // add conditional handling
-            if (batch_input.BatchInputKind() == BatchInput::Kind::BATCH_ITEM_SHAPE) {
+            if (batch_input.BatchInputKind() ==
+                BatchInput::Kind::BATCH_ITEM_SHAPE) {
               dims.AppendInt(1);
             }
             triton::common::TritonJson::Value inputs;
@@ -3623,10 +3601,11 @@ ModelInstanceState::InitializeBatchInputBindings(
           }
           default:
             return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string(
-                 "batch input type '" + batch_input.BatchInputKindString() + "' is not supported"))
-                .c_str());
+                TRITONSERVER_ERROR_INVALID_ARG,
+                (std::string(
+                     "batch input type '" + batch_input.BatchInputKindString() +
+                     "' is not supported"))
+                    .c_str());
         }
       } else {
         // For most type 'dims' will be empty as the full shape
@@ -3666,17 +3645,19 @@ ModelInstanceState::InitializeBatchInputBindings(
           }
           default:
             return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string(
-                 "batch input type '" + batch_input.BatchInputKindString() + "' is not supported"))
-                .c_str());
+                TRITONSERVER_ERROR_INVALID_ARG,
+                (std::string(
+                     "batch input type '" + batch_input.BatchInputKindString() +
+                     "' is not supported"))
+                    .c_str());
         }
       }
       int io_index = engine_->getBindingIndex(tensor_name.c_str());
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       // Special handling hint for InitializeExecuteInputBinding()
-      io_binding_info.batch_input_.reset(new BatchInputData(batch_input, nullptr));
+      io_binding_info.batch_input_.reset(
+          new BatchInputData(batch_input, nullptr));
 
       std::string data_type_str("TYPE_");
       data_type_str.append(TRITONSERVER_DataTypeString(tensor_datatype));
@@ -4191,6 +4172,14 @@ ModelInstanceState::InitializeExecuteInputBinding(
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("unable to allocate memory for input '") + input_name +
+         "' for " + Name() + ": " + cudaGetErrorString(err))
+            .c_str());
+  }
+  err = cudaMemset((uint8_t*)buffer, 0, max_byte_size);
+  if (err != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to set memory for input '") + input_name +
          "' for " + Name() + ": " + cudaGetErrorString(err))
             .c_str());
   }
@@ -4935,6 +4924,7 @@ ModelInstanceState::BuildCudaGraph(
           (std::string("unable to record CUDA graph for ") + Name()).c_str());
       return false;
     }
+    cudaStreamSynchronize(CudaStream());
   }
 
   bool captured = true;
@@ -4955,7 +4945,7 @@ ModelInstanceState::BuildCudaGraph(
     auto buffer_binding_index = num_copy_streams_ == 1 ? 0 : set_idx;
     cudaGraph_t graph;
     auto cuerr =
-        cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeGlobal);
+        cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_ERROR,
@@ -4975,6 +4965,24 @@ ModelInstanceState::BuildCudaGraph(
       }
 
       cuerr = cudaStreamEndCapture(CudaStream(), &graph);
+      if (captured == false) {
+        if (cuerr != cudaErrorStreamCaptureInvalidated) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("stream capture is not invalidated for ") + Name() +
+               ": " + cudaGetErrorString(cuerr))
+                  .c_str());
+        }
+        cudaGetLastError();
+      }
+      auto cuerr2 = cudaGetLastError();
+      if (cuerr2 != cudaSuccess) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            (std::string("unable to clear cuda runtime error for ") + Name() +
+             ": " + cudaGetErrorString(cuerr2))
+                .c_str());
+      }
       if (cuerr != cudaSuccess) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
@@ -4997,9 +5005,17 @@ ModelInstanceState::BuildCudaGraph(
         } else {
           cuda_graph.cuda_graph_exec_ = graph_exec;
 
-          trt_context->cuda_graphs_.push_back(graph);
           trt_context->cuda_graph_execs_[set_idx].insert(
               std::make_pair(cuda_graph_key, cuda_graph));
+        }
+        cuerr = cudaGraphDestroy(graph);
+        if (cuerr != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to destroy graph for ") + Name() + ": " +
+               cudaGetErrorString(cuerr))
+                  .c_str());
+          captured = false;
         }
       }
     }
@@ -5058,6 +5074,7 @@ ModelInstanceState::BuildCudaGraphV2(
           (std::string("unable to record CUDA graph for ") + Name()).c_str());
       return false;
     }
+    cudaStreamSynchronize(CudaStream());
   }
 
   bool captured = true;
@@ -5066,7 +5083,7 @@ ModelInstanceState::BuildCudaGraphV2(
     cudaGraph_t graph;
     int buffer_bindings_index = num_copy_streams_ == 1 ? 0 : set_idx;
     auto cuerr =
-        cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeGlobal);
+        cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_ERROR,
@@ -5086,6 +5103,24 @@ ModelInstanceState::BuildCudaGraphV2(
       }
 
       cuerr = cudaStreamEndCapture(CudaStream(), &graph);
+      if (captured == false) {
+        if (cuerr != cudaErrorStreamCaptureInvalidated) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("stream capture is not invalidated for ") + Name() +
+               ": " + cudaGetErrorString(cuerr))
+                  .c_str());
+        }
+        cudaGetLastError();
+      }
+      auto cuerr2 = cudaGetLastError();
+      if (cuerr2 != cudaSuccess) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            (std::string("unable to clear cuda runtime error for ") + Name() +
+             ": " + cudaGetErrorString(cuerr2))
+                .c_str());
+      }
       if (cuerr != cudaSuccess) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
@@ -5107,10 +5142,17 @@ ModelInstanceState::BuildCudaGraphV2(
           captured = false;
         } else {
           cuda_graph.cuda_graph_exec_ = graph_exec;
-
-          trt_context->cuda_graphs_.push_back(graph);
           trt_context->cuda_graph_execs_[set_idx].insert(
               std::make_pair(cuda_graph_key, cuda_graph));
+        }
+        cuerr = cudaGraphDestroy(graph);
+        if (cuerr != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to destroy graph for ") + Name() + ": " +
+               cudaGetErrorString(cuerr))
+                  .c_str());
+          captured = false;
         }
       }
     }
@@ -5172,7 +5214,8 @@ ModelInstanceState::SetCudaGraphShape(
       if (it != graph_spec.shapes_.end()) {
         // For ragged / batch input, assume the shape in graph spec is proper
         // shape after ragged.
-        if (io_binding_info.buffer_is_ragged_ || (io_binding_info.batch_input_ != nullptr)) {
+        if (io_binding_info.buffer_is_ragged_ ||
+            (io_binding_info.batch_input_ != nullptr)) {
           cuda_graph->input_dims_.emplace_back();
         } else {
           cuda_graph->input_dims_.emplace_back();
