@@ -38,9 +38,9 @@
 
 #include <NvInferPlugin.h>
 #include <cuda_runtime_api.h>
+#include <dlfcn.h>
 #include <atomic>
 #include <chrono>
-#include <dlfcn.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -5428,28 +5428,27 @@ ModelInstanceState::SetCudaGraphShape(
 
 extern "C" {
 
-inline void LoadPlugin(const std::string& path)
+inline void
+LoadPlugin(const std::string& path)
 {
-  #ifdef _MSC_VER
-  #ifdef UNICODE
+#ifdef _MSC_VER
+#ifdef UNICODE
   void* handle = LoadLibraryA(path.c_str());
-  #else
+#else
   void* handle = LoadLibrary(path.c_str());
-  #endif
-  #else
+#endif
+#else
   void* handle = dlopen(path.c_str(), RTLD_LAZY);
-  #endif
+#endif
 
-if (handle == nullptr)
-  {
-    #ifdef _MSC_VER
+  if (handle == nullptr) {
+#ifdef _MSC_VER
     std::cout << "Could not load plugin library: " << path << std::endl;
-    #else
-    std::cout << "Could not load plugin library: " << path << ", due to: " << dlerror() << std::endl;
-    #endif
-  }
-else
-  {
+#else
+    std::cout << "Could not load plugin library: " << path
+              << ", due to: " << dlerror() << std::endl;
+#endif
+  } else {
     std::cout << "Successfully loaded plugin library: " << path << std::endl;
   }
 }
@@ -5539,12 +5538,11 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         pos = value_str.find(";");
         plugin = value_str.substr(0, pos);
         LoadPlugin(plugin);
-        if(pos != std::string::npos){
+        if (pos != std::string::npos) {
           pos++;
         }
         value_str.erase(0, pos);
       }
-
     }
   }
 
@@ -5559,8 +5557,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
   if (!success) {
     TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        "unable to register TensorRT Plugins");
+        TRITONSERVER_ERROR_INTERNAL, "unable to register TensorRT Plugins");
   }
 
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
