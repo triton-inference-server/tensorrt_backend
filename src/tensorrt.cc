@@ -4945,7 +4945,8 @@ ModelInstanceState::BuildCudaGraph(
     auto buffer_binding_index = num_copy_streams_ == 1 ? 0 : set_idx;
     cudaGraph_t graph;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
-    // to local CPU thread.
+    // to this thread and avoid interference from other potentially unsafe cuda
+    // calls.
     auto cuerr =
         cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
@@ -5088,7 +5089,8 @@ ModelInstanceState::BuildCudaGraphV2(
     cudaGraph_t graph;
     int buffer_bindings_index = num_copy_streams_ == 1 ? 0 : set_idx;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
-    // to local CPU thread.
+    // to this thread and avoid interference from other potentially unsafe cuda
+    // calls.
     auto cuerr =
         cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
