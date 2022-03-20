@@ -38,7 +38,6 @@
 
 #include <NvInferPlugin.h>
 #include <cuda_runtime_api.h>
-#include <dlfcn.h>
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -46,6 +45,12 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
+
+#ifndef _MSC_VER
+#ifndef UNICODE
+#include <dlfcn.h>
+#endif
+#endif
 
 //
 // TensorRT Backend that implements the TRITONBACKEND API.
