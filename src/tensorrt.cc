@@ -46,10 +46,10 @@
 #include <thread>
 #include <unordered_map>
 
-#ifndef _MSC_VER
-#ifndef UNICODE
+#ifdef _MSC_VER
+#include <windows.h>
+#else
 #include <dlfcn.h>
-#endif
 #endif
 
 //
