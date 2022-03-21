@@ -52,12 +52,12 @@ backend that are then applied to all models that use the backend.
 
 ##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins=/path/plugin1.so;/path2/plugin2.so
 
-Coalesce-request-input instructs TensorRT to consider the requests' inputs with the same name as
+The coalesce-request-input flag instructs TensorRT to consider the requests' inputs with the same name as
 one contiguous buffer if their memory addresses align with each other.
 This option should only be enabled if all requests' input tensors are allocated
 from the same memory region. Default value is false.
 
-Plugins provides a way to load any custom TensorRT plugins that your models rely on. If you have
+The plugins flag provides a way to load any custom TensorRT plugins that your models rely on. If you have
 multiple plugins to load, use a semicolon as the delimiter.
 
 ## Build the TensorRT Backend
