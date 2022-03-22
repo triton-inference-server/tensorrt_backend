@@ -48,6 +48,8 @@
 
 #ifdef _MSC_VER
 #include <windows.h>
+// undefine the max macro in windows.h, so std::max can compile
+#undef max
 #else
 #include <dlfcn.h>
 #endif
