@@ -50,7 +50,7 @@ main Triton [issues page](https://github.com/triton-inference-server/server/issu
 The command-line options configure properties of the TensorRT
 backend that are then applied to all models that use the backend.
 
-##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins=/path/plugin1.so;/path2/plugin2.so
+##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins="/path/plugin1.so;/path2/plugin2.so"
 
 The coalesce-request-input flag instructs TensorRT to consider the requests' inputs with the same name as
 one contiguous buffer if their memory addresses align with each other.
