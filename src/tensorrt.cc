@@ -46,10 +46,9 @@
 #include <thread>
 #include <unordered_map>
 
-#ifdef _MSC_VER
+#ifdef _WIN32
+#define NOMINMAX
 #include <windows.h>
-// undefine the max macro in windows.h, so std::max can compile
-#undef max
 #else
 #include <dlfcn.h>
 #endif
@@ -5435,10 +5434,10 @@ ModelInstanceState::SetCudaGraphShape(
 
 extern "C" {
 
-inline void
+inline TRITONSERVER_Error*
 LoadPlugin(const std::string& path)
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
 #ifdef UNICODE
   void* handle = LoadLibraryA(path.c_str());
 #else
@@ -5449,15 +5448,21 @@ LoadPlugin(const std::string& path)
 #endif
 
   if (handle == nullptr) {
-#ifdef _MSC_VER
-    std::cout << "Could not load plugin library: " << path << std::endl;
+#ifdef _WIN32
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("Could not load plugin library: ") + path).c_str());
 #else
-    std::cout << "Could not load plugin library: " << path
-              << ", due to: " << dlerror() << std::endl;
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("Could not load plugin library: ") + path +
+         ", due to: " + dlerror())
+            .c_str());
 #endif
   } else {
     std::cout << "Successfully loaded plugin library: " << path << std::endl;
   }
+  return nullptr;  // success
 }
 
 // Implementing TRITONBACKEND_Initialize is optional. The backend
@@ -5544,7 +5549,12 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       while (value_str.length() > 0) {
         pos = value_str.find(";");
         plugin = value_str.substr(0, pos);
-        LoadPlugin(plugin);
+        auto err = LoadPlugin(plugin);
+        if (err != nullptr) {
+          LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+          TRITONSERVER_ErrorDelete(err);
+          err = nullptr;
+        }
         if (pos != std::string::npos) {
           pos++;
         }
@@ -5563,8 +5573,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
     });
   }
   if (!success) {
-    TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL, "unable to register TensorRT Plugins");
+    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Failed to register TensorRT Plugins");
   }
 
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
