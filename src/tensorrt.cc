@@ -5460,7 +5460,9 @@ LoadPlugin(const std::string& path)
             .c_str());
 #endif
   } else {
-    std::cout << "Successfully loaded plugin library: " << path << std::endl;
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("Successfully loaded plugin library: ") + path).c_str());
   }
   return nullptr;  // success
 }
