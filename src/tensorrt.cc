@@ -551,9 +551,14 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
       for (size_t i = 0; i < config_io.ArraySize(); i++) {
         triton::common::TritonJson::Value io;
         RETURN_IF_ERROR(config_io.IndexAsObject(i, &io));
-        common::TritonJson::Value dims;
-        io.MemberAsArray("dims", &dims);
-        if (dims.ArraySize() != 0) {
+        common::TritonJson::Value model_config_dims;
+        common::TritonJson::Value reshape;
+        if (io.Find("reshape", &reshape)) {
+          reshape.MemberAsArray("shape", &model_config_dims);
+        } else {
+          io.MemberAsArray("dims", &model_config_dims);
+        }
+        if (model_config_dims.ArraySize() != 0) {
           tensors_with_config_shape_cnt++;
         }
         std::string name;
@@ -564,9 +569,9 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
           RETURN_IF_ERROR(
               CheckAllowedModelOutput(io, allowed_tensors[io_type]));
         }
-        if (dims.ArraySize() != 0) {
+        if (model_config_dims.ArraySize() != 0) {
           RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
-              engine.get(), name, dims, &config_batch_hint));
+              engine.get(), name, model_config_dims, &config_batch_hint));
         }
       }
     }
