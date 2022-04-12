@@ -28,6 +28,7 @@
 #include "loader.h"
 #include "logging.h"
 #include "semaphore.h"
+#include "shared_library.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
 #include "tensorrt_utils.h"
@@ -203,10 +204,11 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 //
 // BackendConfiguration
 //
-// Struct to hold value specified via backend config
+// Struct to hold values specified via backend config
 struct BackendConfiguration {
   BackendConfiguration() : coalesce_request_input_(false) {}
   bool coalesce_request_input_;
+  std::vector<void*> library_handles_;
 };
 
 //
@@ -5434,43 +5436,9 @@ ModelInstanceState::SetCudaGraphShape(
 
 extern "C" {
 
-inline TRITONSERVER_Error*
-LoadPlugin(const std::string& path)
-{
-#ifdef _WIN32
-#ifdef UNICODE
-  void* handle = LoadLibraryA(path.c_str());
-#else
-  void* handle = LoadLibrary(path.c_str());
-#endif
-#else
-  void* handle = dlopen(path.c_str(), RTLD_LAZY);
-#endif
-
-  if (handle == nullptr) {
-#ifdef _WIN32
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_NOT_FOUND,
-        (std::string("Could not load plugin library: ") + path).c_str());
-#else
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_NOT_FOUND,
-        (std::string("Could not load plugin library: ") + path +
-         ", due to: " + dlerror())
-            .c_str());
-#endif
-  } else {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Successfully loaded plugin library: ") + path).c_str());
-  }
-  return nullptr;  // success
-}
-
 // Implementing TRITONBACKEND_Initialize is optional. The backend
 // should initialize any global state that is intended to be shared
-// across all models and model instances that use the backend. But
-// here it simply verify the backend API version is compatible
+// across all models and model instances that use the backend.
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 {
@@ -5551,12 +5519,15 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       while (value_str.length() > 0) {
         pos = value_str.find(";");
         plugin = value_str.substr(0, pos);
-        auto err = LoadPlugin(plugin);
+        void* handle = nullptr;
+        auto err = OpenLibraryHandle(plugin, &handle);
         if (err != nullptr) {
           LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
           TRITONSERVER_ErrorDelete(err);
           err = nullptr;
         }
+        lconfig->library_handles_.emplace_back(handle);
+
         if (pos != std::string::npos) {
           pos++;
         }
@@ -5593,7 +5564,19 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-  delete reinterpret_cast<BackendConfiguration*>(vstate);
+  auto config = reinterpret_cast<BackendConfiguration*>(vstate);
+
+  // Close opened library handles.
+  for (auto& handle : config->library_handles_) {
+    auto err = CloseLibraryHandle(&handle);
+    if (err != nullptr) {
+      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+      TRITONSERVER_ErrorDelete(err);
+      err = nullptr;
+    }
+  }
+
+  delete config;
   return nullptr;  // success
 }
 
