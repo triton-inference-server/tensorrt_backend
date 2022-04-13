@@ -47,13 +47,6 @@
 #include <thread>
 #include <unordered_map>
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
 //
 // TensorRT Backend that implements the TRITONBACKEND API.
 //

@@ -108,6 +108,8 @@ add_library(
   src/tensorrt_model_instance.h
   src/tensorrt_utils.cc
   src/tensorrt_utils.h
+  src/filesystem.h
+  src/filesystem.cc
   src/semaphore.h
   src/shared_library.h
   src/shared_library.cc

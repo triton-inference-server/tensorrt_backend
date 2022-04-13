@@ -25,6 +25,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "shared_library.h"
+#include "filesystem.h"
 #include "logging.h"
 #include "mutex"
 
@@ -60,7 +61,7 @@ SetLibraryDirectory(const std::string& path)
 
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_NOT_FOUND,
-        "unable to set dll path " + path + ": " + errstr);
+        ("unable to set dll path " + path + ": " + errstr).c_str());
   }
 #endif
 
@@ -71,7 +72,7 @@ TRITONSERVER_Error*
 ResetLibraryDirectory()
 {
 #ifdef _WIN32
-  LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, std::string("ResetLibraryDirectory"));
+  LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "ResetLibraryDirectory");
   if (!SetDllDirectory(NULL)) {
     LPSTR err_buffer = nullptr;
     size_t size = FormatMessageA(
@@ -83,7 +84,8 @@ ResetLibraryDirectory()
     LocalFree(err_buffer);
 
     return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_NOT_FOUND, "unable to reset dll path: " + errstr);
+        TRITONSERVER_ERROR_NOT_FOUND,
+        ("unable to reset dll path: " + errstr).c_str());
   }
 #endif
 
@@ -126,7 +128,7 @@ OpenLibraryHandle(const std::string& path, void** handle)
 
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_NOT_FOUND,
-        "unable to load shared library: " + errstr);
+        ("unable to load shared library: " + errstr).c_str());
   }
 #else
   *handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
@@ -156,7 +158,7 @@ CloseLibraryHandle(void* handle)
       LocalFree(err_buffer);
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
-          "unable to unload shared library: " + errstr);
+          ("unable to unload shared library: " + errstr).c_str());
     }
 #else
     if (dlclose(handle) != 0) {
