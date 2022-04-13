@@ -24,12 +24,12 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "shared_library.h"
-
-// TODO: Add back in, see what functions rely on filesystem
-// #include "filesystem.h"
 #include "logging.h"
 #include "mutex"
+#include "shared_library.h"
+
+/// FIXME: Duplication of core/src/shared_library.cc
+/// Separate shared_library to common library and delete this
 
 #ifdef _WIN32
 // suppress the min and max definitions in Windef.h.
@@ -40,9 +40,6 @@
 #endif
 
 namespace triton { namespace backend { namespace tensorrt {
-
-// TODO Figure out which shared library functions to use, how to save and free
-// properly
 
 TRITONSERVER_Error*
 SetLibraryDirectory(const std::string& path)
