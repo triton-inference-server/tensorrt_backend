@@ -5525,8 +5525,9 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
           LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
           TRITONSERVER_ErrorDelete(err);
           err = nullptr;
+        } else {
+          lconfig->library_handles_.emplace_back(handle);
         }
-        lconfig->library_handles_.emplace_back(handle);
 
         if (pos != std::string::npos) {
           pos++;
