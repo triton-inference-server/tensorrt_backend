@@ -24,9 +24,9 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "shared_library.h"
 #include "logging.h"
 #include "mutex"
-#include "shared_library.h"
 
 /// FIXME: Duplication of core/src/shared_library.cc
 /// Separate shared_library to common library and delete this
@@ -45,7 +45,9 @@ TRITONSERVER_Error*
 SetLibraryDirectory(const std::string& path)
 {
 #ifdef _WIN32
-  LOG_VERBOSE(1) << "SetLibraryDirectory: path = " << path;
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_VERBOSE,
+      (std::string("SetLibraryDirectory: path = ") + path).c_str());
   if (!SetDllDirectory(path.c_str())) {
     LPSTR err_buffer = nullptr;
     size_t size = FormatMessageA(
@@ -69,7 +71,7 @@ TRITONSERVER_Error*
 ResetLibraryDirectory()
 {
 #ifdef _WIN32
-  LOG_VERBOSE(1) << "ResetLibraryDirectory";
+  LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, std::string("ResetLibraryDirectory"));
   if (!SetDllDirectory(NULL)) {
     LPSTR err_buffer = nullptr;
     size_t size = FormatMessageA(
@@ -91,7 +93,9 @@ ResetLibraryDirectory()
 TRITONSERVER_Error*
 OpenLibraryHandle(const std::string& path, void** handle)
 {
-  LOG_VERBOSE(1) << "OpenLibraryHandle: " << path;
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_VERBOSE,
+      (std::string("OpenLibraryHandle: ") + path).c_str());
 
 #ifdef _WIN32
   // Need to put shared library directory on the DLL path so that any
@@ -101,7 +105,9 @@ OpenLibraryHandle(const std::string& path, void** handle)
 
   // HMODULE is typedef of void*
   // https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
-  LOG_VERBOSE(1) << "OpenLibraryHandle: path = " << path;
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_VERBOSE,
+      (std::string("OpenLibraryHandle: path = ") + path).c_str());
   *handle = LoadLibrary(path.c_str());
 
   // Remove the dll path added above... do this unconditionally before
@@ -127,7 +133,7 @@ OpenLibraryHandle(const std::string& path, void** handle)
   if (*handle == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_NOT_FOUND,
-        "unable to load shared library: " + std::string(dlerror()));
+        ("unable to load shared library: " + std::string(dlerror())).c_str());
   }
 #endif
 
@@ -156,7 +162,8 @@ CloseLibraryHandle(void* handle)
     if (dlclose(handle) != 0) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
-          "unable to unload shared library: " + std::string(dlerror()));
+          ("unable to unload shared library: " + std::string(dlerror()))
+              .c_str());
     }
 #endif
   }

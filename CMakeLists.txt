@@ -1,4 +1,4 @@
-# Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -109,6 +109,8 @@ add_library(
   src/tensorrt_utils.cc
   src/tensorrt_utils.h
   src/semaphore.h
+  src/shared_library.h
+  src/shared_library.cc
   src/loader.cc
   src/loader.h
   src/logging.cc
