@@ -594,7 +594,10 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
   // Will use that as a hint to ascertain whether or not to enable batching.
+  // However, ragged batching is an exception to this rule. A tensor
+  // allowing ragged batch is in itself a batching hint.
   bool config_batch_hint = false;
+
   // The number of IO Tensors with shape specification in config
   int tensors_with_config_shape_cnt = 0;
 
@@ -608,33 +611,44 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
         allowed_tensors["output"].emplace(engine->getBindingName(i));
       }
     }
+
+    bool io_allow_ragged_batch = false;
     for (const auto& io_type : io_types) {
       triton::common::TritonJson::Value config_io;
       RETURN_IF_ERROR(ModelConfig().MemberAsArray(io_type.c_str(), &config_io));
-      for (size_t i = 0; i < config_io.ArraySize(); i++) {
+      for (size_t i = 0;
+           ((i < config_io.ArraySize()) && (!io_allow_ragged_batch)); i++) {
         triton::common::TritonJson::Value io;
         RETURN_IF_ERROR(config_io.IndexAsObject(i, &io));
-        common::TritonJson::Value model_config_dims;
-        common::TritonJson::Value reshape;
-        if (io.Find("reshape", &reshape)) {
-          reshape.MemberAsArray("shape", &model_config_dims);
+        io.MemberAsBool("allow_ragged_batch", &io_allow_ragged_batch);
+        if (io_allow_ragged_batch) {
+          // Treat the presence of tensor allowing ragged batch as
+          // a hint for batching.
+          config_batch_hint = true;
         } else {
-          io.MemberAsArray("dims", &model_config_dims);
-        }
-        if (model_config_dims.ArraySize() != 0) {
-          tensors_with_config_shape_cnt++;
-        }
-        std::string name;
-        RETURN_IF_ERROR(io.MemberAsString("name", &name));
-        if (io_type.compare("input") == 0) {
-          RETURN_IF_ERROR(CheckAllowedModelInput(io, allowed_tensors[io_type]));
-        } else {
-          RETURN_IF_ERROR(
-              CheckAllowedModelOutput(io, allowed_tensors[io_type]));
-        }
-        if (model_config_dims.ArraySize() != 0) {
-          RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
-              engine.get(), name, model_config_dims, &config_batch_hint));
+          common::TritonJson::Value model_config_dims;
+          common::TritonJson::Value reshape;
+          if (io.Find("reshape", &reshape)) {
+            reshape.MemberAsArray("shape", &model_config_dims);
+          } else {
+            io.MemberAsArray("dims", &model_config_dims);
+          }
+          if (model_config_dims.ArraySize() != 0) {
+            tensors_with_config_shape_cnt++;
+          }
+          std::string name;
+          RETURN_IF_ERROR(io.MemberAsString("name", &name));
+          if (io_type.compare("input") == 0) {
+            RETURN_IF_ERROR(
+                CheckAllowedModelInput(io, allowed_tensors[io_type]));
+          } else {
+            RETURN_IF_ERROR(
+                CheckAllowedModelOutput(io, allowed_tensors[io_type]));
+          }
+          if (model_config_dims.ArraySize() != 0) {
+            RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
+                engine.get(), name, model_config_dims, &config_batch_hint));
+          }
         }
       }
     }
