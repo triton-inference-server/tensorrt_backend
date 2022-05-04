@@ -44,7 +44,7 @@ With this, we are ready to proceed to the next step; setting up the Triton Infer
 
 ## Step 2: Set Up Triton Inference Server
 
-If you are new to the Triton Inference Server and want to learn more, we hightly recommend to check out our [Github Repository](https://developer.nvidia.com/nvidia-triton-inference-server).
+If you are new to the Triton Inference Server and want to learn more, we hightly recommend to check out our [Github Repository](https://github.com/triton-inference-server).
 
 To use Triton, we need to make a model repository. The structure of the repository should look something like this:
 ```
