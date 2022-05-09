@@ -1,6 +1,6 @@
 # TensorRT to Triton
 
-This document contains barebone instructions explaining how to deploy a model accelerated by using TensorRT on NVIDIA Triton Inference Server. For an indepth explaination, refer this [blog](https://TODO_add_blog_link). This README and the other files we provide showcase how to deploy a simple resnet model.
+This README showcase how to deploy a simple resnet model accelerated by using TensorRT on NVIDIA Triton Inference Server. For an indepth explaination, refer this [blog](https://TODO_add_blog_link).
 
 ## Step 1: Optimize your model wtih Torch TensorRT
 
@@ -35,7 +35,7 @@ trtexec --onnx=resnet50.onnx \
         --useCudaGraph
 ```
 
-Before we proceed to the next step, it is important that we know the names of the "input" and "output" layers of your network, as these would be required by Triton. One easy way is to use `polygraphy` which comes packaged with the TensorRT container.
+Before we proceed to the next step, it is important that we know the names of the "input" and "output" layers of your network, as these would be required by Triton. One easy way is to use `polygraphy` which comes packaged with the TensorRT container. If you want to learn more about Polygrpahy and its usage, visit [this](https://github.com/NVIDIA/TensorRT/tree/main/tools/Polygraphy) repository. You can checkout a plethora of [examples](https://github.com/NVIDIA/TensorRT/tree/main/tools/Polygraphy/examples/cli/inspect) demonstrating the utility of Polygraphy to inspect models.
 
 ```
 polygraphy inspect model resnet50.engine --mode=basic

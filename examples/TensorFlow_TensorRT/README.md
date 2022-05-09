@@ -1,12 +1,12 @@
-# Tensorflow TensorRT to Triton
+# Tensorflow with TensorRT (TF-TRT) to Triton
 
-This document contains barebone instructions explaining how to deploy a model accelerated by using Tensorflow TensorRT on NVIDIA Triton Inference Server. For an indepth explaination, refer this [blog](https://TODO_add_blog_link). This README and the other files we provide showcase how to deploy a simple resnet model.
+This README showcase how to deploy a simple resnet model accelerated by using Tensorflow TensorRT on NVIDIA Triton Inference Server. For an indepth explaination, refer this [blog](https://TODO_add_blog_link). 
 
-## Step 1: Optimize your model wtih Torch TensorRT
+## Step 1: Optimize your model wtih TensorFlow TensorRT
 
-If you are unfamiliar with Tensorflow TensorRT please refer this [video](https://www.youtube.com/watch?v=w7871kMiAs8&ab_channel=NVIDIADeveloper). The first step in this pipeline is to accelerate your model. If you are using PyTorch as you framework of choice for training, you can either user TensorRT or Torch-TensorRT depending on your model's operations.
+If you are unfamiliar with Tensorflow TensorRT please refer this [video](https://www.youtube.com/watch?v=w7871kMiAs8&ab_channel=NVIDIADeveloper). The first step in this pipeline is to accelerate your model. If you are using TensorFlow as you framework of choice for training, you can either user TensorRT or TensorFlow-TensorRT depending on your model's operations.
 
-For using Tensorflow TensorRT, let's first pull our PyTorch docker container which comes installed with both TensorRT and Tensorflow TensorRT. You may need to create an account and get the API key from [here](https://ngc.nvidia.com/setup/). Sign up and login with your key (follow the instructions [here](https://ngc.nvidia.com/setup/api-key) after siging up).
+For using Tensorflow TensorRT, let's first pull our TensorFlow docker container which comes installed with both TensorRT and Tensorflow TensorRT. You may need to create an account and get the API key from [here](https://ngc.nvidia.com/setup/). Sign up and login with your key (follow the instructions [here](https://ngc.nvidia.com/setup/api-key) after siging up).
 
 ```
 # <xx.xx> is the yy:mm for the publishing tag for NVIDIA's Tensorflow 
@@ -15,7 +15,7 @@ For using Tensorflow TensorRT, let's first pull our PyTorch docker container whi
 docker run -it --gpus all -v /path/to/this/folder:/resnet50_eg nvcr.io/nvidia/tensorflow:<xx.xx>-tf2-py3
 ```
 
-We have already made a short script `tf_trt_resnet50.py` as a sample to use Torch TensorRT. For more examples visit our [Github Repository](https://github.com/NVIDIA/Torch-TensorRT/).
+We have already made sample to use Tensorflow-TensorRT: `tf_trt_resnet50.py`. For more examples visit our [Github Repository](https://github.com/tensorflow/tensorrt).
 
 ```
 python tf_trt_resnet50.py
@@ -46,7 +46,7 @@ model_repository
                 +-- variables.index
 ```
 
-As might be apparent from the model structure above, each model requires a configuration file to spin up the server. We provide a sample of a `config.pbtxt`, which you can use for this specific example. If you are new to Triton, we highly encorage you to checkout out this [section of our documentation](https://github.com/triton-inference-server/server/blob/main/docs/model_configuration.md) for more. 
+As might be apparent from the model structure above, each model requires a configuration file to spin up the server. We provide a sample of a `config.pbtxt`, which you can use for this specific example. If you are new to Triton, we highly encorage you to checkout out this [section of our documentation](https://github.com/triton-inference-server/server/blob/main/docs/model_configuration.md) for more details. 
 
 Once you have the model repository setup, it is time to launch the triton server! You can do that with the docker command below.
 ```

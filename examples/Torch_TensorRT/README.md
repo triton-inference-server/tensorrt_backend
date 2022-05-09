@@ -1,7 +1,6 @@
 # Torch TensorRT to Triton
 
-This document contains barebone instructions explaining how to deploy a model accelerated by using Torch TensorRT on NVIDIA Triton Inference Server. For an indepth explaination, refer this [blog](https://TODO_add_blog_link). This README and the other files we provide showcase how to deploy a simple resnet model.
-
+This README showcase how to deploy a simple resnet model accelerated by using Torch TensorRT on NVIDIA Triton Inference Server. For an indepth explaination, refer this [blog](https://TODO_add_blog_link). 
 ## Step 1: Optimize your model wtih Torch TensorRT
 
 If you are unfamiliar with Torch TensorRT please refer this [video](https://www.youtube.com/watch?v=TU5BMU6iYZ0&ab_channel=NVIDIADeveloper). The first step in this pipeline is to accelerate your model. If you are using PyTorch as you framework of choice for training, you can either user TensorRT or Torch-TensorRT depending on your model's operations.
@@ -15,7 +14,7 @@ For using Torch TensorRT, let's first pull our PyTorch docker container which co
 docker run -it --gpus all -v /path/to/this/folder:/resnet50_eg nvcr.io/nvidia/pytorch:<xx.xx>-py3
 ```
 
-We have already made a short script `torch_trt_resnet50.py` as a sample for you to use Torch TensorRT. For more examples visit our [Github Repository](https://github.com/NVIDIA/Torch-TensorRT/).
+We have already made sample to use Torch TensorRT: `torch_trt_resnet50.py`. For more examples visit our [Github Repository](https://github.com/NVIDIA/Torch-TensorRT/tree/master/notebooks).
 
 ```
 python torch_trt_resnet50.py
@@ -40,7 +39,7 @@ model_repository
         +-- model.pt
 ```
 
-As might be apparent from the model structure above, each model requires a configuration file to spin up the server. We provide a sample of a `config.pbtxt`, which you can use for this specific example. If you are new to Triton, we highly encorage you to checkout out this [section of our documentation](https://github.com/triton-inference-server/server/blob/main/docs/model_configuration.md) for more. 
+As might be apparent from the model structure above, each model requires a configuration file to spin up the server. We provide a sample of a `config.pbtxt`, which you can use for this specific example. If you are new to Triton, we highly encorage you to checkout out this [section of our documentation](https://github.com/triton-inference-server/server/blob/main/docs/model_configuration.md) for more details. 
 
 Once you have the model repository setup, it is time to launch the triton server! You can do that with the docker command below.
 ```
