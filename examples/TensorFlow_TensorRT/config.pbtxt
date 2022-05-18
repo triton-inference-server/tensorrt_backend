@@ -1,4 +1,4 @@
-# Copyright 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,15 +31,13 @@ input [
   {
     name: "input_1"
     data_type: TYPE_FP32
-    format: FORMAT_NHWC
-    dims: [224, 224, 3 ]
+    dims: [-1, 224, 224, 3 ]
   }
 ]
 output [
   {
     name: "predictions"
     data_type: TYPE_FP32
-    dims: [1000]
-    reshape { shape: [ 1, 1000 ] }
+    dims: [-1, 1000]
   }
 ]

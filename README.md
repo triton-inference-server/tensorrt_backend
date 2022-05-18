@@ -30,12 +30,20 @@
 
 # TensorRT Backend
 
-The Triton backend for [TensorRT](https://github.com/NVIDIA/TensorRT). You can learn more about Triton backends in the [backend repo](https://github.com/triton-inference-server/backend). Documentation can be found in the [general Triton documentation](https://github.com/triton-inference-server/server#triton-inference-server) available in the main [server](https://github.com/triton-inference-server/server) repo. If you don't find your answer there you can ask questions on the main Triton [issues page](https://github.com/triton-inference-server/server/issues).
-
+The Triton backend for [TensorRT](https://github.com/NVIDIA/TensorRT). 
+You can learn more about Triton backends in the [backend
+repo](https://github.com/triton-inference-server/backend). Ask
+questions or report problems on the [issues
+page](https://github.com/triton-inference-server/server/issues).
 This backend is designed to run a serialized [TensorRT engine](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#build_engine_c)
 models using the TensorRT C++ API.
 
-If you want to try out the backend without building it manually, you can try out the Triton Inference Server [container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver).
+Where can I ask general questions about Triton and Triton backends?
+Be sure to read all the information below as well as the [general
+Triton documentation](https://github.com/triton-inference-server/server#triton-inference-server)
+available in the main [server](https://github.com/triton-inference-server/server)
+repo. If you don't find your answer there you can ask questions on the
+main Triton [issues page](https://github.com/triton-inference-server/server/issues).
 
 ## Command-line Options
 
