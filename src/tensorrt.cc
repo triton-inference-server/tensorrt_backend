@@ -659,7 +659,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   if (engine->hasImplicitBatchDimension()) {
     // If engine has implicit batch dimension then retrieve the value and exit
     max_batch_size = engine->getMaxBatchSize();
-    has_implicit_batch_dim = true;
+    has_implicit_batch_dim = (max_batch_size != 1);
   } else {
     // Assuming the first dimension to be batch dimension, until and unless
     // proven the batching is not supported.
@@ -677,7 +677,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   } else if (
       (tensors_with_config_shape_cnt != 0) && (!config_batch_hint) &&
       (!has_implicit_batch_dim)) {
-    // if no hint for batching in config io
+    // if an explicit hint for non batching in config io
     LOG_MESSAGE(
         TRITONSERVER_LOG_WARN,
         (std::string("The specified dimensions in model config for ") + Name() +
