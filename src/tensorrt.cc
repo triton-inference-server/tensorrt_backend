@@ -2440,10 +2440,13 @@ ModelInstanceState::Run(
       }
 
       if (io_binding_info.is_state_output_) {
-        payload_->seq_states_ = payload_->responder_->ProcessStateTensor(
+        auto updated_states = payload_->responder_->ProcessStateTensor(
             name, dt, batchn_shape,
             static_cast<const char*>(io_binding_info.buffer_),
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+        payload_->seq_states_.insert(
+            payload_->seq_states_.end(), updated_states.begin(),
+            updated_states.end());
       }
     }
   }
