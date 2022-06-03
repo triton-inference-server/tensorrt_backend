@@ -635,10 +635,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
         ModelConfig().Find("dynamic_batching", &value);
     if (!found_sequence_batching && !found_dynamic_batching) {
       triton::common::TritonJson::Value dynamic_batching(
-          ModelConfig(),
-          triton::common::TritonJson::ValueType::OBJECT);
-      ModelConfig().Add(
-          "dynamic_batching", std::move(dynamic_batching));
+          ModelConfig(), triton::common::TritonJson::ValueType::OBJECT);
+      ModelConfig().Add("dynamic_batching", std::move(dynamic_batching));
     }
   }
 
