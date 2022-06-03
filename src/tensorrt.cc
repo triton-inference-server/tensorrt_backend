@@ -625,6 +625,21 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
             .c_str());
   }
 
+  // Turn on dynamic batch scheduler if batch size is greater
+  // than 1 and there is no scheduler defined in the configuration.
+  if (max_batch_size > 1) {
+    triton::common::TritonJson::Value value;
+    bool found_sequence_batching =
+        ModelConfig().Find("sequence_batching", &value);
+    bool found_dynamic_batching =
+        ModelConfig().Find("dynamic_batching", &value);
+    if (!found_sequence_batching && !found_dynamic_batching) {
+      triton::common::TritonJson::Value dynamic_batching(
+          ModelConfig(), triton::common::TritonJson::ValueType::OBJECT);
+      ModelConfig().Add("dynamic_batching", std::move(dynamic_batching));
+    }
+  }
+
   triton::common::TritonJson::Value ref_inputs(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
   RETURN_IF_ERROR(GetRefIO(true /*is_input*/, engine.get(), &ref_inputs));
