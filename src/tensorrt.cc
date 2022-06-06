@@ -65,14 +65,17 @@ namespace {
               TRITONBACKEND_ResponseSend(                                      \
                   RESPONSES[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL,          \
                   farie_err_),                                                 \
-              "failed to send TensorRT backend response");                     \
-          LOG_MESSAGE(TRITONSERVER_LOG_ERROR, (LOG_MSG));                      \
+              (REQUESTS[R]->IdString() +                                       \
+              "failed to send TensorRT backend response").c_str());            \
+          LOG_MESSAGE(TRITONSERVER_LOG_ERROR, (REQUESTS[R]->IdString() +       \
+          LOG_MSG).c_str());                                                   \
         }                                                                      \
         LOG_IF_ERROR(                                                          \
             TRITONBACKEND_ModelInstanceReportStatistics(                       \
                 TritonModelInstance(), REQUESTS[r], false /* success */, 0, 0, \
                 0, 0),                                                         \
-            "failed reporting request statistics");                            \
+            (REQUESTS[R]->IdString() +                                         \
+            "failed reporting request statistics").c_str());                   \
         LOG_IF_ERROR(                                                          \
             TRITONBACKEND_RequestRelease(                                      \
                 REQUESTS[r], TRITONSERVER_REQUEST_RELEASE_ALL),                \
@@ -102,13 +105,15 @@ TimestampCaptureCallback(void* data)
               TRITONBACKEND_ResponseSend(                             \
                   RESPONSES[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, \
                   farie_err_),                                        \
-              "failed to send TensorRT backend response");            \
+              (REQUESTS[r]->IdString() +                              \
+              "failed to send TensorRT backend response").c_str())    \
           LOG_MESSAGE(TRITONSERVER_LOG_ERROR, (LOG_MSG));             \
         }                                                             \
         LOG_IF_ERROR(                                                 \
             TRITONBACKEND_RequestRelease(                             \
                 REQUESTS[r], TRITONSERVER_REQUEST_RELEASE_ALL),       \
-            "failed releasing request");                              \
+            (REQUESTS[r]->IdString() +                                \
+            "failed releasing request").c_str());                     \
         REQUESTS[r] = nullptr;                                        \
       }                                                               \
       TRITONSERVER_ErrorDelete(farie_err_);                           \
@@ -1804,7 +1809,7 @@ ModelInstanceState::Run(
       payload_->responses_.emplace_back(response);
     } else {
       payload_->responses_.emplace_back(nullptr);
-      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Fail to create response");
+      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, (payload_->requests_[i]->IdString() + "Fail to create response").c_str());
       TRITONSERVER_ErrorDelete(err);
     }
   }
