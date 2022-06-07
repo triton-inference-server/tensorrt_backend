@@ -1804,7 +1804,7 @@ ModelInstanceState::Run(
       payload_->responses_.emplace_back(response);
     } else {
       payload_->responses_.emplace_back(nullptr);
-      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Fail to create response").c_str();
+      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Fail to create response");
       TRITONSERVER_ErrorDelete(err);
     }
   }
