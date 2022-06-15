@@ -483,6 +483,42 @@ ModelState::AutoCompleteConfig()
 TRITONSERVER_Error*
 ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 {
+  // Get one of the specified device id from the config to load the model
+  int current_device;
+  cudaError_t cuerr = cudaGetDevice(&current_device);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to get current CUDA device ") + ": " +
+         cudaGetErrorString(cuerr))
+            .c_str());
+  }
+
+  int64_t device_id;
+  triton::common::TritonJson::Value groups;
+  RETURN_IF_ERROR(ModelConfig().MemberAsArray("instance_group", &groups));
+  triton::common::TritonJson::Value group;
+  RETURN_IF_ERROR(groups.IndexAsObject(0, &group));
+  triton::common::TritonJson::Value gpus;
+  RETURN_IF_ERROR(group.MemberAsArray("gpus", &gpus));
+  RETURN_IF_ERROR(gpus.IndexAsInt(0, &device_id));
+
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_VERBOSE,
+      (std::string(
+           "Setting the CUDA device to " + std::to_string(device_id) +
+           " for loading model to auto-complete config for " + Name())
+           .c_str()));
+
+  cuerr = cudaSetDevice(device_id);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to set CUDA device to GPU ") +
+         std::to_string(device_id) + " : " + cudaGetErrorString(cuerr))
+            .c_str());
+  }
+
   std::shared_ptr<nvinfer1::IRuntime> runtime;
   std::shared_ptr<nvinfer1::ICudaEngine> engine;
   if (LoadPlan(model_path, -1 /* dla_core_id */, &runtime, &engine) !=
@@ -667,6 +703,15 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   }
   if (runtime != nullptr) {
     runtime.reset();
+  }
+
+  cuerr = cudaSetDevice(current_device);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to revert CUDA device to GPU ") +
+         std::to_string(current_device) + " : " + cudaGetErrorString(cuerr))
+            .c_str());
   }
 
   return nullptr;
