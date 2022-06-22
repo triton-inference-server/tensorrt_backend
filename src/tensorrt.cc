@@ -453,37 +453,6 @@ ModelState::ParseParameters()
 TRITONSERVER_Error*
 ModelState::AutoCompleteConfig()
 {
-  std::string artifact_name;
-  RETURN_IF_ERROR(
-      ModelConfig().MemberAsString("default_model_filename", &artifact_name));
-
-  // If the model configuration doesn't have an explicit model file specified
-  // then use the default name ("model.plan").
-  std::string cc_model_filename = artifact_name;
-  if (cc_model_filename.empty()) {
-    cc_model_filename = "model.plan";
-  }
-
-  std::string model_path = JoinPath(
-      {RepositoryPath(), std::to_string(Version()), cc_model_filename});
-
-  RETURN_IF_ERROR(AutoCompleteConfigHelper(model_path));
-
-  if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
-    triton::common::TritonJson::WriteBuffer buffer;
-    RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("post auto-complete:\n") + buffer.Contents()).c_str());
-  }
-
-  return nullptr;  // success
-}
-
-TRITONSERVER_Error*
-ModelState::AutoCompleteConfigHelper(const std::string& model_path)
-{
-  // Get one of the specified device id from the config to load the model
   int current_device;
   cudaError_t cuerr = cudaGetDevice(&current_device);
   if (cuerr != cudaSuccess) {
@@ -506,8 +475,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   LOG_MESSAGE(
       TRITONSERVER_LOG_VERBOSE,
       (std::string(
-           "Setting the CUDA device to " + std::to_string(device_id) +
-           " for loading model to auto-complete config for " + Name())
+           "Setting the CUDA device to GPU" + std::to_string(device_id) +
+           " to auto-complete config for " + Name())
            .c_str()));
 
   cuerr = cudaSetDevice(device_id);
@@ -519,6 +488,72 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
             .c_str());
   }
 
+  std::string artifact_name;
+  RETURN_IF_ERROR(
+      ModelConfig().MemberAsString("default_model_filename", &artifact_name));
+
+  cudaDeviceProp cuprops;
+  cuerr = cudaGetDeviceProperties(&cuprops, device_id);
+  if (cuerr != cudaSuccess) {
+    throw BackendModelInstanceException(TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to get CUDA device properties for ") + name_ +
+         ": " + cudaGetErrorString(cuerr))
+            .c_str()));
+  }
+
+  const std::string cc =
+      std::to_string(cuprops.major) + "." + std::to_string(cuprops.minor);
+
+  common::TritonJson::Value cc_names;
+  common::TritonJson::Value cc_name;
+  if ((ModelConfig().Find("cc_model_filenames", &cc_names)) &&
+      (cc_names.Find(cc.c_str(), &cc_name))) {
+    cc_name.AsString(&artifact_name);
+  }
+
+  // If the model configuration doesn't have an explicit model file specified
+  // then use the default name ("model.plan").
+  std::string cc_model_filename = artifact_name;
+  if (cc_model_filename.empty()) {
+    cc_model_filename = "model.plan";
+  } else {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_VERBOSE,
+        (std::string(
+             "Using explicit serialized file '" + cc_model_filename +
+             "' to auto-complete config for " + Name())
+             .c_str()));
+  }
+
+  std::string model_path = JoinPath(
+      {RepositoryPath(), std::to_string(Version()), cc_model_filename});
+
+  RETURN_IF_ERROR(AutoCompleteConfigHelper(model_path));
+
+  cuerr = cudaSetDevice(current_device);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to revert CUDA device to GPU ") +
+         std::to_string(current_device) + " : " + cudaGetErrorString(cuerr))
+            .c_str());
+  }
+
+  if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
+    triton::common::TritonJson::WriteBuffer buffer;
+    RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("post auto-complete:\n") + buffer.Contents()).c_str());
+  }
+
+  return nullptr;  // success
+}
+
+TRITONSERVER_Error*
+ModelState::AutoCompleteConfigHelper(const std::string& model_path)
+{
   std::shared_ptr<nvinfer1::IRuntime> runtime;
   std::shared_ptr<nvinfer1::ICudaEngine> engine;
   if (LoadPlan(model_path, -1 /* dla_core_id */, &runtime, &engine) !=
@@ -703,15 +738,6 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   }
   if (runtime != nullptr) {
     runtime.reset();
-  }
-
-  cuerr = cudaSetDevice(current_device);
-  if (cuerr != cudaSuccess) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("unable to revert CUDA device to GPU ") +
-         std::to_string(current_device) + " : " + cudaGetErrorString(cuerr))
-            .c_str());
   }
 
   return nullptr;
