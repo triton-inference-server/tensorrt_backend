@@ -4745,10 +4745,10 @@ ModelInstanceState::InitializeGraphSpecs(
   if (model_state_->GraphSpecs().ArraySize() == 0) {
     // No graph spec is provided, use default specs
     // Graphs are most likely to help for small batch sizes so by
-    // default build for batch sizes 1, 2, 3, 4, 6, 8, 12, 16,
-    // 'max_batch_size'. If preferred batch size is specified, then
-    // the batch sizes will be 1, preferred batch sizes,
-    // 'max_batch_size'.
+    // default build for batch sizes [1, 2, 3, 4, 6, 8, 12, 16,
+    // 'max_batch_size']. If preferred batch size(s) is(are)
+    // specified, then the batch sizes will be [1,
+    // <specified preferred batch size(s)>, 'max_batch_size'].
     std::set<int> cuda_graph_batch_sizes;
     if (model_state_->MaxBatchSize() == 0) {
       cuda_graph_batch_sizes = {0};
