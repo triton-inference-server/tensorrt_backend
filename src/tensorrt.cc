@@ -4759,28 +4759,36 @@ ModelInstanceState::InitializeGraphSpecs(
     common::TritonJson::Value dynamic_batching;
     common::TritonJson::Value sequence_batching;
     common::TritonJson::Value oldest;
+    bool pbs_found = false;
     if (model_state_->ModelConfig().Find(
             "dynamic_batching", &dynamic_batching)) {
       common::TritonJson::Value pbs;
-      RETURN_IF_ERROR(
-          dynamic_batching.MemberAsArray("preferred_batch_size", &pbs));
-      for (size_t i = 0; i < pbs.ArraySize(); i++) {
-        int64_t bs;
-        RETURN_IF_ERROR(pbs.IndexAsInt(i, &bs));
-        cuda_graph_batch_sizes.emplace(bs);
+      if (dynamic_batching.Find("preferred_batch_size")) {
+        pbs_found = true;
+        dynamic_batching.MemberAsArray("preferred_batch_size", &pbs);
+        for (size_t i = 0; i < pbs.ArraySize(); i++) {
+          int64_t bs;
+          RETURN_IF_ERROR(pbs.IndexAsInt(i, &bs));
+          cuda_graph_batch_sizes.emplace(bs);
+        }
       }
     } else if (
         model_state_->ModelConfig().Find(
             "sequence_batching", &sequence_batching) &&
         sequence_batching.Find("oldest", &oldest)) {
       common::TritonJson::Value pbs;
-      RETURN_IF_ERROR(oldest.MemberAsArray("preferred_batch_size", &pbs));
-      for (size_t i = 0; i < pbs.ArraySize(); i++) {
-        int64_t bs;
-        RETURN_IF_ERROR(pbs.IndexAsInt(i, &bs));
-        cuda_graph_batch_sizes.emplace(bs);
+      if (oldest.Find("preferred_batch_size")) {
+        pbs_found = true;
+        oldest.MemberAsArray("preferred_batch_size", &pbs);
+        for (size_t i = 0; i < pbs.ArraySize(); i++) {
+          int64_t bs;
+          RETURN_IF_ERROR(pbs.IndexAsInt(i, &bs));
+          cuda_graph_batch_sizes.emplace(bs);
+        }
       }
-    } else {
+    }
+
+    if (!pbs_found) {
       cuda_graph_batch_sizes = {1, 2, 3, 4, 6, 8, 12, 16};
       if (model_state_->MaxBatchSize() == 0) {
         cuda_graph_batch_sizes.emplace(0);
