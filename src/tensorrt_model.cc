@@ -58,6 +58,15 @@ TensorRTModel::TensorRTModel(TRITONBACKEND_Model* triton_model)
   ParseModelConfig();
 }
 
+TRITONSERVER_Error*
+TensorRTModel::SetTensorRTModelConfig()
+{
+  RETURN_IF_ERROR(SetModelConfig());
+  ParseModelConfig();
+
+  return nullptr;
+}
+
 void
 TensorRTModel::ParseModelConfig()
 {
