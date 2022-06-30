@@ -34,6 +34,8 @@ class TensorRTModel : public BackendModel {
   TensorRTModel(TRITONBACKEND_Model* triton_model);
   virtual ~TensorRTModel() = default;
 
+  TRITONSERVER_Error* SetTensorRTModelConfig();
+
   void ParseModelConfig();
 
   // The model configuration.
