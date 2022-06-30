@@ -255,6 +255,7 @@ class ModelState : public TensorRTModel {
   TRITONSERVER_Error* ExtractBatchHintFromIOConfig(
       nvinfer1::ICudaEngine* engine, const std::string& tensor_name,
       const common::TritonJson::Value& dims, bool* config_batch_hint);
+  TRITONSERVER_Error* InstanceHasKindGPU(bool* has_instance_kind_gpu);
   TRITONSERVER_Error* GetRefIO(
       const bool is_input, nvinfer1::ICudaEngine* engine,
       triton::common::TritonJson::Value* ref_io);
@@ -304,7 +305,17 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
   bool auto_complete_config = false;
   RETURN_IF_ERROR(TRITONBACKEND_ModelAutoCompleteConfig(
       triton_model, &auto_complete_config));
-  if (auto_complete_config) {
+
+  // Server core already detects if a GPU is present and
+  // corrects the instance groups before backend model is
+  // initialized. Since the TensorRT backend only works with
+  // GPU instances, check if the model has a KIND_GPU
+  // instance group. If KIND_GPU is not present, skip
+  // autocomplete as the model cannot be loaded.
+  bool has_instance_kind_gpu = false;
+  (*state)->InstanceHasKindGPU(&has_instance_kind_gpu);
+
+  if (auto_complete_config && has_instance_kind_gpu) {
     RETURN_IF_ERROR((*state)->AutoCompleteConfig());
     RETURN_IF_ERROR((*state)->SetTensorRTModelConfig());
   }
@@ -881,6 +892,33 @@ ModelState::ExtractBatchHintFromIOConfig(
   }
   return nullptr;
 }
+
+TRITONSERVER_Error*
+ModelState::InstanceHasKindGPU(bool* has_instance_kind_gpu)
+{
+  *has_instance_kind_gpu = false;
+  triton::common::TritonJson::Value instance_groups(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  ModelConfig().Find("instance_group", &instance_groups);
+
+  if (instance_groups.ArraySize() > 0) {
+    // TensorRT backend does not support KIND_CPU at all
+    // so only check the first instance group kind.
+    triton::common::TritonJson::Value group;
+    RETURN_IF_ERROR(instance_groups.IndexAsObject(0, &group));
+
+    triton::common::TritonJson::Value kind;
+    group.Find("kind", &kind);
+    std::string kind_str;
+    RETURN_IF_ERROR(kind.AsString(&kind_str));
+    if (kind_str == "KIND_GPU") {
+      *has_instance_kind_gpu = true;
+    }
+  }
+
+  return nullptr;  // success
+}
+
 
 TRITONSERVER_Error*
 ModelState::GetRefIO(
