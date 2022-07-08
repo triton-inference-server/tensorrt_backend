@@ -255,6 +255,7 @@ class ModelState : public TensorRTModel {
   TRITONSERVER_Error* ExtractBatchHintFromIOConfig(
       nvinfer1::ICudaEngine* engine, const std::string& tensor_name,
       const common::TritonJson::Value& dims, bool* config_batch_hint);
+  TRITONSERVER_Error* InstanceHasKindGPU(bool* has_instance_kind_gpu);
   TRITONSERVER_Error* GetRefIO(
       const bool is_input, nvinfer1::ICudaEngine* engine,
       triton::common::TritonJson::Value* ref_io);
@@ -304,7 +305,17 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
   bool auto_complete_config = false;
   RETURN_IF_ERROR(TRITONBACKEND_ModelAutoCompleteConfig(
       triton_model, &auto_complete_config));
-  if (auto_complete_config) {
+
+  // Server core already detects if a GPU is present and
+  // corrects the instance groups before backend model is
+  // initialized. Since the TensorRT backend only works with
+  // GPU instances, check if the model has a KIND_GPU
+  // instance group. If KIND_GPU is not present, skip
+  // autocomplete as the model cannot be loaded.
+  bool has_instance_kind_gpu = false;
+  (*state)->InstanceHasKindGPU(&has_instance_kind_gpu);
+
+  if (auto_complete_config && has_instance_kind_gpu) {
     RETURN_IF_ERROR((*state)->AutoCompleteConfig());
     RETURN_IF_ERROR((*state)->SetTensorRTModelConfig());
   }
@@ -594,7 +605,10 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
   // Will use that as a hint to ascertain whether or not to enable batching.
+  // However, ragged batching is an exception to this rule. A tensor
+  // allowing ragged batch is in itself a batching hint.
   bool config_batch_hint = false;
+
   // The number of IO Tensors with shape specification in config
   int tensors_with_config_shape_cnt = 0;
 
@@ -608,33 +622,44 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
         allowed_tensors["output"].emplace(engine->getBindingName(i));
       }
     }
+
+    bool io_allow_ragged_batch = false;
     for (const auto& io_type : io_types) {
       triton::common::TritonJson::Value config_io;
       RETURN_IF_ERROR(ModelConfig().MemberAsArray(io_type.c_str(), &config_io));
-      for (size_t i = 0; i < config_io.ArraySize(); i++) {
+      for (size_t i = 0;
+           ((i < config_io.ArraySize()) && (!io_allow_ragged_batch)); i++) {
         triton::common::TritonJson::Value io;
         RETURN_IF_ERROR(config_io.IndexAsObject(i, &io));
-        common::TritonJson::Value model_config_dims;
-        common::TritonJson::Value reshape;
-        if (io.Find("reshape", &reshape)) {
-          reshape.MemberAsArray("shape", &model_config_dims);
+        io.MemberAsBool("allow_ragged_batch", &io_allow_ragged_batch);
+        if (io_allow_ragged_batch) {
+          // Treat the presence of tensor allowing ragged batch as
+          // a hint for batching.
+          config_batch_hint = true;
         } else {
-          io.MemberAsArray("dims", &model_config_dims);
-        }
-        if (model_config_dims.ArraySize() != 0) {
-          tensors_with_config_shape_cnt++;
-        }
-        std::string name;
-        RETURN_IF_ERROR(io.MemberAsString("name", &name));
-        if (io_type.compare("input") == 0) {
-          RETURN_IF_ERROR(CheckAllowedModelInput(io, allowed_tensors[io_type]));
-        } else {
-          RETURN_IF_ERROR(
-              CheckAllowedModelOutput(io, allowed_tensors[io_type]));
-        }
-        if (model_config_dims.ArraySize() != 0) {
-          RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
-              engine.get(), name, model_config_dims, &config_batch_hint));
+          common::TritonJson::Value model_config_dims;
+          common::TritonJson::Value reshape;
+          if (io.Find("reshape", &reshape)) {
+            reshape.MemberAsArray("shape", &model_config_dims);
+          } else {
+            io.MemberAsArray("dims", &model_config_dims);
+          }
+          if (model_config_dims.ArraySize() != 0) {
+            tensors_with_config_shape_cnt++;
+          }
+          std::string name;
+          RETURN_IF_ERROR(io.MemberAsString("name", &name));
+          if (io_type.compare("input") == 0) {
+            RETURN_IF_ERROR(
+                CheckAllowedModelInput(io, allowed_tensors[io_type]));
+          } else {
+            RETURN_IF_ERROR(
+                CheckAllowedModelOutput(io, allowed_tensors[io_type]));
+          }
+          if (model_config_dims.ArraySize() != 0) {
+            RETURN_IF_ERROR(ExtractBatchHintFromIOConfig(
+                engine.get(), name, model_config_dims, &config_batch_hint));
+          }
         }
       }
     }
@@ -645,7 +670,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   if (engine->hasImplicitBatchDimension()) {
     // If engine has implicit batch dimension then retrieve the value and exit
     max_batch_size = engine->getMaxBatchSize();
-    has_implicit_batch_dim = true;
+    has_implicit_batch_dim = (max_batch_size != 1);
   } else {
     // Assuming the first dimension to be batch dimension, until and unless
     // proven the batching is not supported.
@@ -663,7 +688,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   } else if (
       (tensors_with_config_shape_cnt != 0) && (!config_batch_hint) &&
       (!has_implicit_batch_dim)) {
-    // if no hint for batching in config io
+    // if an explicit hint for non batching in config io
     LOG_MESSAGE(
         TRITONSERVER_LOG_WARN,
         (std::string("The specified dimensions in model config for ") + Name() +
@@ -867,6 +892,33 @@ ModelState::ExtractBatchHintFromIOConfig(
   }
   return nullptr;
 }
+
+TRITONSERVER_Error*
+ModelState::InstanceHasKindGPU(bool* has_instance_kind_gpu)
+{
+  *has_instance_kind_gpu = false;
+  triton::common::TritonJson::Value instance_groups(
+      ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
+  ModelConfig().Find("instance_group", &instance_groups);
+
+  if (instance_groups.ArraySize() > 0) {
+    // TensorRT backend does not support KIND_CPU at all
+    // so only check the first instance group kind.
+    triton::common::TritonJson::Value group;
+    RETURN_IF_ERROR(instance_groups.IndexAsObject(0, &group));
+
+    triton::common::TritonJson::Value kind;
+    group.Find("kind", &kind);
+    std::string kind_str;
+    RETURN_IF_ERROR(kind.AsString(&kind_str));
+    if (kind_str == "KIND_GPU") {
+      *has_instance_kind_gpu = true;
+    }
+  }
+
+  return nullptr;  // success
+}
+
 
 TRITONSERVER_Error*
 ModelState::GetRefIO(
