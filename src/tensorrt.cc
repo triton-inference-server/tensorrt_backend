@@ -670,7 +670,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   if (engine->hasImplicitBatchDimension()) {
     // If engine has implicit batch dimension then retrieve the value and exit
     max_batch_size = engine->getMaxBatchSize();
-    has_implicit_batch_dim = (max_batch_size != 1);
+    has_implicit_batch_dim = (max_batch_size != 1) || (MaxBatchSize() != 0);
   } else {
     // Assuming the first dimension to be batch dimension, until and unless
     // proven the batching is not supported.
