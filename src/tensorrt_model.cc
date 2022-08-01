@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -62,30 +62,35 @@ TRITONSERVER_Error*
 TensorRTModel::SetTensorRTModelConfig()
 {
   RETURN_IF_ERROR(SetModelConfig());
-  ParseModelConfig();
+  RETURN_IF_ERROR(ParseModelConfig());
 
   return nullptr;
 }
 
-void
+TRITONSERVER_Error*
 TensorRTModel::ParseModelConfig()
 {
   triton::common::TritonJson::Value optimization;
   if (model_config_.Find("optimization", &optimization)) {
-    optimization.MemberAsUInt(
-        "gather_kernel_buffer_threshold", &gather_kernel_buffer_threshold_);
-    optimization.MemberAsBool("eager_batching", &eager_batching_);
+    RETURN_IF_ERROR(optimization.MemberAsUInt(
+        "gather_kernel_buffer_threshold", &gather_kernel_buffer_threshold_));
+    RETURN_IF_ERROR(
+        optimization.MemberAsBool("eager_batching", &eager_batching_));
     std::string priority;
-    optimization.MemberAsString("priority", &priority);
+    RETURN_IF_ERROR(optimization.MemberAsString("priority", &priority));
     priority_ = ParsePriority(priority);
     triton::common::TritonJson::Value cuda;
     if (optimization.Find("cuda", &cuda)) {
-      cuda.MemberAsBool("graphs", &use_cuda_graphs_);
-      cuda.MemberAsBool("busy_wait_events", &busy_wait_events_);
-      cuda.MemberAsArray("graph_spec", &graph_specs_);
-      cuda.MemberAsBool("output_copy_stream", &separate_output_stream_);
+      RETURN_IF_ERROR(cuda.MemberAsBool("graphs", &use_cuda_graphs_));
+      RETURN_IF_ERROR(
+          cuda.MemberAsBool("busy_wait_events", &busy_wait_events_));
+      RETURN_IF_ERROR(cuda.MemberAsArray("graph_spec", &graph_specs_));
+      RETURN_IF_ERROR(
+          cuda.MemberAsBool("output_copy_stream", &separate_output_stream_));
     }
   }
+
+  return nullptr;
 }
 
 }}}  // namespace triton::backend::tensorrt
