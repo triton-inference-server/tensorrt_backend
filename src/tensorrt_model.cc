@@ -64,7 +64,7 @@ TensorRTModel::SetTensorRTModelConfig()
   RETURN_IF_ERROR(SetModelConfig());
   RETURN_IF_ERROR(ParseModelConfig());
 
-  return nullptr;
+  return nullptr;  // Success
 }
 
 TRITONSERVER_Error*
@@ -90,7 +90,7 @@ TensorRTModel::ParseModelConfig()
     }
   }
 
-  return nullptr;
+  return nullptr;  // Success
 }
 
 }}}  // namespace triton::backend::tensorrt
