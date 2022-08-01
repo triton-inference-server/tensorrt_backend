@@ -631,7 +631,10 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
            ((i < config_io.ArraySize()) && (!io_allow_ragged_batch)); i++) {
         triton::common::TritonJson::Value io;
         RETURN_IF_ERROR(config_io.IndexAsObject(i, &io));
-        io.MemberAsBool("allow_ragged_batch", &io_allow_ragged_batch);
+        triton::common::TritonJson::Value allow_ragged_batch;
+        if (io.Find("allow_ragged_batch", &allow_ragged_batch)) {
+          RETURN_IF_ERROR(allow_ragged_batch.AsBool(&io_allow_ragged_batch));
+        }
         if (io_allow_ragged_batch) {
           // Treat the presence of tensor allowing ragged batch as
           // a hint for batching.
@@ -3552,7 +3555,10 @@ ModelInstanceState::InitializeConfigExecuteInputBindings(
       io.MemberAsArray("dims", &model_config_dims);
     }
     bool io_allow_ragged_batch = false;
-    io.MemberAsBool("allow_ragged_batch", &io_allow_ragged_batch);
+    triton::common::TritonJson::Value allow_ragged_batch;
+    if (io.Find("allow_ragged_batch", &allow_ragged_batch)) {
+      RETURN_IF_ERROR(allow_ragged_batch.AsBool(&io_allow_ragged_batch));
+    }
 
     RETURN_IF_ERROR(InitializeExecuteInputBinding(
         io_name, io_datatype, model_config_dims, false, io_allow_ragged_batch));
