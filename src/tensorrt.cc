@@ -512,7 +512,7 @@ ModelState::AutoCompleteConfig()
   common::TritonJson::Value cc_name;
   if ((ModelConfig().Find("cc_model_filenames", &cc_names)) &&
       (cc_names.Find(cc.c_str(), &cc_name))) {
-    cc_name.AsString(&artifact_name);
+    RETURN_IF_ERROR(cc_name.AsString(&artifact_name));
   }
 
   // If the model configuration doesn't have an explicit model file specified
@@ -643,9 +643,9 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
           common::TritonJson::Value model_config_dims;
           common::TritonJson::Value reshape;
           if (io.Find("reshape", &reshape)) {
-            reshape.MemberAsArray("shape", &model_config_dims);
+            RETURN_IF_ERROR(reshape.MemberAsArray("shape", &model_config_dims));
           } else {
-            io.MemberAsArray("dims", &model_config_dims);
+            RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
           }
           if (model_config_dims.ArraySize() != 0) {
             tensors_with_config_shape_cnt++;
@@ -727,7 +727,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     if (!found_sequence_batching && !found_dynamic_batching) {
       triton::common::TritonJson::Value dynamic_batching(
           ModelConfig(), triton::common::TritonJson::ValueType::OBJECT);
-      ModelConfig().Add("dynamic_batching", std::move(dynamic_batching));
+      RETURN_IF_ERROR(
+          ModelConfig().Add("dynamic_batching", std::move(dynamic_batching)));
     }
   }
 
@@ -739,7 +740,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   bool found_inputs = ModelConfig().Find("input", &mutable_inputs);
   RETURN_IF_ERROR(FixIO(engine.get(), ref_inputs, &mutable_inputs));
   if (!found_inputs) {
-    ModelConfig().Add("input", std::move(mutable_inputs));
+    RETURN_IF_ERROR(ModelConfig().Add("input", std::move(mutable_inputs)));
   }
 
   triton::common::TritonJson::Value ref_outputs(
@@ -750,7 +751,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   bool found_outputs = ModelConfig().Find("output", &mutable_outputs);
   RETURN_IF_ERROR(FixIO(engine.get(), ref_outputs, &mutable_outputs));
   if (!found_outputs) {
-    ModelConfig().Add("output", std::move(mutable_outputs));
+    RETURN_IF_ERROR(ModelConfig().Add("output", std::move(mutable_outputs)));
   }
 
   if (engine != nullptr) {
@@ -1038,7 +1039,7 @@ ModelState::FixIO(
               RETURN_IF_ERROR(dims.Swap(ref_dims));
               common::TritonJson::Value reshape;
               if (io_ref.Find("reshape", &reshape)) {
-                mutable_io.Add("reshape", std::move(reshape));
+                RETURN_IF_ERROR(mutable_io.Add("reshape", std::move(reshape)));
               }
             }
           } else {
@@ -1047,7 +1048,7 @@ ModelState::FixIO(
             RETURN_IF_ERROR(mutable_io.Add("dims", std::move(ref_dims)));
             common::TritonJson::Value reshape;
             if (io_ref.Find("reshape", &reshape)) {
-              mutable_io.Add("reshape", std::move(reshape));
+              RETURN_IF_ERROR(mutable_io.Add("reshape", std::move(reshape)));
             }
           }
 
@@ -1081,7 +1082,8 @@ ModelState::FixIO(
                       .c_str());
             }
           } else {
-            mutable_io.AddBool("is_shape_tensor", is_shape_tensor);
+            RETURN_IF_ERROR(
+                mutable_io.AddBool("is_shape_tensor", is_shape_tensor));
           }
           break;
         }
@@ -3517,15 +3519,15 @@ ModelInstanceState::InitializeConfigShapeInputBindings(
     triton::common::TritonJson::Value io;
     RETURN_IF_ERROR(config_inputs.IndexAsObject(i, &io));
     std::string io_name;
-    io.MemberAsString("name", &io_name);
+    RETURN_IF_ERROR(io.MemberAsString("name", &io_name));
     std::string io_data_type;
-    io.MemberAsString("data_type", &io_data_type);
+    RETURN_IF_ERROR(io.MemberAsString("data_type", &io_data_type));
     common::TritonJson::Value model_config_dims;
     common::TritonJson::Value reshape;
     if (io.Find("reshape", &reshape)) {
-      reshape.MemberAsArray("shape", &model_config_dims);
+      RETURN_IF_ERROR(reshape.MemberAsArray("shape", &model_config_dims));
     } else {
-      io.MemberAsArray("dims", &model_config_dims);
+      RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
     }
 
     RETURN_IF_ERROR(InitializeShapeInputBinding(
@@ -3544,15 +3546,15 @@ ModelInstanceState::InitializeConfigExecuteInputBindings(
     triton::common::TritonJson::Value io;
     RETURN_IF_ERROR(config_inputs.IndexAsObject(i, &io));
     std::string io_name;
-    io.MemberAsString("name", &io_name);
+    RETURN_IF_ERROR(io.MemberAsString("name", &io_name));
     std::string io_datatype;
-    io.MemberAsString("data_type", &io_datatype);
+    RETURN_IF_ERROR(io.MemberAsString("data_type", &io_datatype));
     common::TritonJson::Value model_config_dims;
     common::TritonJson::Value reshape;
     if (io.Find("reshape", &reshape)) {
-      reshape.MemberAsArray("shape", &model_config_dims);
+      RETURN_IF_ERROR(reshape.MemberAsArray("shape", &model_config_dims));
     } else {
-      io.MemberAsArray("dims", &model_config_dims);
+      RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
     }
     bool io_allow_ragged_batch = false;
     triton::common::TritonJson::Value allow_ragged_batch;
@@ -3591,7 +3593,7 @@ ModelInstanceState::InitializeSequenceControlInputBindings(
         // Control tensors must have shape [1].
         common::TritonJson::Value dims{
             triton::common::TritonJson::ValueType::ARRAY};
-        dims.AppendInt(1);
+        RETURN_IF_ERROR(dims.AppendInt(1));
 
         RETURN_IF_ERROR(InitializeExecuteInputBinding(
             tensor_name, tensor_datatype, dims, true));
@@ -3612,7 +3614,7 @@ ModelInstanceState::InitializeSequenceControlInputBindings(
         // Control tensors must have shape [1].
         common::TritonJson::Value dims{
             triton::common::TritonJson::ValueType::ARRAY};
-        dims.AppendInt(1);
+        RETURN_IF_ERROR(dims.AppendInt(1));
 
         RETURN_IF_ERROR(InitializeExecuteInputBinding(
             tensor_name, tensor_datatype, dims, true));
@@ -3706,13 +3708,13 @@ ModelInstanceState::InitializeBatchInputBindings(
         switch (batch_input.BatchInputKind()) {
           case BatchInput::Kind::BATCH_ELEMENT_COUNT:
           case BatchInput::Kind::BATCH_ACCUMULATED_ELEMENT_COUNT:
-            dims.AppendInt(1);
+            RETURN_IF_ERROR(dims.AppendInt(1));
             break;
           case BatchInput::Kind::BATCH_ACCUMULATED_ELEMENT_COUNT_WITH_ZERO:
-            dims.AppendInt(2);
+            RETURN_IF_ERROR(dims.AppendInt(2));
             break;
           case BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE:
-            dims.AppendInt(-1);
+            RETURN_IF_ERROR(dims.AppendInt(-1));
             break;
           case BatchInput::Kind::BATCH_ITEM_SHAPE:
           case BatchInput::Kind::BATCH_ITEM_SHAPE_FLATTEN: {
@@ -3720,7 +3722,7 @@ ModelInstanceState::InitializeBatchInputBindings(
             // add conditional handling
             if (batch_input.BatchInputKind() ==
                 BatchInput::Kind::BATCH_ITEM_SHAPE) {
-              dims.AppendInt(1);
+              RETURN_IF_ERROR(dims.AppendInt(1));
             }
             triton::common::TritonJson::Value inputs;
             RETURN_IF_ERROR(config.MemberAsArray("input", &inputs));
@@ -3734,12 +3736,15 @@ ModelInstanceState::InitializeBatchInputBindings(
                 common::TritonJson::Value model_config_dims;
                 common::TritonJson::Value reshape;
                 if (input.Find("reshape", &reshape)) {
-                  reshape.MemberAsArray("shape", &model_config_dims);
+                  RETURN_IF_ERROR(
+                      reshape.MemberAsArray("shape", &model_config_dims));
                 } else {
-                  input.MemberAsArray("dims", &model_config_dims);
+                  RETURN_IF_ERROR(
+                      input.MemberAsArray("dims", &model_config_dims));
                 }
                 if (model_config_dims.ArraySize() != 0) {
-                  dims.AppendInt(model_config_dims.ArraySize());
+                  RETURN_IF_ERROR(
+                      dims.AppendInt(model_config_dims.ArraySize()));
                 }
                 break;
               }
@@ -3778,12 +3783,15 @@ ModelInstanceState::InitializeBatchInputBindings(
                 common::TritonJson::Value model_config_dims;
                 common::TritonJson::Value reshape;
                 if (input.Find("reshape", &reshape)) {
-                  reshape.MemberAsArray("shape", &model_config_dims);
+                  RETURN_IF_ERROR(
+                      reshape.MemberAsArray("shape", &model_config_dims));
                 } else {
-                  input.MemberAsArray("dims", &model_config_dims);
+                  RETURN_IF_ERROR(
+                      input.MemberAsArray("dims", &model_config_dims));
                 }
                 if (model_config_dims.ArraySize() != 0) {
-                  dims.AppendInt(model_config_dims.ArraySize());
+                  RETURN_IF_ERROR(
+                      dims.AppendInt(model_config_dims.ArraySize()));
                 }
                 break;
               }
@@ -3973,9 +3981,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       common::TritonJson::Value model_config_dims;
       common::TritonJson::Value reshape;
       if (io.Find("reshape", &reshape)) {
-        reshape.MemberAsArray("shape", &model_config_dims);
+        RETURN_IF_ERROR(reshape.MemberAsArray("shape", &model_config_dims));
       } else {
-        io.MemberAsArray("dims", &model_config_dims);
+        RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
       }
 
       nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
@@ -4072,9 +4080,9 @@ ModelInstanceState::InitializeConfigExecuteOutputBindings(
     common::TritonJson::Value model_config_dims;
     common::TritonJson::Value reshape;
     if (io.Find("reshape", &reshape)) {
-      reshape.MemberAsArray("shape", &model_config_dims);
+      RETURN_IF_ERROR(reshape.MemberAsArray("shape", &model_config_dims));
     } else {
-      io.MemberAsArray("dims", &model_config_dims);
+      RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
     }
 
     // Skip if the output is specified to be a shape tensor
@@ -4187,7 +4195,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
         // For ragged input, the input will be concatenated and
         // flatten, so expecting engine dims to be one dimensional.
         int64_t input_dims_0;
-        input_dims.IndexAsInt(0, &input_dims_0);
+        RETURN_IF_ERROR(input_dims.IndexAsInt(0, &input_dims_0));
         if ((engine_dims.nbDims != 1) || (engine_dims.d[0] != input_dims_0)) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INVALID_ARG,
@@ -4935,8 +4943,8 @@ ModelInstanceState::InitializeGraphSpecs(
       common::TritonJson::Value lower_bound_spec;
       if (config_spec.Find("graph_lower_bound", &lower_bound_spec)) {
         *allow_inexact_match = true;
-        lower_bound_spec.MemberAsInt(
-            "batch_size", &graph_spec.lower_bound_batch_size_);
+        RETURN_IF_ERROR(lower_bound_spec.MemberAsInt(
+            "batch_size", &graph_spec.lower_bound_batch_size_));
         common::TritonJson::Value inputs;
         if (lower_bound_spec.Find("input", &inputs)) {
           std::vector<std::string> input_names;

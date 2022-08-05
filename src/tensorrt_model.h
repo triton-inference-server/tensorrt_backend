@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -36,7 +36,7 @@ class TensorRTModel : public BackendModel {
 
   TRITONSERVER_Error* SetTensorRTModelConfig();
 
-  void ParseModelConfig();
+  TRITONSERVER_Error* ParseModelConfig();
 
   // The model configuration.
   common::TritonJson::Value& GraphSpecs() { return graph_specs_; }
