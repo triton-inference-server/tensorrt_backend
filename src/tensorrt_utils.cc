@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -40,6 +40,8 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
       return TRITONSERVER_TYPE_FP16;
     case nvinfer1::DataType::kINT8:
       return TRITONSERVER_TYPE_INT8;
+    case nvinfer1::DataType::kUINT8:
+      return TRITONSERVER_TYPE_UINT8;
     case nvinfer1::DataType::kINT32:
       return TRITONSERVER_TYPE_INT32;
     case nvinfer1::DataType::kBOOL:
@@ -59,6 +61,8 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
       return "TYPE_FP16";
     case nvinfer1::DataType::kINT8:
       return "TYPE_INT8";
+    case nvinfer1::DataType::kUINT8:
+      return "TYPE_UINT8";
     case nvinfer1::DataType::kINT32:
       return "TYPE_INT32";
     case nvinfer1::DataType::kBOOL:
@@ -112,6 +116,9 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
       break;
     case TRITONSERVER_TYPE_INT8:
       trt_type = nvinfer1::DataType::kINT8;
+      break;
+    case TRITONSERVER_TYPE_UINT8:
+      trt_type = nvinfer1::DataType::kUINT8;
       break;
     case TRITONSERVER_TYPE_INT32:
       trt_type = nvinfer1::DataType::kINT32;
