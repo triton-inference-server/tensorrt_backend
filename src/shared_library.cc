@@ -131,7 +131,7 @@ OpenLibraryHandle(const std::string& path, void** handle)
         ("unable to load shared library: " + errstr).c_str());
   }
 #else
-  *handle = dlopen(path.c_str(), RTLD_LAZY);
+  *handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (*handle == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_NOT_FOUND,
