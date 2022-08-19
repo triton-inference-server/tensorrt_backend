@@ -28,6 +28,7 @@
 #include "loader.h"
 #include "logging.h"
 #include "semaphore.h"
+#include "shared_library.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
 #include "tensorrt_utils.h"
@@ -196,10 +197,11 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 //
 // BackendConfiguration
 //
-// Struct to hold value specified via backend config
+// Struct to hold values specified via backend config
 struct BackendConfiguration {
   BackendConfiguration() : coalesce_request_input_(false) {}
   bool coalesce_request_input_;
+  std::vector<void*> library_handles_;
 };
 
 //
@@ -5429,8 +5431,7 @@ extern "C" {
 
 // Implementing TRITONBACKEND_Initialize is optional. The backend
 // should initialize any global state that is intended to be shared
-// across all models and model instances that use the backend. But
-// here it simply verify the backend API version is compatible
+// across all models and model instances that use the backend.
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 {
@@ -5472,21 +5473,6 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
       backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
 
-  // Register all the default plugins that come with TensorRT
-  bool success = true;
-  std::once_flag onceFlag;
-  {
-    std::call_once(onceFlag, [&success] {
-      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Registering TensorRT Plugins");
-      success = initLibNvInferPlugins(&tensorrt_logger, "");
-    });
-  }
-  if (!success) {
-    TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        "unable to register default TensorRT Plugins");
-  }
-
   // The backend configuration may contain information needed by the
   // backend, such a command-line arguments.
   TRITONSERVER_Message* backend_config_message;
@@ -5511,12 +5497,52 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (backend_config.Find("cmdline", &cmdline)) {
     triton::common::TritonJson::Value value;
     std::string value_str;
+
     if (cmdline.Find("coalesce-request-input", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(
           ParseBoolValue(value_str, &lconfig->coalesce_request_input_));
     }
+
+    if (cmdline.Find("plugins", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      size_t pos = 0;
+      std::string plugin;
+      // Load individual plugins
+      while (value_str.length() > 0) {
+        pos = value_str.find(";");
+        plugin = value_str.substr(0, pos);
+        void* handle = nullptr;
+        auto err = OpenLibraryHandle(plugin, &handle);
+        if (err != nullptr) {
+          LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+          TRITONSERVER_ErrorDelete(err);
+          err = nullptr;
+        } else {
+          lconfig->library_handles_.emplace_back(handle);
+        }
+
+        if (pos != std::string::npos) {
+          pos++;
+        }
+        value_str.erase(0, pos);
+      }
+    }
   }
+
+  // Register all the default and custom plugins that come with TensorRT
+  bool success = true;
+  std::once_flag onceFlag;
+  {
+    std::call_once(onceFlag, [&success] {
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Registering TensorRT Plugins");
+      success = initLibNvInferPlugins(&tensorrt_logger, "");
+    });
+  }
+  if (!success) {
+    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Failed to register TensorRT Plugins");
+  }
+
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
       backend, reinterpret_cast<void*>(lconfig.get())));
 
@@ -5532,7 +5558,19 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-  delete reinterpret_cast<BackendConfiguration*>(vstate);
+  auto config = reinterpret_cast<BackendConfiguration*>(vstate);
+
+  // Close opened library handles.
+  for (auto& handle : config->library_handles_) {
+    auto err = CloseLibraryHandle(&handle);
+    if (err != nullptr) {
+      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+      TRITONSERVER_ErrorDelete(err);
+      err = nullptr;
+    }
+  }
+
+  delete config;
   return nullptr;  // success
 }
 
