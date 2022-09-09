@@ -33,7 +33,7 @@ namespace triton { namespace backend { namespace tensorrt {
 // Cannot directly use 'NV_TENSORRT_VERSION' in preprocessor because of the
 // syntax.
 int32_t version_ = NV_TENSORRT_VERSION;
-#define TENSORRT_VERSION version
+#define TENSORRT_VERSION version_
 
 TRITONSERVER_DataType
 ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
