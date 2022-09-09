@@ -30,6 +30,12 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
+// Cannot directly use 'NV_TENSORRT_VERSION' in preprocessor because of the
+// syntax.
+// FIXME: Remove ifdefs when Jetpack upgrades to tensorrt 8.5.*. DLIS-4144
+int32_t version_ = NV_TENSORRT_VERSION;
+#define TENSORRT_VERSION version_
+
 TRITONSERVER_DataType
 ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
 {
@@ -40,10 +46,10 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
       return TRITONSERVER_TYPE_FP16;
     case nvinfer1::DataType::kINT8:
       return TRITONSERVER_TYPE_INT8;
-#if ((NV_TENSORRT_MAJOR >= 8) && (NV_TENSORRT_MINOR >= 5))
+#if (TENSORRT_VERSION >= 8500)
     case nvinfer1::DataType::kUINT8:
       return TRITONSERVER_TYPE_UINT8;
-#endif  // (NV_TENSORRT_MAJOR >= 8) && (NV_TENSORRT_MINOR >= 5)
+#endif  // TENSORRT_VERSION >= 8500
     case nvinfer1::DataType::kINT32:
       return TRITONSERVER_TYPE_INT32;
     case nvinfer1::DataType::kBOOL:
@@ -63,10 +69,10 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
       return "TYPE_FP16";
     case nvinfer1::DataType::kINT8:
       return "TYPE_INT8";
-#if ((NV_TENSORRT_MAJOR >= 8) && (NV_TENSORRT_MINOR >= 5))
+#if (TENSORRT_VERSION >= 8500)
     case nvinfer1::DataType::kUINT8:
       return "TYPE_UINT8";
-#endif  // (NV_TENSORRT_MAJOR >= 8) && (NV_TENSORRT_MINOR >= 5)
+#endif  // TENSORRT_VERSION >= 8500
     case nvinfer1::DataType::kINT32:
       return "TYPE_INT32";
     case nvinfer1::DataType::kBOOL:
@@ -121,11 +127,11 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
     case TRITONSERVER_TYPE_INT8:
       trt_type = nvinfer1::DataType::kINT8;
       break;
-#if ((NV_TENSORRT_MAJOR >= 8) && (NV_TENSORRT_MINOR >= 5))
+#if (TENSORRT_VERSION >= 8500)
     case TRITONSERVER_TYPE_UINT8:
       trt_type = nvinfer1::DataType::kUINT8;
       break;
-#endif  // (NV_TENSORRT_MAJOR >= 8) && (NV_TENSORRT_MINOR >= 5)
+#endif  // TENSORRT_VERSION >= 8500
     case TRITONSERVER_TYPE_INT32:
       trt_type = nvinfer1::DataType::kINT32;
       break;
