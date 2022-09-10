@@ -33,7 +33,7 @@ namespace triton { namespace backend { namespace tensorrt {
 // Cannot directly use 'NV_TENSORRT_VERSION' in preprocessor because of the
 // syntax.
 // FIXME: Remove ifdefs when Jetpack upgrades to tensorrt 8.5.*. DLIS-4144
-#define TENSORRT_VERSION (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + NV_TENSORRT_PATCH
+#define TENSORRT_VERSION ((NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + NV_TENSORRT_PATCH)
 #pragma message "The value of TENSORRT_VERSION is: " TENSORRT_VERSION
 
 TRITONSERVER_DataType
