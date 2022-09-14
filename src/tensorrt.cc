@@ -5561,14 +5561,15 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
   auto config = reinterpret_cast<BackendConfiguration*>(vstate);
 
   // Close opened library handles.
-  for (auto& handle : config->library_handles_) {
-    auto err = CloseLibraryHandle(&handle);
-    if (err != nullptr) {
-      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
-      TRITONSERVER_ErrorDelete(err);
-      err = nullptr;
-    }
-  }
+  // [DLIS-4154] Uncomment below code once segfault in TensorRT fixed.
+  // for (auto& handle : config->library_handles_) {
+  //   auto err = CloseLibraryHandle(&handle);
+  //   if (err != nullptr) {
+  //     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+  //     TRITONSERVER_ErrorDelete(err);
+  //     err = nullptr;
+  //   }
+  // }
 
   delete config;
   return nullptr;  // success
