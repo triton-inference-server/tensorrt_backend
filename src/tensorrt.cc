@@ -5568,12 +5568,12 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Unloading handle...");
     if(handle != nullptr){
       auto err = CloseLibraryHandle(&handle);
-    }
-    handle = nullptr;
-    if (err != nullptr) {
-      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
-      TRITONSERVER_ErrorDelete(err);
-      err = nullptr;
+      handle = nullptr;
+      if (err != nullptr) {
+        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+        err = nullptr;
+      }
     }
   }
   LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Handles unloaded");
