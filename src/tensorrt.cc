@@ -5563,20 +5563,16 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
   auto config = reinterpret_cast<BackendConfiguration*>(vstate);
 
-  LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Before unloading...");
   for (auto& handle : config->library_handles_) {
-    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Unloading handle...");
     if(handle != nullptr){
       auto err = CloseLibraryHandle(&handle);
       handle = nullptr;
       if (err != nullptr) {
-        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
         TRITONSERVER_ErrorDelete(err);
         err = nullptr;
       }
     }
   }
-  LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Handles unloaded");
 
   delete config;
   return nullptr;  // success
