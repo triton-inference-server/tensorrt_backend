@@ -5569,7 +5569,6 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
       handle = nullptr;
       if (err != nullptr) {
         TRITONSERVER_ErrorDelete(err);
-        err = nullptr;
       }
     }
   }
