@@ -5344,8 +5344,7 @@ ModelInstanceState::SetCudaGraphShape(
     std::vector<int64_t>* cuda_graph_key,
     TensorRTContext::CudaGraph* cuda_graph)
 {
-  // 1 is special case as non-batching model has 'max_batch_size == 0'
-  int batch_size = (graph_spec.batch_size_ == 0) ? 1 : graph_spec.batch_size_;
+  int batch_size = graph_spec.batch_size_;
   int binding_offset = trt_context->profile_idx_ * num_expected_bindings_;
   *cuda_graph_key = std::vector<int64_t>{batch_size};
   auto& lower_bound_key = cuda_graph->lower_bound_key_;
@@ -5363,7 +5362,9 @@ ModelInstanceState::SetCudaGraphShape(
     // for default graph spec, opt dims are used.
     if (graph_spec.shapes_.empty()) {
       auto shape = trt_context->opt_dims_[io_index];
-      shape.d[0] = batch_size;
+      if (batch_size != 0) {
+        shape.d[0] = batch_size;
+      }
       if (!trt_context->context_->setBindingDimensions(binding_index, shape)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -5388,7 +5389,9 @@ ModelInstanceState::SetCudaGraphShape(
           cuda_graph->input_dims_.emplace_back();
         } else {
           cuda_graph->input_dims_.emplace_back();
-          cuda_graph->input_dims_.back().push_back(batch_size);
+          if (batch_size != 0) {
+            cuda_graph->input_dims_.back().push_back(batch_size);
+          }
           lower_bound_key.push_back(lower_bound_key[0]);
         }
         auto& shape = cuda_graph->input_dims_.back();
