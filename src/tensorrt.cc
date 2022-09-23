@@ -201,7 +201,6 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 struct BackendConfiguration {
   BackendConfiguration() : coalesce_request_input_(false) {}
   bool coalesce_request_input_;
-  std::vector<void*> library_handles_;
 };
 
 //
@@ -5521,8 +5520,6 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
           LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
           TRITONSERVER_ErrorDelete(err);
           err = nullptr;
-        } else {
-          lconfig->library_handles_.emplace_back(handle);
         }
 
         if (pos != std::string::npos) {
@@ -5561,19 +5558,7 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-  auto config = reinterpret_cast<BackendConfiguration*>(vstate);
-
-  for (auto& handle : config->library_handles_) {
-    if(handle != nullptr){
-      auto err = CloseLibraryHandle(&handle);
-      handle = nullptr;
-      if (err != nullptr) {
-        TRITONSERVER_ErrorDelete(err);
-      }
-    }
-  }
-
-  delete config;
+  delete reinterpret_cast<BackendConfiguration*>(vstate);
   return nullptr;  // success
 }
 
