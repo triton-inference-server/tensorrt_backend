@@ -42,6 +42,8 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
       return TRITONSERVER_TYPE_FP32;
     case nvinfer1::DataType::kHALF:
       return TRITONSERVER_TYPE_FP16;
+    case nvinfer1::DataType::kUINT8:
+      return TRITONSERVER_TYPE_UINT8;
     case nvinfer1::DataType::kINT8:
       return TRITONSERVER_TYPE_INT8;
 #if (TENSORRT_VERSION >= 8500)
@@ -65,6 +67,8 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
       return "TYPE_FP32";
     case nvinfer1::DataType::kHALF:
       return "TYPE_FP16";
+    case nvinfer1::DataType::kUINT8:
+      return "TYPE_UINT8";
     case nvinfer1::DataType::kINT8:
       return "TYPE_INT8";
 #if (TENSORRT_VERSION >= 8500)
@@ -121,6 +125,9 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
       break;
     case TRITONSERVER_TYPE_FP16:
       trt_type = nvinfer1::DataType::kHALF;
+      break;
+    case TRITONSERVER_TYPE_UINT8:
+      trt_type = nvinfer1::DataType::kUINT8;
       break;
     case TRITONSERVER_TYPE_INT8:
       trt_type = nvinfer1::DataType::kINT8;
