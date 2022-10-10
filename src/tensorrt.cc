@@ -568,7 +568,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     if (runtime.get() != nullptr) {
       runtime.reset();
     }
-    TRITONSERVER_ErrorNew(
+    return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string(
              "unable to load plan file to auto complete config: " + model_path)
