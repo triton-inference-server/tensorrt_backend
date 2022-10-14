@@ -1462,6 +1462,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   // execution declaration while minimizing memory allocation. The
   // array size is equal to Context::total_bindings_ One of for each
   // copy stream
+  // [WIP] refactor below, no longer needed for v3, but v1 still needs
   std::vector<std::vector<void*>> buffer_bindings_;
 
   // The request details of the ongoing model execution
@@ -2339,9 +2340,9 @@ ModelInstanceState::Run(
     }
 
     if (UseTensorRTv2API(engine_)) {
-      if (!citr->second.context_->enqueueV2(
-              buffer_bindings_[next_buffer_binding_set_].data(), stream_,
-              &events_[next_set_].ready_for_input_)) {
+      // [WIP]
+      citr->second.context_->setInputConsumedEvent(events_[next_set_].ready_for_input_);
+      if (!citr->second.context_->enqueueV3(stream_)) {
         cudaStreamSynchronize(stream_);
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
@@ -4054,6 +4055,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             num_expected_bindings_ * trt_context.first + io_index;
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
+        // [WIP] check return value
+        trt_context.second.context_->setTensorAddress(io_name.c_str(), io_binding_info.device_buffer_);
       }
     }
   }
@@ -4374,6 +4377,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     buffer_bindings_[next_buffer_binding_set_][binding_index] =
         io_binding_info.device_buffer_;
+    // [WIP] check return value
+    trt_context.second.context_->setTensorAddress(input_name.c_str(), io_binding_info.device_buffer_);
   }
 
   return nullptr;
@@ -4569,6 +4574,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     buffer_bindings_[next_buffer_binding_set_][binding_index] =
         io_binding_info.device_buffer_;
+    // [WIP] check return value
+    trt_context.second.context_->setTensorAddress(output_name.c_str(), io_binding_info.device_buffer_);
   }
 
   return nullptr;
@@ -4760,6 +4767,8 @@ ModelInstanceState::InitializeShapeInputBinding(
           num_expected_bindings_ * trt_context.first + io_index;
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.device_buffer_;
+      // [WIP] check return value
+      trt_context.second.context_->setTensorAddress(input_name.c_str(), io_binding_info.device_buffer_);
     }
   }
   return nullptr;
@@ -5437,6 +5446,11 @@ extern "C" {
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 {
+  // [WIP] remove below
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      std::string("============== TRT v3 =============").c_str());
+
   const char* cname;
   RETURN_IF_ERROR(TRITONBACKEND_BackendName(backend, &cname));
   std::string name(cname);
