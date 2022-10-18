@@ -120,7 +120,7 @@ TimestampCaptureCallback(void* data)
 #endif  // TRITON_ENABLE_STATS
 
 // Number of CUDA event set for each instance.
-static constexpr int EVENT_SET_COUNT = 2;
+static constexpr int EVENT_SET_COUNT = 100000;
 
 int
 GetCudaStreamPriority(TensorRTModel::Priority priority)
