@@ -95,6 +95,12 @@ if(${TRITON_ENABLE_NVTX})
 endif() # TRITON_ENABLE_NVTX
 
 #
+# Address Sanitizer
+#
+add_compile_options(-O1 -g -fsanitize=thread -fno-omit-frame-pointer)
+add_link_options(-fsanitize=thread)
+
+#
 # Shared library implementing the Triton Backend API
 #
 configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
