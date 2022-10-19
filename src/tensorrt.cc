@@ -1983,6 +1983,9 @@ ModelInstanceState::Run(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             err, "invalid shape values encountered for shape inputs");
       } else {
+        citr->second.context_->setInputTensorAddress(
+            name.c_str(), &(it->second[0]));
+        // [WIP] should be replaced by above
         citr->second.context_->setInputShapeBinding(
             binding_index, &(it->second[0]));
       }
@@ -2310,15 +2313,6 @@ ModelInstanceState::Run(
               TRITONSERVER_ERROR_INTERNAL,
               "failed to specify the dimensions of all input "
               "bindings"),
-          "failed to run TRT inference");
-    }
-    if (!citr->second.context_->allInputShapesSpecified()) {
-      FAIL_ALL_AND_RETURN_IF_ERROR(
-          payload_->requests_, payload_->request_count_, payload_->responses_,
-          TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INTERNAL,
-              "failed to specify the values for all input shape "
-              "tensors"),
           "failed to run TRT inference");
     }
 
@@ -3464,11 +3458,6 @@ ModelInstanceState::InitIOBindingBuffers()
           TRITONSERVER_ERROR_INTERNAL,
           "failed to specify the dimensions of all input bindings");
     }
-    if (!trt_context.second.context_->allInputShapesSpecified()) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          "failed to specify the values of all input shape tensors");
-    }
   }
 
   // Validate the batch dimension against the implicit batch dimension
@@ -4017,7 +4006,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         err = cudaHostAlloc(
             &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
       } else {
-        err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
+        // [WIP] if work, fix deallocation
+        buffer = malloc(std::max((int64_t)1, max_byte_size));
       }
       if (err != cudaSuccess) {
         return TRITONSERVER_ErrorNew(
@@ -4044,8 +4034,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                   .c_str());
         }
       } else {
-        io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
-        io_binding_info.memory_type_id_ = DeviceId();
+        io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU;
+        io_binding_info.memory_type_id_ = 0;
       }
 
       // Set buffer bindings of all optimization profile since buffer
@@ -4468,7 +4458,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       }
     }
 
-    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+    nvinfer1::Dims engine_dims = engine_->getTensorShape(output_name.c_str());
     // Skip 'batch_output' validation as it is not exact match to
     // model dims
     if (!io_binding_info.buffer_is_ragged_) {
@@ -4488,11 +4478,13 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
     int64_t byte_size;
     if (UseTensorRTv2API(engine_)) {
-      const nvinfer1::Dims output_dim =
-          context.context_->getBindingDimensions(binding_index);
-      std::vector<int64_t> dim_vec;
-      DimsToDimVec(output_dim, &dim_vec);
-      byte_size = GetByteSize(dt, dim_vec);
+      // [FIXME] getMaxOutputSize() may give over-estimated value, if the
+      // allocation size is a concern, should experiment with output allocator
+      // approach. Note that allocator must be well-designed to avoid runtime
+      // allocation as much as possible.
+      // i.e. nonzero model that has input with shape [4], the output size
+      // should be <= 4 * sizeof(data type) while getMaxOutputSize() returns 528
+      byte_size = context.context_->getMaxOutputSize(output_name.c_str());
     } else {
       std::vector<int64_t> dim_vec;
       RETURN_IF_ERROR(DimsJsonToDimVec(output_dims, &dim_vec));
@@ -4691,6 +4683,15 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
         binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
+    if (!context.context_->setInputTensorAddress(
+            input_name.c_str(), context.max_shapes_[io_index])) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("trt failed to set the input shape binding for '") +
+           input_name + "' for " + Name())
+              .c_str());
+    }
+    // [WIP] should be replaced by above
     if (!context.context_->setInputShapeBinding(
             binding_index, context.max_shapes_[io_index])) {
       return TRITONSERVER_ErrorNew(
