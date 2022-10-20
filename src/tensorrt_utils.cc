@@ -536,4 +536,29 @@ DimsJsonToString(common::TritonJson::Value& dims)
   return ShapeToString(dims_vec);
 }
 
+TRITONSERVER_Error*
+SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
+{
+  // Query the device to check if integrated
+  cudaDeviceProp cuprops;
+  cudaError_t cuerr = cudaGetDeviceProperties(&cuprops, gpu_id);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to get CUDA device properties for GPU ID") +
+         std::to_string(gpu_id) + ": " + cudaGetErrorString(cuerr))
+            .c_str());
+  }
+
+  // Zero-copy supported only on integrated GPU when it can map host
+  // memory
+  if (cuprops.integrated && cuprops.canMapHostMemory) {
+    *zero_copy_support = true;
+  } else {
+    *zero_copy_support = false;
+  }
+
+  return nullptr;
+}
+
 }}}  // namespace triton::backend::tensorrt

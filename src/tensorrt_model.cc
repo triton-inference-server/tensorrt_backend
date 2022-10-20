@@ -93,4 +93,31 @@ TensorRTModel::ParseModelConfig()
   return nullptr;  // Success
 }
 
+int
+TensorRTModel::GetCudaStreamPriority()
+{
+  // Default priority is 0
+  int cuda_stream_priority = 0;
+
+  int min, max;
+  cudaError_t cuerr = cudaDeviceGetStreamPriorityRange(&min, &max);
+  if ((cuerr != cudaErrorNoDevice) && (cuerr != cudaSuccess)) {
+    return 0;
+  }
+
+  switch (priority_) {
+    case TensorRTModel::Priority::MAX:
+      cuda_stream_priority = max;
+      break;
+    case TensorRTModel::Priority::MIN:
+      cuda_stream_priority = min;
+      break;
+    default:
+      cuda_stream_priority = 0;
+      break;
+  }
+
+  return cuda_stream_priority;
+}
+
 }}}  // namespace triton::backend::tensorrt
