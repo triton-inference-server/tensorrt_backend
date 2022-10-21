@@ -50,6 +50,119 @@ struct BackendConfiguration {
   bool coalesce_request_input_;
 };
 
+class ModelInstanceState;
+// A struct to hold TensorRT execution context and its meta data, a
+// backend context can have multiple of this struct if multiple
+// optimization profiles is specified.
+struct TensorRTContext {
+  TensorRTContext(
+      const std::string& profile_name, const int profile_idx,
+      const int binding_cnts, const int event_set_cnts)
+      : profile_name_(profile_name), profile_idx_(profile_idx),
+        context_(nullptr), cuda_graph_execs_(event_set_cnts),
+        min_dims_(binding_cnts), max_dims_(binding_cnts),
+        opt_dims_(binding_cnts), min_shapes_(binding_cnts),
+        max_shapes_(binding_cnts), opt_shapes_(binding_cnts),
+        is_dynamic_per_binding_(binding_cnts)
+  {
+  }
+  std::string profile_name_;
+  int profile_idx_;
+  std::shared_ptr<nvinfer1::IExecutionContext> context_;
+
+  // Struct that holds cudaGraphExec_t and the dimensions of the
+  // inputs used to capture the graph
+  struct CudaGraph {
+    CudaGraph() : cuda_graph_exec_(nullptr) {}
+    std::vector<int64_t> lower_bound_key_;
+    // Store in the order of the bindng index
+    std::vector<std::vector<int64_t>> input_dims_;
+    cudaGraphExec_t cuda_graph_exec_;
+  };
+
+  // The key is packed input dimensions prepended by batch size, so
+  // that uniqueness is guaranteed and the CUDA graphs are sorted to
+  // provide convinence to find the closest CUDA graph in the
+  // future.
+  std::vector<std::map<std::vector<int64_t>, CudaGraph>> cuda_graph_execs_;
+
+  // Min Dimensions per bindings
+  std::vector<nvinfer1::Dims> min_dims_;
+
+  // Max Dimensions per bindings
+  std::vector<nvinfer1::Dims> max_dims_;
+
+  // Optimized Dimensions per bindings
+  std::vector<nvinfer1::Dims> opt_dims_;
+
+  // Min shape values per bindings
+  std::vector<const int32_t*> min_shapes_;
+
+  // Max shape values per bindings
+  std::vector<const int32_t*> max_shapes_;
+
+  // Optimized shape values per bindings
+  std::vector<const int32_t*> opt_shapes_;
+
+  // The number of shape values
+  size_t nb_shape_values_;
+
+  // Whether or not the binding contains a dynamic shape
+  std::vector<bool> is_dynamic_per_binding_;
+};
+
+struct GraphSpec {
+  GraphSpec() : batch_size_(0), lower_bound_batch_size_(0), captured_(false)
+  {
+  }
+  int64_t batch_size_;
+  std::map<std::string, std::vector<int64_t>> shapes_;
+  int64_t lower_bound_batch_size_;
+  std::map<std::string, std::vector<int64_t>> lower_bound_shapes_;
+  bool captured_;
+};
+
+// [WIP] temporary workaround to separate TRT v1 and TRT v3 usage
+// in polymorphic style
+class TRTInterface {
+ public:
+  TRTInterface(ModelInstanceState* i) : instance_(i) {}
+ protected:
+  ModelInstanceState* instance_;
+
+#ifdef TRITON_ENABLE_CUDA_GRAPH
+ public:
+  virtual bool BuildCudaGraph(
+      TensorRTContext* trt_context, const GraphSpec& graph_spec) = 0;
+#endif  // TRITON_ENABLE_CUDA_GRAPH
+};
+
+class TRTv1Interface : public TRTInterface {
+ public:
+  TRTv1Interface(ModelInstanceState* i) : TRTInterface(i) {}
+#ifdef TRITON_ENABLE_CUDA_GRAPH
+ public:
+  bool BuildCudaGraph(
+      TensorRTContext* trt_context, const GraphSpec& graph_spec) override;
+#endif  // TRITON_ENABLE_CUDA_GRAPH
+};
+
+class TRTv2Interface : public TRTInterface {
+ public:
+  TRTv2Interface(ModelInstanceState* i) : TRTInterface(i) {}
+
+#ifdef TRITON_ENABLE_CUDA_GRAPH
+ public:
+  bool BuildCudaGraph(
+      TensorRTContext* trt_context, const GraphSpec& graph_spec) override;
+ private:
+  TRITONSERVER_Error* SetCudaGraphShape(
+      TensorRTContext* trt_context, const GraphSpec& graph_spec,
+      std::vector<int64_t>* cuda_graph_key,
+      TensorRTContext::CudaGraph* cuda_graph);
+#endif  // TRITON_ENABLE_CUDA_GRAPH
+};
+
 //
 // ModelInstanceState
 //
@@ -86,8 +199,9 @@ class ModelInstanceState : public TensorRTModelInstance {
       TRITONBACKEND_Request** requests, const uint32_t request_count,
       const size_t context_idx);
 
- private:
-  struct TensorRTContext;
+ protected:
+  friend class TRTv1Interface;
+  friend class TRTv2Interface;
 
   ModelInstanceState(
       ModelState* model_state,
@@ -164,66 +278,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   void GetConfiguredProfiles(std::string* profiles_desc);
   int CudaStreamPriority() { return cuda_stream_priority_; }
 
-  // A struct to hold TensorRT execution context and its meta data, a
-  // backend context can have multiple of this struct if multiple
-  // optimization profiles is specified.
-  struct TensorRTContext {
-    TensorRTContext(
-        const std::string& profile_name, const int profile_idx,
-        const int binding_cnts, const int event_set_cnts)
-        : profile_name_(profile_name), profile_idx_(profile_idx),
-          context_(nullptr), cuda_graph_execs_(event_set_cnts),
-          min_dims_(binding_cnts), max_dims_(binding_cnts),
-          opt_dims_(binding_cnts), min_shapes_(binding_cnts),
-          max_shapes_(binding_cnts), opt_shapes_(binding_cnts),
-          is_dynamic_per_binding_(binding_cnts)
-    {
-    }
-    std::string profile_name_;
-    int profile_idx_;
-    std::shared_ptr<nvinfer1::IExecutionContext> context_;
-
-    // Struct that holds cudaGraphExec_t and the dimensions of the
-    // inputs used to capture the graph
-    struct CudaGraph {
-      CudaGraph() : cuda_graph_exec_(nullptr) {}
-      std::vector<int64_t> lower_bound_key_;
-      // Store in the order of the bindng index
-      std::vector<std::vector<int64_t>> input_dims_;
-      cudaGraphExec_t cuda_graph_exec_;
-    };
-
-    // The key is packed input dimensions prepended by batch size, so
-    // that uniqueness is guaranteed and the CUDA graphs are sorted to
-    // provide convinence to find the closest CUDA graph in the
-    // future.
-    std::vector<std::map<std::vector<int64_t>, CudaGraph>> cuda_graph_execs_;
-
-    // Min Dimensions per bindings
-    std::vector<nvinfer1::Dims> min_dims_;
-
-    // Max Dimensions per bindings
-    std::vector<nvinfer1::Dims> max_dims_;
-
-    // Optimized Dimensions per bindings
-    std::vector<nvinfer1::Dims> opt_dims_;
-
-    // Min shape values per bindings
-    std::vector<const int32_t*> min_shapes_;
-
-    // Max shape values per bindings
-    std::vector<const int32_t*> max_shapes_;
-
-    // Optimized shape values per bindings
-    std::vector<const int32_t*> opt_shapes_;
-
-    // The number of shape values
-    size_t nb_shape_values_;
-
-    // Whether or not the binding contains a dynamic shape
-    std::vector<bool> is_dynamic_per_binding_;
-  };
-
   void FindClosestCudaGraph(
       const TensorRTContext& trt_context,
       const std::vector<int64_t>& cuda_graph_key,
@@ -231,28 +285,9 @@ class ModelInstanceState : public TensorRTModelInstance {
 
 #ifdef TRITON_ENABLE_CUDA_GRAPH
   TRITONSERVER_Error* InitializeCudaGraph();
-
-  struct GraphSpec {
-    GraphSpec() : batch_size_(0), lower_bound_batch_size_(0), captured_(false)
-    {
-    }
-    int64_t batch_size_;
-    std::map<std::string, std::vector<int64_t>> shapes_;
-    int64_t lower_bound_batch_size_;
-    std::map<std::string, std::vector<int64_t>> lower_bound_shapes_;
-    bool captured_;
-  };
   TRITONSERVER_Error* InitializeGraphSpecs(
       std::vector<GraphSpec>* graph_specs, bool* allow_inexact_match);
   TRITONSERVER_Error* ValidateGraphSpec(const GraphSpec& graph_spec);
-  bool BuildCudaGraph(
-      TensorRTContext* trt_context, const GraphSpec& graph_spec);
-  bool BuildCudaGraphV2(
-      TensorRTContext* trt_context, const GraphSpec& graph_spec);
-  TRITONSERVER_Error* SetCudaGraphShape(
-      TensorRTContext* trt_context, const GraphSpec& graph_spec,
-      std::vector<int64_t>* cuda_graph_key,
-      TensorRTContext::CudaGraph* cuda_graph);
 #endif  // TRITON_ENABLE_CUDA_GRAPH
 
   // The engine used for the instance. If the model uses dynamic
@@ -439,6 +474,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   std::unique_ptr<std::promise<void>> barrier_;
 
   ModelState* model_state_;
+
+  std::unique_ptr<TRTInterface> interface_;
 };
 
 }}}  // namespace triton::backend::tensorrt

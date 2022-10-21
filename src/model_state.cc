@@ -338,7 +338,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
   int num_profile_bindings = 0;
   int num_profiles = 0;
-  if (!UseTensorRTv2API(engine)) {
+  if (UseTensorRTv1API(engine)) {
     num_profile_bindings = engine->getNbBindings();
   } else {
     num_profiles = engine->getNbOptimizationProfiles();

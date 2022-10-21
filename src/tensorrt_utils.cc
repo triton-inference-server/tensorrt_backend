@@ -81,13 +81,11 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
 }
 
 bool
-UseTensorRTv2API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine)
+UseTensorRTv1API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine)
 {
-  // In order to use TensorRT V2 API, engine must contain
-  // an explicit batch dimension. Detecting the presence of
-  // an implicit batch dimension to detect whether or not
-  // to use the TensorRT V2 API.
-  return !engine->hasImplicitBatchDimension();
+  // If the engine still uses implicit batch dimension (deprecated),
+  // TensorRT V1 API must be used to serve the model.
+  return engine->hasImplicitBatchDimension();
 }
 
 TRITONSERVER_Error*

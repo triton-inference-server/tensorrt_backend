@@ -153,11 +153,18 @@ ModelInstanceState::Create(
             "' for model instance '" + (*state)->Name() + "'");
   }
 
+  // [WIP] order matters?
   (*state)->RegisterSemaphore();
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
+
+  if (UseTensorRTv1API((*state)->Engine())) {
+    (*state)->interface_.reset(new TRTv1Interface(*state));
+  } else {
+    (*state)->interface_.reset(new TRTv2Interface(*state));
+  }
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -173,7 +180,14 @@ ModelInstanceState::Create(
   }
 #endif
 
-  if (UseTensorRTv2API((*state)->Engine())) {
+  if (UseTensorRTv1API((*state)->Engine())) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("Created instance ") + (*state)->Name() + " on GPU " +
+         std::to_string((*state)->DeviceId()) + " with stream priority " +
+         std::to_string((*state)->CudaStreamPriority()))
+            .c_str());
+  } else {
     std::string profiles_desc;
     (*state)->GetConfiguredProfiles(&profiles_desc);
     LOG_MESSAGE(
@@ -182,13 +196,6 @@ ModelInstanceState::Create(
          std::to_string((*state)->DeviceId()) + " with stream priority " +
          std::to_string((*state)->CudaStreamPriority()) +
          " and optimization profile" + profiles_desc)
-            .c_str());
-  } else {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Created instance ") + (*state)->Name() + " on GPU " +
-         std::to_string((*state)->DeviceId()) + " with stream priority " +
-         std::to_string((*state)->CudaStreamPriority()))
             .c_str());
   }
 
@@ -756,7 +763,7 @@ ModelInstanceState::Run(
 
       // Set the binding dimension so that output dimensions can be
       // obtained
-      if (UseTensorRTv2API(engine_) &&
+      if (!UseTensorRTv1API(engine_) &&
           !engine_->isShapeBinding(binding_index)) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
@@ -771,7 +778,7 @@ ModelInstanceState::Run(
         total_byte_size = GetByteSize(datatype, batchn_shape);
       } else {
         int vectorized_dim = io_binding_info.vectorized_dim_;
-        if (!UseTensorRTv2API(engine_) && support_batching_) {
+        if (UseTensorRTv1API(engine_) && support_batching_) {
           vectorized_dim++;
         }
         batchn_shape[vectorized_dim] +=
@@ -828,7 +835,7 @@ ModelInstanceState::Run(
   bool found_exact = false;
   // FIXME closest_cuda_graph
   FindClosestCudaGraph(citr->second, input_dims, &cuda_graph, &found_exact);
-  if ((cuda_graph != nullptr) && !found_exact && (UseTensorRTv2API(engine_))) {
+  if ((cuda_graph != nullptr) && !found_exact && (!UseTensorRTv1API(engine_))) {
     size_t input_idx = 0;
     for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
       auto& io_binding_info =
@@ -970,8 +977,9 @@ ModelInstanceState::Run(
       }
     }
 
-    if (UseTensorRTv2API(engine_)) {
-      if (!citr->second.context_->enqueueV2(
+    if (UseTensorRTv1API(engine_)) {
+      if (!citr->second.context_->enqueue(
+              payload_->total_batch_size_,
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
               &events_[next_set_].ready_for_input_)) {
         cudaStreamSynchronize(stream_);
@@ -984,8 +992,7 @@ ModelInstanceState::Run(
             "failed to run TRT inference");
       }
     } else {
-      if (!citr->second.context_->enqueue(
-              payload_->total_batch_size_,
+      if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
               &events_[next_set_].ready_for_input_)) {
         cudaStreamSynchronize(stream_);
@@ -1839,7 +1846,7 @@ ModelInstanceState::InitOptimizationProfiles()
                        "default", 0, num_expected_bindings_, EVENT_SET_COUNT))
             .first;
     it->second.context_ = std::move(default_trt_context);
-    if (UseTensorRTv2API(engine_)) {
+    if (!UseTensorRTv1API(engine_)) {
       // Store the profile dimensions and set binding dimensions to
       // max dims for later initializing the input bindings
       for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
@@ -2863,7 +2870,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     std::vector<int64_t> config_dims_vec;
     RETURN_IF_ERROR(DimsJsonToDimVec(input_dims, &config_dims_vec));
 
-    if (UseTensorRTv2API(engine_)) {
+    if (!UseTensorRTv1API(engine_)) {
       std::vector<int64_t> maximum_dims;
       if (!is_ragged) {
         TRITONSERVER_Error* err = ValidateDimension(
@@ -3114,7 +3121,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     }
 
     int64_t byte_size;
-    if (UseTensorRTv2API(engine_)) {
+    if (!UseTensorRTv1API(engine_)) {
       const nvinfer1::Dims output_dim =
           context.context_->getBindingDimensions(binding_index);
       std::vector<int64_t> dim_vec;
@@ -3471,13 +3478,8 @@ ModelInstanceState::InitializeCudaGraph()
   // is merely capturing GPU activities for a given execution.
   for (auto& graph_spec : graph_specs) {
     for (auto& trt_context : trt_contexts_) {
-      if (UseTensorRTv2API(engine_)) {
-        graph_spec.captured_ =
-            BuildCudaGraphV2(&(trt_context.second), graph_spec);
-      } else {
-        graph_spec.captured_ =
-            BuildCudaGraph(&(trt_context.second), graph_spec);
-      }
+      graph_spec.captured_ =
+          interface_->BuildCudaGraph(&(trt_context.second), graph_spec);
     }
   }
   return nullptr;
@@ -3677,7 +3679,7 @@ ModelInstanceState::ValidateGraphSpec(const GraphSpec& graph_spec)
 }
 
 bool
-ModelInstanceState::BuildCudaGraph(
+TRTv1Interface::BuildCudaGraph(
     TensorRTContext* trt_context, const GraphSpec& graph_spec)
 {
   // 1 is special case as non-batching model has 'max_batch_size == 0'
@@ -3688,15 +3690,15 @@ ModelInstanceState::BuildCudaGraph(
                                    ? 1
                                    : graph_spec.lower_bound_batch_size_;
   cuda_graph.lower_bound_key_ = {lower_bound_batch_size};
-  for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
+  for (int io_index = 0; io_index < instance_->num_expected_bindings_; ++io_index) {
     // FIXME handle shape tensor properly, for now if model uses shape
     // tensor then cuda graph is not captured
-    if (engine_->isShapeBinding(io_index)) {
+    if (instance_->engine_->isShapeBinding(io_index)) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("Detected shape tensor, CUDA graph is not "
                        "captured for ") +
-           Name())
+           instance_->Name())
               .c_str());
       return false;
     }
@@ -3704,15 +3706,15 @@ ModelInstanceState::BuildCudaGraph(
 
   // Enqueue to TRT to setup resources properly BEFORE capturing CUDA
   // graph
-  for (int s = 0; s < num_copy_streams_; s++) {
+  for (int s = 0; s < instance_->num_copy_streams_; s++) {
     if (!trt_context->context_->enqueue(
-            batch_size, buffer_bindings_[s].data(), CudaStream(), nullptr)) {
+            batch_size, instance_->buffer_bindings_[s].data(), instance_->CudaStream(), nullptr)) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
-          (std::string("unable to record CUDA graph for ") + Name()).c_str());
+          (std::string("unable to record CUDA graph for ") + instance_->Name()).c_str());
       return false;
     }
-    cudaStreamSynchronize(CudaStream());
+    cudaStreamSynchronize(instance_->CudaStream());
   }
 
   bool captured = true;
@@ -3723,44 +3725,44 @@ ModelInstanceState::BuildCudaGraph(
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("Detected duplicated CUDA graph specification for ") +
-           Name() + ", skipping the duplicated specification")
+           instance_->Name() + ", skipping the duplicated specification")
               .c_str());
 
       return true;
     }
     // Use second set of buffers to capture cuda graph if
     // double-buffering
-    auto buffer_binding_index = num_copy_streams_ == 1 ? 0 : set_idx;
+    auto buffer_binding_index = instance_->num_copy_streams_ == 1 ? 0 : set_idx;
     cudaGraph_t graph;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
     // to this thread and avoid interference from other potentially unsafe cuda
     // calls.
     auto cuerr =
-        cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
+        cudaStreamBeginCapture(instance_->CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_ERROR,
-          (std::string("unable to start CUDA graph for ") + Name() + ": " +
+          (std::string("unable to start CUDA graph for ") + instance_->Name() + ": " +
            cudaGetErrorString(cuerr))
               .c_str());
       captured = false;
     } else {
       auto context = trt_context->context_;
       if (!context->enqueue(
-              batch_size, buffer_bindings_[buffer_binding_index].data(),
-              CudaStream(), &events_[set_idx].ready_for_input_)) {
+              batch_size, instance_->buffer_bindings_[buffer_binding_index].data(),
+              instance_->CudaStream(), &instance_->events_[set_idx].ready_for_input_)) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
-            (std::string("unable to record CUDA graph for ") + Name()).c_str());
+            (std::string("unable to record CUDA graph for ") + instance_->Name()).c_str());
         captured = false;
       }
 
-      cuerr = cudaStreamEndCapture(CudaStream(), &graph);
+      cuerr = cudaStreamEndCapture(instance_->CudaStream(), &graph);
       if (captured == false) {
         if (cuerr != cudaErrorStreamCaptureInvalidated) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("stream capture is not invalidated for ") + Name() +
+              (std::string("stream capture is not invalidated for ") + instance_->Name() +
                ": " + cudaGetErrorString(cuerr))
                   .c_str());
         }
@@ -3772,7 +3774,7 @@ ModelInstanceState::BuildCudaGraph(
         if (cuerr2 != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("unable to clear cuda runtime error for ") + Name() +
+              (std::string("unable to clear cuda runtime error for ") + instance_->Name() +
                ": " + cudaGetErrorString(cuerr2))
                   .c_str());
         }
@@ -3780,7 +3782,7 @@ ModelInstanceState::BuildCudaGraph(
       if (cuerr != cudaSuccess) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
-            (std::string("unable to finish CUDA graph for ") + Name() + ": " +
+            (std::string("unable to finish CUDA graph for ") + instance_->Name() + ": " +
              cudaGetErrorString(cuerr))
                 .c_str());
         captured = false;
@@ -3792,7 +3794,7 @@ ModelInstanceState::BuildCudaGraph(
         if (cuerr != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("unable to instantiate CUDA graph for ") + Name() +
+              (std::string("unable to instantiate CUDA graph for ") + instance_->Name() +
                ": " + cudaGetErrorString(cuerr))
                   .c_str());
           captured = false;
@@ -3806,7 +3808,7 @@ ModelInstanceState::BuildCudaGraph(
         if (cuerr != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("unable to destroy graph for ") + Name() + ": " +
+              (std::string("unable to destroy graph for ") + instance_->Name() + ": " +
                cudaGetErrorString(cuerr))
                   .c_str());
           captured = false;
@@ -3818,7 +3820,7 @@ ModelInstanceState::BuildCudaGraph(
   if (captured) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
-        (std::string("captured CUDA graph for ") + Name() + ", batch size " +
+        (std::string("captured CUDA graph for ") + instance_->Name() + ", batch size " +
          std::to_string(batch_size))
             .c_str());
   }
@@ -3827,18 +3829,18 @@ ModelInstanceState::BuildCudaGraph(
 }
 
 bool
-ModelInstanceState::BuildCudaGraphV2(
+TRTv2Interface::BuildCudaGraph(
     TensorRTContext* trt_context, const GraphSpec& graph_spec)
 {
   // FIXME handle shape tensor properly, for now if model uses shape
   // tensor then cuda graph is not captured
-  for (int i = 0; i < num_expected_bindings_; ++i) {
-    if (engine_->isShapeBinding(i)) {
+  for (int i = 0; i < instance_->num_expected_bindings_; ++i) {
+    if (instance_->engine_->isShapeBinding(i)) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("Detected shape tensor, CUDA graph is not "
                        "captured for") +
-           Name())
+           instance_->Name())
               .c_str());
       return false;
     }
@@ -3851,7 +3853,7 @@ ModelInstanceState::BuildCudaGraphV2(
   if (err != nullptr) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_ERROR,
-        (std::string("Failed to set cuda graph shape for ") + Name() +
+        (std::string("Failed to set cuda graph shape for ") + instance_->Name() +
          TRITONSERVER_ErrorMessage(err))
             .c_str());
     TRITONSERVER_ErrorDelete(err);
@@ -3860,51 +3862,51 @@ ModelInstanceState::BuildCudaGraphV2(
 
   // Enqueue to TRT to setup resources properly BEFORE capturing CUDA
   // graph
-  for (int s = 0; s < num_copy_streams_; s++) {
+  for (int s = 0; s < instance_->num_copy_streams_; s++) {
     if (!trt_context->context_->enqueueV2(
-            buffer_bindings_[s].data(), CudaStream(), nullptr)) {
+            instance_->buffer_bindings_[s].data(), instance_->CudaStream(), nullptr)) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
-          (std::string("unable to record CUDA graph for ") + Name()).c_str());
+          (std::string("unable to record CUDA graph for ") + instance_->Name()).c_str());
       return false;
     }
-    cudaStreamSynchronize(CudaStream());
+    cudaStreamSynchronize(instance_->CudaStream());
   }
 
   bool captured = true;
 
   for (int set_idx = 0; set_idx < EVENT_SET_COUNT; set_idx++) {
     cudaGraph_t graph;
-    int buffer_bindings_index = num_copy_streams_ == 1 ? 0 : set_idx;
+    int buffer_bindings_index = instance_->num_copy_streams_ == 1 ? 0 : set_idx;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
     // to this thread and avoid interference from other potentially unsafe cuda
     // calls.
     auto cuerr =
-        cudaStreamBeginCapture(CudaStream(), cudaStreamCaptureModeThreadLocal);
+        cudaStreamBeginCapture(instance_->CudaStream(), cudaStreamCaptureModeThreadLocal);
     if (cuerr != cudaSuccess) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_ERROR,
-          (std::string("unable to start CUDA graph for ") + Name() + ": " +
+          (std::string("unable to start CUDA graph for ") + instance_->Name() + ": " +
            cudaGetErrorString(cuerr))
               .c_str());
       captured = false;
     } else {
       auto context = trt_context->context_;
       if (!context->enqueueV2(
-              buffer_bindings_[buffer_bindings_index].data(), CudaStream(),
-              &events_[set_idx].ready_for_input_)) {
+              instance_->buffer_bindings_[buffer_bindings_index].data(), instance_->CudaStream(),
+              &instance_->events_[set_idx].ready_for_input_)) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
-            (std::string("unable to record CUDA graph for ") + Name()).c_str());
+            (std::string("unable to record CUDA graph for ") + instance_->Name()).c_str());
         captured = false;
       }
 
-      cuerr = cudaStreamEndCapture(CudaStream(), &graph);
+      cuerr = cudaStreamEndCapture(instance_->CudaStream(), &graph);
       if (captured == false) {
         if (cuerr != cudaErrorStreamCaptureInvalidated) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("stream capture is not invalidated for ") + Name() +
+              (std::string("stream capture is not invalidated for ") + instance_->Name() +
                ": " + cudaGetErrorString(cuerr))
                   .c_str());
         }
@@ -3916,7 +3918,7 @@ ModelInstanceState::BuildCudaGraphV2(
         if (cuerr2 != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("unable to clear cuda runtime error for ") + Name() +
+              (std::string("unable to clear cuda runtime error for ") + instance_->Name() +
                ": " + cudaGetErrorString(cuerr2))
                   .c_str());
         }
@@ -3924,7 +3926,7 @@ ModelInstanceState::BuildCudaGraphV2(
       if (cuerr != cudaSuccess) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
-            (std::string("unable to finish CUDA graph for ") + Name() + ": " +
+            (std::string("unable to finish CUDA graph for ") + instance_->Name() + ": " +
              cudaGetErrorString(cuerr))
                 .c_str());
         captured = false;
@@ -3936,7 +3938,7 @@ ModelInstanceState::BuildCudaGraphV2(
         if (cuerr != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("unable to instantiate CUDA graph for ") + Name() +
+              (std::string("unable to instantiate CUDA graph for ") + instance_->Name() +
                ": " + cudaGetErrorString(cuerr))
                   .c_str());
           captured = false;
@@ -3949,7 +3951,7 @@ ModelInstanceState::BuildCudaGraphV2(
         if (cuerr != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
-              (std::string("unable to destroy graph for ") + Name() + ": " +
+              (std::string("unable to destroy graph for ") + instance_->Name() + ": " +
                cudaGetErrorString(cuerr))
                   .c_str());
           captured = false;
@@ -3961,7 +3963,7 @@ ModelInstanceState::BuildCudaGraphV2(
   if (captured) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
-        (std::string("captured CUDA graph for ") + Name() + ", batch size " +
+        (std::string("captured CUDA graph for ") + instance_->Name() + ", batch size " +
          std::to_string(graph_spec.batch_size_))
             .c_str());
   }
@@ -3970,23 +3972,23 @@ ModelInstanceState::BuildCudaGraphV2(
 }
 
 TRITONSERVER_Error*
-ModelInstanceState::SetCudaGraphShape(
+TRTv2Interface::SetCudaGraphShape(
     TensorRTContext* trt_context, const GraphSpec& graph_spec,
     std::vector<int64_t>* cuda_graph_key,
     TensorRTContext::CudaGraph* cuda_graph)
 {
   int batch_size = graph_spec.batch_size_;
-  int binding_offset = trt_context->profile_idx_ * num_expected_bindings_;
+  int binding_offset = trt_context->profile_idx_ * instance_->num_expected_bindings_;
   *cuda_graph_key = std::vector<int64_t>{batch_size};
   auto& lower_bound_key = cuda_graph->lower_bound_key_;
   lower_bound_key.push_back(
       (graph_spec.lower_bound_batch_size_ == 0)
           ? 1
           : graph_spec.lower_bound_batch_size_);
-  for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
-    auto& io_binding_info = io_binding_infos_[0][io_index];
+  for (int io_index = 0; io_index < instance_->num_expected_bindings_; io_index++) {
+    auto& io_binding_info = instance_->io_binding_infos_[0][io_index];
     auto binding_index = binding_offset + io_index;
-    if (!engine_->bindingIsInput(binding_index)) {
+    if (!instance_->engine_->bindingIsInput(binding_index)) {
       continue;
     }
     // Empty shapes indicates the graph spec is added by default,
@@ -4001,7 +4003,7 @@ ModelInstanceState::SetCudaGraphShape(
             TRITONSERVER_ERROR_INTERNAL,
             (std::string("trt failed to set binding dimension to ") +
              DimsDebugString(shape) + " for binding " +
-             std::to_string(binding_index) + " for " + Name())
+             std::to_string(binding_index) + " for " + instance_->Name())
                 .c_str());
       }
       std::vector<int64_t> dims;
@@ -4010,7 +4012,7 @@ ModelInstanceState::SetCudaGraphShape(
       cuda_graph_key->insert(cuda_graph_key->end(), dims.begin(), dims.end());
       lower_bound_key.insert(lower_bound_key.end(), dims.begin(), dims.end());
     } else {
-      const std::string& name = engine_->getBindingName(io_index);
+      const std::string& name = instance_->engine_->getBindingName(io_index);
       auto it = graph_spec.shapes_.find(name);
       if (it != graph_spec.shapes_.end()) {
         // For ragged / batch input, assume the shape in graph spec is proper
@@ -4035,7 +4037,7 @@ ModelInstanceState::SetCudaGraphShape(
               TRITONSERVER_ERROR_INTERNAL,
               (std::string("trt failed to set binding dimension to ") +
                DimsDebugString(trt_shape) + " for binding " +
-               std::to_string(binding_index) + " for " + Name())
+               std::to_string(binding_index) + " for " + instance_->Name())
                   .c_str());
         }
         cuda_graph_key->insert(
@@ -4048,7 +4050,7 @@ ModelInstanceState::SetCudaGraphShape(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("trt failed to set binding dimension for "
                          "unknown input '") +
-             name + "' for " + Name())
+             name + "' for " + instance_->Name())
                 .c_str());
       }
     }
