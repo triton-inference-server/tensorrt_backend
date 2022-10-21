@@ -199,8 +199,9 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 //
 // Struct to hold values specified via backend config
 struct BackendConfiguration {
-  BackendConfiguration() : coalesce_request_input_(false) {}
+  BackendConfiguration() : coalesce_request_input_(false), sleep_ms_(0) {}
   bool coalesce_request_input_;
+  int64_t sleep_ms_;
 };
 
 //
@@ -1332,6 +1333,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   cudaStream_t input_copy_stream_;
   cudaStream_t output_copy_stream_;
   int num_copy_streams_;
+  int64_t sleep_ms_;
 
   // CUDA stream use to track execution status
   cudaStream_t signal_stream_;
@@ -1582,6 +1584,7 @@ ModelInstanceState::ModelInstanceState(
         TRITONBACKEND_BackendState(backend, &state));
     coalesce_request_input_ =
         reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
+    sleep_ms_= reinterpret_cast<BackendConfiguration*>(state)->sleep_ms_;
   }
 
   if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
@@ -2703,6 +2706,10 @@ ModelInstanceState::ProcessResponse()
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
+
+    // TODO: Testing sleeping longer with belowline
+    std::this_thread::sleep_for(
+          std::chrono::milliseconds(1000));
 
     // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
     for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
@@ -5499,6 +5506,12 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (backend_config.Find("cmdline", &cmdline)) {
     triton::common::TritonJson::Value value;
     std::string value_str;
+
+    if (cmdline.Find("sleep-ms", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      RETURN_IF_ERROR(
+          ParseLongLongValue(value_str, &lconfig->sleep_ms_));
+    }
 
     if (cmdline.Find("coalesce-request-input", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
