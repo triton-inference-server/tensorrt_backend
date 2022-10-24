@@ -338,12 +338,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
   int num_profile_bindings = 0;
   int num_profiles = 0;
-  if (UseTensorRTv1API(engine)) {
-    num_profile_bindings = engine->getNbBindings();
-  } else {
-    num_profiles = engine->getNbOptimizationProfiles();
-    num_profile_bindings = engine->getNbBindings() / num_profiles;
-  }
+  num_profiles = engine->getNbOptimizationProfiles();
+  num_profile_bindings = engine->getNbBindings() / num_profiles;
 
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
