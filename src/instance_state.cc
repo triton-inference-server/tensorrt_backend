@@ -180,24 +180,15 @@ ModelInstanceState::Create(
   }
 #endif
 
-  if (UseTensorRTv1API((*state)->Engine())) {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Created instance ") + (*state)->Name() + " on GPU " +
-         std::to_string((*state)->DeviceId()) + " with stream priority " +
-         std::to_string((*state)->CudaStreamPriority()))
-            .c_str());
-  } else {
-    std::string profiles_desc;
-    (*state)->GetConfiguredProfiles(&profiles_desc);
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Created instance ") + (*state)->Name() + " on GPU " +
-         std::to_string((*state)->DeviceId()) + " with stream priority " +
-         std::to_string((*state)->CudaStreamPriority()) +
-         " and optimization profile" + profiles_desc)
-            .c_str());
-  }
+  std::string profiles_desc;
+  (*state)->GetConfiguredProfiles(&profiles_desc);
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Created instance ") + (*state)->Name() + " on GPU " +
+        std::to_string((*state)->DeviceId()) + " with stream priority " +
+        std::to_string((*state)->CudaStreamPriority()) +
+        " and optimization profile" + profiles_desc)
+          .c_str());
 
   return nullptr;  // success
 }
@@ -1831,106 +1822,68 @@ ModelInstanceState::InitOptimizationProfiles()
         TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
   }
 
-  if (total_profiles == 0) {
-    num_expected_bindings_ = total_bindings_;
-  } else {
-    num_expected_bindings_ = total_bindings_ / total_profiles;
-  }
+  num_expected_bindings_ = total_bindings_ / total_profiles;
 
+  std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
-  if ((total_profiles == 0) || ProfileNames().empty()) {
-    auto it =
-        trt_contexts_
-            .emplace(
-                0, TensorRTContext(
-                       "default", 0, num_expected_bindings_, EVENT_SET_COUNT))
-            .first;
-    it->second.context_ = std::move(default_trt_context);
-    if (!UseTensorRTv1API(engine_)) {
-      // Store the profile dimensions and set binding dimensions to
-      // max dims for later initializing the input bindings
-      for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
-        const auto binding_index = io_index;
-        if (engine_->bindingIsInput(binding_index)) {
-          RETURN_IF_ERROR(GetProfileDimensions(io_index, 0, &it->second));
-          if (!it->second.context_->setBindingDimensions(
-                  binding_index, it->second.max_dims_[io_index])) {
-            return TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_INTERNAL,
-                (std::string("trt failed to set binding dimension to ") +
-                 DimsDebugString(it->second.max_dims_[io_index]) +
-                 " for input '" + engine_->getBindingName(binding_index) +
-                 "' for " + Name())
-                    .c_str());
-          }
-        }
-      }
-    }
+  if (ProfileNames().empty()) {
+    profile_name_index.emplace_back("default", 0);
   } else {
-    // Create one TRT context for each specified profile
     for (const auto& profile_name : ProfileNames()) {
       int profile_index = 0;
       RETURN_IF_ERROR(GetProfileIndex(profile_name, &profile_index));
-      auto res = trt_contexts_.emplace(
-          profile_index, TensorRTContext(
-                             profile_name, profile_index,
-                             num_expected_bindings_, EVENT_SET_COUNT));
-      if (!res.second) {
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_WARN,
-            (profile_name + " maps to profile index " +
-             std::to_string(profile_index) + " which has been mapped by " +
-             res.first->second.profile_name_ +
-             ", existing optimization profile will be reused")
+      profile_name_index.emplace_back(profile_name, profile_index);
+    }
+  }
+
+  // Create one TRT context for each specified profile
+  for (const auto& name_index : profile_name_index) {
+    const auto& profile_name = name_index.first;
+    const int profile_index = name_index.second;
+    auto res = trt_contexts_.emplace(
+        profile_index, TensorRTContext(
+                            profile_name, profile_index,
+                            num_expected_bindings_, EVENT_SET_COUNT));
+    if (!res.second) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_WARN,
+          (profile_name + " maps to profile index " +
+            std::to_string(profile_index) + " which has been mapped by " +
+            res.first->second.profile_name_ +
+            ", existing optimization profile will be reused")
+              .c_str());
+      continue;
+    }
+    if (profile_index == 0) {
+      res.first->second.context_ = std::move(default_trt_context);
+    } else {
+      res.first->second.context_.reset(engine_->createExecutionContext());
+      if (res.first->second.context_ == nullptr) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
+      }
+      if (!res.first->second.context_->setOptimizationProfileAsync(
+              profile_index, stream_)) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string("Can not set the specified optimization "
+                          "profile ") +
+              profile_name + "[" + std::to_string(profile_index) + "] for " +
+              name_ + ". Expected optimization profile index range 0-" +
+              std::to_string(engine_->getNbOptimizationProfiles() - 1))
                 .c_str());
-        continue;
       }
-      if (profile_index == 0) {
-        res.first->second.context_ = std::move(default_trt_context);
-      } else {
-        res.first->second.context_.reset(engine_->createExecutionContext());
-        if (res.first->second.context_ == nullptr) {
-          return TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
-        }
-        if (!res.first->second.context_->setOptimizationProfileAsync(
-                profile_index, stream_)) {
-          return TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INVALID_ARG,
-              (std::string("Can not set the specified optimization "
-                           "profile ") +
-               profile_name + "[" + std::to_string(profile_index) + "] for " +
-               name_ + ". Expected optimization profile index range 0-" +
-               std::to_string(engine_->getNbOptimizationProfiles() - 1))
-                  .c_str());
-        }
-        cudaStreamSynchronize(CudaStream());
-      }
-      // Store the profile dimensions and set binding dimensions to
-      // max dims for later initializing the input bindings
-      for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
-        const auto binding_index =
-            profile_index * num_expected_bindings_ + io_index;
-        if (engine_->bindingIsInput(binding_index)) {
-          RETURN_IF_ERROR(GetProfileDimensions(
-              io_index, profile_index, &res.first->second));
-          if (!res.first->second.context_->setBindingDimensions(
-                  binding_index, res.first->second.max_dims_[io_index])) {
-            return TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_INTERNAL,
-                (std::string("trt failed to set binding dimension to ") +
-                 DimsDebugString(res.first->second.max_dims_[io_index]) +
-                 " for input '" + engine_->getBindingName(binding_index) +
-                 "' for " + Name())
-                    .c_str());
-          }
-        }
-      }
+      cudaStreamSynchronize(CudaStream());
     }
 
-    // profile 0 is not specified
-    if (default_trt_context != nullptr) {
-      default_trt_context.reset();
+    // Store the profile dimensions for later initializing the input bindings
+    for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
+      const auto binding_index =
+          profile_index * num_expected_bindings_ + io_index;
+      if (engine_->bindingIsInput(binding_index)) {
+        RETURN_IF_ERROR(GetProfileDimensions(
+            io_index, profile_index, &res.first->second));
+      }
     }
   }
 
