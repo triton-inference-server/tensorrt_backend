@@ -2709,7 +2709,7 @@ ModelInstanceState::ProcessResponse()
 
     // TODO: Testing sleeping longer with belowline
     std::this_thread::sleep_for(
-          std::chrono::milliseconds(1000));
+          std::chrono::milliseconds(sleep_ms_));
 
     // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
     for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
