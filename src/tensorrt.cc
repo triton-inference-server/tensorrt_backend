@@ -29,6 +29,7 @@
 #include "logging.h"
 #include "semaphore.h"
 #include "shared_library.h"
+#include <sstream>
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
 #include "tensorrt_utils.h"
@@ -1942,6 +1943,13 @@ ModelInstanceState::Run(
                                     ? events_[prev_set].ready_for_input_
                                     : nullptr;
   std::vector<int64_t> input_dims{(int64_t)payload_->total_batch_size_};
+        //     std::stringstream event_stream0;
+        //   event_stream0 << events_[next_set_].input_ready_;
+        //   std::string event0 = event_stream0.str(); 
+        //   LOG_MESSAGE(
+        // TRITONSERVER_LOG_INFO,
+        // (std::string("Event recorded: ") + event0)
+        //     .c_str());
   payload_->collector_.reset(new BackendInputCollector(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
       model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
@@ -2042,6 +2050,21 @@ ModelInstanceState::Run(
             "error copying the batch input buffer");
         if (cuda_used) {
           cudaEventRecord(events_[next_set_].input_ready_, input_copy_stream_);
+        //   std::stringstream event_stream;
+        //   event_stream << events_[next_set_].input_ready_;
+        //   std::string event = event_stream.str(); 
+        //   LOG_MESSAGE(
+        // TRITONSERVER_LOG_INFO,
+        // (std::string("CUDA USED: Event recorded: ") + event)
+        //     .c_str());
+        // } else {
+        //   std::stringstream event_stream;
+        //   event_stream << events_[next_set_].input_ready_;
+        //   std::string event = event_stream.str(); 
+        //   LOG_MESSAGE(
+        // TRITONSERVER_LOG_INFO,
+        // (std::string("CUDA NOT USED: Event recorded: ") + event)
+        //     .c_str());
         }
       }
     } else if (io_binding_info.buffer_is_ragged_) {
@@ -2255,7 +2278,22 @@ ModelInstanceState::Run(
           if (cuda_used) {
             cudaEventRecord(
                 events_[next_set_].input_ready_, input_copy_stream_);
-          }
+        //     std::stringstream event_stream;
+        //   event_stream << events_[next_set_].input_ready_;
+        //   std::string event = event_stream.str(); 
+        //   LOG_MESSAGE(
+        // TRITONSERVER_LOG_INFO,
+        // (std::string("CUDA USED: Event recorded: ") + event)
+        //     .c_str());
+        //   } else {
+        //   std::stringstream event_stream;
+        //   event_stream << events_[next_set_].input_ready_;
+        //   std::string event = event_stream.str(); 
+        //   LOG_MESSAGE(
+        // TRITONSERVER_LOG_INFO,
+        // (std::string("CUDA NOT USED: Event recorded: ") + event)
+        //     .c_str());
+        }
         }
       }
       input_idx++;
@@ -2265,6 +2303,13 @@ ModelInstanceState::Run(
   // Ensure inputs are ready before execution.
   // Output buffers are guaranteed to be available at this point when
   // the execution and output copy are on the same stream.
+  // std::stringstream event_stream;
+  //         event_stream << events_[next_set_].input_ready_;
+  //         std::string event = event_stream.str(); 
+  //         LOG_MESSAGE(
+  //       TRITONSERVER_LOG_INFO,
+  //       (std::string("Waiting for event: ") + event)
+  //           .c_str());
   cudaStreamWaitEvent(stream_, events_[next_set_].input_ready_, 0);
   // Wait for the output buffers to be available at this point when
   // the execution and output copy are on separate streams
@@ -2297,6 +2342,13 @@ ModelInstanceState::Run(
     // Event recorded during CUDA graph capture is not visible outside
     // of the graph, need to explicitly record it.
     cudaEventRecord(events_[next_set_].ready_for_input_, stream_);
+    // std::stringstream event_stream;
+    //       event_stream << events_[next_set_].ready_for_input_;
+    //       std::string event = event_stream.str(); 
+    //       LOG_MESSAGE(
+    //     TRITONSERVER_LOG_INFO,
+    //     (std::string("Event recorded... ") + event)
+    //         .c_str());
   } else {
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
@@ -2341,6 +2393,14 @@ ModelInstanceState::Run(
       }
     }
 
+    // std::stringstream event_stream;
+    //       event_stream << events_[next_set_].ready_for_input_;
+    //       std::string event = event_stream.str(); 
+    //       LOG_MESSAGE(
+    //     TRITONSERVER_LOG_INFO,
+    //     (std::string("Event passed to TRT: ") + event)
+    //         .c_str());
+    //TODO: Test passing in nullptr, then manually setting ready_for_input_ done when tensorrt done with execution
     if (UseTensorRTv2API(engine_)) {
       if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
@@ -2705,6 +2765,13 @@ ModelInstanceState::ProcessResponse()
     // has consumed the inputs. Put the slot back into the available
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
+    // std::stringstream event_stream;
+    //       event_stream << event_set.ready_for_input_;
+    //       std::string event = event_stream.str(); 
+    //       LOG_MESSAGE(
+    //     TRITONSERVER_LOG_INFO,
+    //     (std::string("Waiting for... ") + event)
+    //         .c_str());
     cudaEventSynchronize(event_set.ready_for_input_);
 
     // TODO: Testing sleeping longer with belowline
@@ -5265,6 +5332,13 @@ ModelInstanceState::BuildCudaGraphV2(
       captured = false;
     } else {
       auto context = trt_context->context_;
+      // std::stringstream event_stream;
+      //     event_stream << events_[set_idx].ready_for_input_;
+      //     std::string event = event_stream.str(); 
+      //     LOG_MESSAGE(
+      //   TRITONSERVER_LOG_INFO,
+      //   (std::string("Event passed to CUDA: ") + event)
+      //       .c_str());
       if (!context->enqueueV2(
               buffer_bindings_[buffer_bindings_index].data(), CudaStream(),
               &events_[set_idx].ready_for_input_)) {
