@@ -2314,6 +2314,13 @@ ModelInstanceState::Run(
   // Wait for the output buffers to be available at this point when
   // the execution and output copy are on separate streams
   if (model_state_->SeparateOutputStream()) {
+    std::stringstream event_stream;
+          event_stream << events_[next_set_].output_ready_;
+          std::string event = event_stream.str(); 
+          LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[Output Ready] Event to wait for ") + event)
+            .c_str());
     cudaStreamWaitEvent(stream_, events_[next_set_].output_ready_, 0);
   }
   // Async execute the inference using a CUDA graph if available for
@@ -2432,6 +2439,13 @@ ModelInstanceState::Run(
   }
 
   cudaEventRecord(events_[next_set_].ready_for_output_, stream_);
+  std::stringstream event_stream;
+          event_stream << events_[next_set_].ready_for_output_;
+          std::string event = event_stream.str(); 
+          LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[Ready For Output] Passing in event: ") + event)
+            .c_str());
 
 #ifdef TRITON_ENABLE_STATS
   cudaStreamWaitEvent(signal_stream_, events_[next_set_].ready_for_output_, 0);
@@ -2469,6 +2483,13 @@ ModelInstanceState::Run(
   // Wait for the inference to be completed before copying output if
   // output copy is on a separate stream
   if (model_state_->SeparateOutputStream()) {
+    std::stringstream event_stream;
+          event_stream << events_[next_set_].ready_for_output_;
+          std::string event = event_stream.str(); 
+          LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[Ready For Output] Waiting for: ") + event)
+            .c_str());
     cudaStreamWaitEvent(
         output_copy_stream_, events_[next_set_].ready_for_output_, 0);
   }
@@ -2478,6 +2499,13 @@ ModelInstanceState::Run(
 
   // For each requested output verify that the output can accept the
   // actual model output and then copy that output from the GPU
+  std::stringstream event_stream1;
+          event_stream1 << events_[next_set_].output_ready_;
+          std::string event1 = event_stream1.str(); 
+          LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[Output Ready] Passing in event: ") + event1)
+            .c_str());
   payload_->responder_.reset(new BackendOutputResponder(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
       model_state_->TritonMemoryManager(), model_state_->MaxBatchSize() > 0,
@@ -2774,16 +2802,16 @@ ModelInstanceState::ProcessResponse()
     //         .c_str());
     cudaEventSynchronize(event_set.ready_for_input_);
 
-    // TODO: Testing sleeping longer with belowline
-    std::this_thread::sleep_for(
-          std::chrono::milliseconds(sleep_ms_));
-
     // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
     for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
       cudaMemsetAsync(
           buffer_binding_pair.first, 0, buffer_binding_pair.second,
           input_copy_stream_);
     }
+
+    // TODO: Testing sleeping longer with belowline
+    std::this_thread::sleep_for(
+          std::chrono::milliseconds(sleep_ms_));
 
     (model_state_->SemaphoreDeviceContext(DeviceId()))
         ->semaphore_list_[payload->sem_idx_]
@@ -2793,6 +2821,13 @@ ModelInstanceState::ProcessResponse()
     // Call Finalize() here to defer CUDA synchronization as much as
     // possible
     payload->responder_->Finalize();
+    std::stringstream event_stream;
+          event_stream << event_set.output_ready_;
+          std::string event = event_stream.str(); 
+          LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[Output Ready] Waiting for... ") + event)
+            .c_str());
     cudaEventSynchronize(event_set.output_ready_);
     NVTX_MARKER("plan_output_ready");
 
