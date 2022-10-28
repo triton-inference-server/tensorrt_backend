@@ -315,72 +315,29 @@ CompareShapeDimsSupported(
 }
 
 TRITONSERVER_Error*
-MaximumDims(
-    const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
-    const bool support_batching, const int max_batch_size,
-    std::vector<int64_t>* max_dims)
-{
-  const int nonbatch_start_idx = (support_batching ? 1 : 0);
-  if (max_profile_dims.nbDims != (int32_t)(dims.size() + nonbatch_start_idx)) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        (std::string("can not maximize dimension ") +
-         backend::ShapeToString(dims) + " to " +
-         DimsDebugString(max_profile_dims) + " due to  incompatibility.")
-            .c_str());
-  }
-
-  if (support_batching) {
-    int this_batch_size = max_batch_size > max_profile_dims.d[0]
-                              ? max_profile_dims.d[0]
-                              : max_batch_size;
-    max_dims->emplace_back(this_batch_size);
-  }
-
-  for (uint64_t i = 0; i < dims.size(); ++i) {
-    if (dims[i] == WILDCARD_DIM) {
-      max_dims->emplace_back(max_profile_dims.d[i + nonbatch_start_idx]);
-    } else {
-      if (dims[i] <= max_profile_dims.d[i + nonbatch_start_idx]) {
-        max_dims->emplace_back(dims[i]);
-      } else {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("can not maximize dimension ") +
-             backend::ShapeToString(dims) + " to " +
-             DimsDebugString(max_profile_dims) + " due to incompatibility.")
-                .c_str());
-      }
-    }
-  }
-  return nullptr;
-}
-
-TRITONSERVER_Error*
 ValidateDimension(
     const nvinfer1::Dims& this_dims, const nvinfer1::Dims& min_dims,
-    const nvinfer1::Dims& max_dims, const bool skip_first_dimension)
+    const nvinfer1::Dims& max_dims)
 {
-  const int nonbatch_start_idx = (skip_first_dimension ? 1 : 0);
-  if ((this_dims.nbDims + nonbatch_start_idx) != max_dims.nbDims) {
+  if ((this_dims.nbDims) != max_dims.nbDims) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("model expected ") +
-         std::to_string(max_dims.nbDims - nonbatch_start_idx) +
+         std::to_string(max_dims.nbDims) +
          " dimensions but received " + std::to_string(this_dims.nbDims) +
          " dimensions")
             .c_str());
   }
 
   for (int i = 0; i < this_dims.nbDims; i++) {
-    if (this_dims.d[i] < min_dims.d[i + nonbatch_start_idx] ||
-        this_dims.d[i] > max_dims.d[i + nonbatch_start_idx]) {
+    if (this_dims.d[i] < min_dims.d[i] ||
+        this_dims.d[i] > max_dims.d[i]) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("model expected the shape of dimension ") +
            std::to_string(i) + " to be between " +
-           std::to_string(min_dims.d[i + nonbatch_start_idx]) + " and " +
-           std::to_string(max_dims.d[i + nonbatch_start_idx]) +
+           std::to_string(min_dims.d[i]) + " and " +
+           std::to_string(max_dims.d[i]) +
            " but received " + std::to_string(this_dims.d[i]))
               .c_str());
     }

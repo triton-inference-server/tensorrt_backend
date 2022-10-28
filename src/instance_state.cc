@@ -161,8 +161,14 @@ ModelInstanceState::Create(
       (*state)->EnginePtr()));
 
   if (UseTensorRTv1API((*state)->Engine())) {
+    std::cerr << "=====================================" << std::endl;
+    std::cerr << "use v1 API / implicit batch dimension" << std::endl;
+    std::cerr << "=====================================" << std::endl;
     (*state)->interface_.reset(new TRTv1Interface(*state));
   } else {
+    std::cerr << "=====================================" << std::endl;
+    std::cerr << "use v2 API / explicit batch dimension" << std::endl;
+    std::cerr << "=====================================" << std::endl;
     (*state)->interface_.reset(new TRTv2Interface(*state));
   }
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
@@ -754,8 +760,7 @@ ModelInstanceState::Run(
 
       // Set the binding dimension so that output dimensions can be
       // obtained
-      if (!UseTensorRTv1API(engine_) &&
-          !engine_->isShapeBinding(binding_index)) {
+      if (!engine_->isShapeBinding(binding_index)) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             SetBindingDimensions(
@@ -765,17 +770,13 @@ ModelInstanceState::Run(
       }
 
       size_t total_byte_size = 0;
-      if (io_binding_info.is_linear_format_) {
+      if (io_binding_info.format_.is_linear_format_) {
         total_byte_size = GetByteSize(datatype, batchn_shape);
       } else {
-        int vectorized_dim = io_binding_info.vectorized_dim_;
-        if (UseTensorRTv1API(engine_) && support_batching_) {
-          vectorized_dim++;
-        }
-        batchn_shape[vectorized_dim] +=
-            (io_binding_info.components_per_element_ -
-             (batchn_shape[vectorized_dim] %
-              io_binding_info.components_per_element_));
+        batchn_shape[io_binding_info.format_.vectorized_dim_] +=
+            (io_binding_info.format_.components_per_element_ -
+             (batchn_shape[io_binding_info.format_.vectorized_dim_] %
+              io_binding_info.format_.components_per_element_));
         total_byte_size = GetByteSize(datatype, batchn_shape);
       }
 
@@ -826,7 +827,11 @@ ModelInstanceState::Run(
   bool found_exact = false;
   // FIXME closest_cuda_graph
   FindClosestCudaGraph(citr->second, input_dims, &cuda_graph, &found_exact);
-  if ((cuda_graph != nullptr) && !found_exact && (!UseTensorRTv1API(engine_))) {
+  // [WIP] should re-visit below...
+  // is below even necessary if we are going to launch a CUDA graph?
+  // regular input buffer has been filled and batch input buffer has been set,
+  // unless the below is something that must be changed based on selected graph
+  if ((cuda_graph != nullptr) && !found_exact) {
     size_t input_idx = 0;
     for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
       auto& io_binding_info =
@@ -921,6 +926,8 @@ ModelInstanceState::Run(
                   .c_str()),
           "failed to run TRT inference");
     }
+    // [FIXME] should not need this as TRT adopted the new CUDA graph
+    // API that exposed event activity
     // Event recorded during CUDA graph capture is not visible outside
     // of the graph, need to explicitly record it.
     cudaEventRecord(events_[next_set_].ready_for_input_, stream_);
@@ -968,33 +975,15 @@ ModelInstanceState::Run(
       }
     }
 
-    if (UseTensorRTv1API(engine_)) {
-      if (!citr->second.context_->enqueue(
-              payload_->total_batch_size_,
-              buffer_bindings_[next_buffer_binding_set_].data(), stream_,
-              &events_[next_set_].ready_for_input_)) {
-        cudaStreamSynchronize(stream_);
-        FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_INTERNAL,
-                (std::string("unable to enqueue for inference ") + Name())
-                    .c_str()),
-            "failed to run TRT inference");
-      }
-    } else {
-      if (!citr->second.context_->enqueueV2(
-              buffer_bindings_[next_buffer_binding_set_].data(), stream_,
-              &events_[next_set_].ready_for_input_)) {
-        cudaStreamSynchronize(stream_);
-        FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_INTERNAL,
-                (std::string("unable to enqueue for inference ") + Name())
-                    .c_str()),
-            "failed to run TRT inference");
-      }
+    if (!interface_->Enqueue(citr->second.context_.get())) {
+      cudaStreamSynchronize(stream_);
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          TRITONSERVER_ErrorNew(
+              TRITONSERVER_ERROR_INTERNAL,
+              (std::string("unable to enqueue for inference ") + Name())
+                  .c_str()),
+          "failed to run TRT inference");
     }
   }
 
@@ -1224,9 +1213,17 @@ ModelInstanceState::SetBindingDimensions(
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* input_dims)
 {
-  if (input_dims != nullptr) {
+  if (interface_->AddShapeToCudaGraphKey() && (input_dims != nullptr)) {
     input_dims->insert(input_dims->end(), shape.begin(), shape.end());
   }
+
+  // [WIP] can this check be moved to here?
+  if (!trt_context.is_dynamic_per_binding_[io_index]) {
+    // No need to set dimension for the binding that does not inlcude
+    // dynamic shape.
+    return nullptr;
+  }
+
   nvinfer1::Dims this_dim;
   // Set the binding dimension so that output dimensions can be
   // obtained
@@ -1240,7 +1237,7 @@ ModelInstanceState::SetBindingDimensions(
   }
   TRITONSERVER_Error* err = ValidateDimension(
       this_dim, trt_context.min_dims_[io_index],
-      trt_context.max_dims_[io_index], false);
+      trt_context.max_dims_[io_index]);
   if (err != nullptr) {
     TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
@@ -1250,12 +1247,6 @@ ModelInstanceState::SetBindingDimensions(
             .c_str());
     TRITONSERVER_ErrorDelete(err);
     return full_err;
-  }
-
-  if (!trt_context.is_dynamic_per_binding_[io_index]) {
-    // No need to set dimension for the binding that does not inlcude
-    // dynamic shape.
-    return nullptr;
   }
 
   if (!trt_context.context_->setBindingDimensions(binding_index, this_dim)) {
@@ -2553,23 +2544,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      io_binding_info.is_linear_format_ =
-          (engine_->getBindingFormat(binding_index) ==
-           nvinfer1::TensorFormat::kLINEAR);
-      if (!io_binding_info.is_linear_format_) {
-        io_binding_info.vectorized_dim_ =
-            engine_->getBindingVectorizedDim(binding_index);
-        io_binding_info.components_per_element_ =
-            engine_->getBindingComponentsPerElement(binding_index);
-        if (io_binding_info.vectorized_dim_ == -1) {
-          return TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INVALID_ARG,
-              (std::string("unexpected vectorized dim is -1 for non-linear "
-                           "output '") +
-               io_name + "' for " + Name())
-                  .c_str());
-        }
-      }
+      // [WIP] part of initializing binding (binding_info to be exact?)
+      RETURN_IF_ERROR(interface_->SetFormat(binding_index, &io_binding_info.format_));
 
       common::TritonJson::Value model_config_dims;
       common::TritonJson::Value reshape;
@@ -2754,23 +2730,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
               .c_str());
     }
 
-    io_binding_info.is_linear_format_ =
-        (engine_->getBindingFormat(binding_index) ==
-         nvinfer1::TensorFormat::kLINEAR);
-    if (!io_binding_info.is_linear_format_) {
-      io_binding_info.vectorized_dim_ =
-          engine_->getBindingVectorizedDim(binding_index);
-      io_binding_info.components_per_element_ =
-          engine_->getBindingComponentsPerElement(binding_index);
-      if (io_binding_info.vectorized_dim_ == -1) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected vectorized dim is -1 for "
-                         "non-linear input '") +
-             input_name + "' for " + Name())
-                .c_str());
-      }
-    }
+    RETURN_IF_ERROR(interface_->SetFormat(binding_index, &io_binding_info.format_));
 
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
@@ -2818,80 +2778,31 @@ ModelInstanceState::InitializeExecuteInputBinding(
       }
     }
 
-    int64_t byte_size = 0;
-
-    std::vector<int64_t> config_dims_vec;
-    RETURN_IF_ERROR(DimsJsonToDimVec(input_dims, &config_dims_vec));
-
-    if (!UseTensorRTv1API(engine_)) {
-      std::vector<int64_t> maximum_dims;
-      if (!is_ragged) {
-        TRITONSERVER_Error* err = ValidateDimension(
-            config_dims_vec, context.min_dims_[io_index],
-            context.max_dims_[io_index], support_batching_);
-        if (err != nullptr) {
-          TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INVALID_ARG,
-              (std::string("model configuration specified invalid shape for "
-                           "input '") +
-               input_name + "' for model " + model_state_->Name() +
-               ". Error details: " + TRITONSERVER_ErrorMessage(err))
-                  .c_str());
-
-          TRITONSERVER_ErrorDelete(err);
-          return full_err;
-        }
-      }
-      // Only "prune" maximum dims for non-ragged and non-batch input,
-      // as config dims does not represent the actual shape well
-      if (!is_ragged && (io_binding_info.batch_input_ == nullptr)) {
-        RETURN_IF_ERROR(MaximumDims(
-            context.max_dims_[io_index], config_dims_vec, support_batching_,
-            model_state_->MaxBatchSize(), &maximum_dims));
-        byte_size = GetByteSize(dt, maximum_dims);
-        // Update the maximum dimension with respect to the allocated
-        // buffer
-        DimVecToDims(maximum_dims, &context.max_dims_[io_index]);
-      } else {
-        byte_size = GetByteSize(dt, {1}) * context.max_dims_[io_index].d[0];
-      }
-
-      if (!context.context_->setBindingDimensions(
-              binding_index, context.max_dims_[io_index])) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            (std::string("trt failed to set binding dimension to ") +
-             DimsDebugString(context.max_dims_[io_index]) + " for input '" +
-             input_name + "' for " + Name())
-                .c_str());
-      }
-      if (!io_binding_info.is_linear_format_) {
-        maximum_dims[io_binding_info.vectorized_dim_] +=
-            (io_binding_info.components_per_element_ -
-             (maximum_dims[io_binding_info.vectorized_dim_] %
-              io_binding_info.components_per_element_));
-        byte_size = GetByteSize(dt, maximum_dims);
-      }
+    std::vector<int64_t> full_config_dim;
+    // if ragged, full shape is defined to be [-1]
+    // if batch input, "config shape" has been populated in 'input_dims'
+    if (is_ragged) {
+      // [WIP] does with max batch size work well here?
+      full_config_dim = {-1};
     } else {
-      std::vector<int64_t> config_dims_vec_with_mbs;
-      int vectorized_dim = io_binding_info.vectorized_dim_;
-      if (support_batching_) {
-        config_dims_vec_with_mbs.push_back(model_state_->MaxBatchSize());
-        vectorized_dim += 1;
+      RETURN_IF_ERROR(DimsJsonToDimVec(input_dims, &full_config_dim));
+      if (model_state_->MaxBatchSize() > 0) {
+        full_config_dim.insert(full_config_dim.begin(), model_state_->MaxBatchSize());
       }
-      config_dims_vec_with_mbs.insert(
-          config_dims_vec_with_mbs.end(), config_dims_vec.begin(),
-          config_dims_vec.end());
-      if (io_binding_info.is_linear_format_) {
-        byte_size = GetByteSize(dt, config_dims_vec_with_mbs);
-      } else {
-        auto dims = config_dims_vec_with_mbs;
-        dims[vectorized_dim] +=
-            (io_binding_info.components_per_element_ -
-             (dims[io_binding_info.vectorized_dim_] %
-              io_binding_info.components_per_element_));
-        byte_size = GetByteSize(dt, dims);
-      }
+    }
+
+    std::vector<int64_t> maximum_dims;
+    RETURN_IF_ERROR(interface_->ConfigureInputDimensions(&context, io_index, binding_index, full_config_dim, &maximum_dims));
+
+    int64_t byte_size = 0;
+    if (io_binding_info.format_.is_linear_format_) {
+      byte_size = GetByteSize(dt, maximum_dims);
+    } else {
+      maximum_dims[io_binding_info.format_.vectorized_dim_] +=
+          (io_binding_info.format_.components_per_element_ -
+            (maximum_dims[io_binding_info.format_.vectorized_dim_] %
+            io_binding_info.format_.components_per_element_));
+      byte_size = GetByteSize(dt, maximum_dims);
     }
 
     if (byte_size == -1) {
@@ -2952,7 +2863,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
     io_binding_info.memory_type_id_ = DeviceId();
   }
-  if (io_binding_info.buffer_is_ragged_ && !io_binding_info.is_linear_format_) {
+  if (io_binding_info.buffer_is_ragged_ && !io_binding_info.format_.is_linear_format_) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("unexpected allow-ragged for non-linear input '") +
@@ -3037,23 +2948,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    io_binding_info.is_linear_format_ =
-        (engine_->getBindingFormat(binding_index) ==
-         nvinfer1::TensorFormat::kLINEAR);
-    if (!io_binding_info.is_linear_format_) {
-      io_binding_info.vectorized_dim_ =
-          engine_->getBindingVectorizedDim(binding_index);
-      io_binding_info.components_per_element_ =
-          engine_->getBindingComponentsPerElement(binding_index);
-      if (io_binding_info.vectorized_dim_ == -1) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected vectorized dim is -1 for non-linear "
-                         "output '") +
-             output_name + "' for " + Name())
-                .c_str());
-      }
-    }
+    RETURN_IF_ERROR(interface_->SetFormat(binding_index, &io_binding_info.format_));
 
     nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
     // Skip 'batch_output' validation as it is not exact match to
@@ -3065,7 +2960,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     }
 
     if (io_binding_info.buffer_is_ragged_ &&
-        !io_binding_info.is_linear_format_) {
+        !io_binding_info.format_.is_linear_format_) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("unexpected allow-ragged for non-linear output '") +
@@ -3073,25 +2968,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    int64_t byte_size;
-    if (!UseTensorRTv1API(engine_)) {
-      const nvinfer1::Dims output_dim =
-          context.context_->getBindingDimensions(binding_index);
-      std::vector<int64_t> dim_vec;
-      DimsToDimVec(output_dim, &dim_vec);
-      byte_size = GetByteSize(dt, dim_vec);
-    } else {
-      std::vector<int64_t> dim_vec;
-      RETURN_IF_ERROR(DimsJsonToDimVec(output_dims, &dim_vec));
-      std::vector<int64_t> dim_vec_with_mbs;
-      if (support_batching_) {
-        dim_vec_with_mbs.push_back(model_state_->MaxBatchSize());
-      }
-      dim_vec_with_mbs.insert(
-          dim_vec_with_mbs.end(), dim_vec.begin(), dim_vec.end());
-      byte_size = GetByteSize(dt, dim_vec_with_mbs);
-    }
-
+    std::vector<int64_t> dim_vec = interface_->GetMaxFullBindingShape(context.context_.get(), binding_index);
+    int64_t byte_size = GetByteSize(dt, dim_vec);
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -3230,23 +3108,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    io_binding_info.is_linear_format_ =
-        (engine_->getBindingFormat(binding_index) ==
-         nvinfer1::TensorFormat::kLINEAR);
-    if (!io_binding_info.is_linear_format_) {
-      io_binding_info.vectorized_dim_ =
-          engine_->getBindingVectorizedDim(binding_index);
-      io_binding_info.components_per_element_ =
-          engine_->getBindingComponentsPerElement(binding_index);
-      if (io_binding_info.vectorized_dim_ == -1) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("unexpected vectorized dim is -1 for "
-                         "non-linear input '") +
-             input_name + "' for " + Name())
-                .c_str());
-      }
-    }
+    RETURN_IF_ERROR(interface_->SetFormat(binding_index, &io_binding_info.format_));
 
     nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
     if (ContainsWildcard(engine_dims)) {
@@ -3287,7 +3149,7 @@ ModelInstanceState::InitializeShapeInputBinding(
 
     if (engine_->isExecutionBinding(binding_index)) {
       int64_t byte_size = 0;
-      if (io_binding_info.is_linear_format_) {
+      if (io_binding_info.format_.is_linear_format_) {
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
             context.context_->getBindingDimensions(binding_index), &dim_vec);
@@ -4012,5 +3874,194 @@ TRTv2Interface::SetCudaGraphShape(
 }
 
 #endif  // TRITON_ENABLE_CUDA_GRAPH
+
+bool
+TRTv1Interface::Enqueue(nvinfer1::IExecutionContext* context)
+{
+  return context->enqueue(
+              instance_->payload_->total_batch_size_,
+              instance_->buffer_bindings_[instance_->next_buffer_binding_set_].data(), instance_->stream_,
+              &instance_->events_[instance_->next_set_].ready_for_input_);
+}
+
+std::vector<int64_t>
+TRTv1Interface::GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index)
+{
+  const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
+  std::vector<int64_t> dim_vec;
+  DimsToDimVec(output_dim, &dim_vec);
+
+  std::vector<int64_t> dim_vec_with_mbs;
+  if (instance_->support_batching_) {
+    dim_vec_with_mbs.push_back(instance_->model_state_->MaxBatchSize());
+  }
+  dim_vec_with_mbs.insert(
+      dim_vec_with_mbs.end(), dim_vec.begin(), dim_vec.end());
+  return dim_vec_with_mbs;
+}
+
+TRITONSERVER_Error*
+TRTv1Interface::SetFormat(int binding_index, TensorFormat* format)
+{
+  format->is_linear_format_ =
+          (instance_->engine_->getBindingFormat(binding_index) ==
+           nvinfer1::TensorFormat::kLINEAR);
+  if (!format->is_linear_format_) {
+    format->vectorized_dim_ =
+        instance_->engine_->getBindingVectorizedDim(binding_index);
+    format->components_per_element_ =
+        instance_->engine_->getBindingComponentsPerElement(binding_index);
+    if (format->vectorized_dim_ == -1) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unexpected vectorized dim is -1 for non-linear "
+                        "tensor '") +
+            instance_->engine_->getBindingName(binding_index) + "' for " + instance_->Name())
+              .c_str());
+    }
+    // +1 for implicit batch dimension to take full shape dim as reference
+    if (instance_->support_batching_) {
+      format->vectorized_dim_++;
+    }
+  }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv1Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims)
+{
+  // Below is more of a sanity check, v1 only support fixed shape tensor so
+  // config shape must be exact match of engine shape
+  TRITONSERVER_Error* err = ValidateDimension(
+      full_config_dims, context->min_dims_[io_index],
+      context->max_dims_[io_index], instance_->support_batching_/* skip_first_dimension */);
+  if (err != nullptr) {
+    TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("model configuration specified invalid shape for "
+                      "input '") +
+          instance_->engine_->getBindingName(io_index) + "' for model " + instance_->model_state_->Name() +
+          ". Error details: " + TRITONSERVER_ErrorMessage(err))
+            .c_str());
+
+    TRITONSERVER_ErrorDelete(err);
+    return full_err;
+  }
+  *maximum_dims = full_config_dims;
+  return nullptr;
+}
+
+bool
+TRTv2Interface::Enqueue(nvinfer1::IExecutionContext* context)
+{
+  return context->enqueueV2(
+              instance_->buffer_bindings_[instance_->next_buffer_binding_set_].data(), instance_->stream_,
+              &instance_->events_[instance_->next_set_].ready_for_input_);
+}
+
+std::vector<int64_t>
+TRTv2Interface::GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index)
+{
+  const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
+  std::vector<int64_t> dim_vec;
+  DimsToDimVec(output_dim, &dim_vec);
+  return dim_vec;
+}
+
+TRITONSERVER_Error*
+TRTv2Interface::SetFormat(int binding_index, TensorFormat* format)
+{
+  format->is_linear_format_ =
+          (instance_->engine_->getBindingFormat(binding_index) ==
+           nvinfer1::TensorFormat::kLINEAR);
+  if (!format->is_linear_format_) {
+    format->vectorized_dim_ =
+        instance_->engine_->getBindingVectorizedDim(binding_index);
+    format->components_per_element_ =
+        instance_->engine_->getBindingComponentsPerElement(binding_index);
+    if (format->vectorized_dim_ == -1) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unexpected vectorized dim is -1 for non-linear "
+                        "tensor '") +
+            instance_->engine_->getBindingName(binding_index) + "' for " + instance_->Name())
+              .c_str());
+    }
+  }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims)
+{
+  // [WIP] v1 slightly different
+  TRITONSERVER_Error* err = ValidateDimension(
+      full_config_dims, context->min_dims_[io_index],
+      context->max_dims_[io_index], false /* skip_first_dimension */);
+  if (err != nullptr) {
+    TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("model configuration specified invalid shape for "
+                      "input '") +
+          instance_->engine_->getBindingName(io_index) + "' for model " + instance_->model_state_->Name() +
+          ". Error details: " + TRITONSERVER_ErrorMessage(err))
+            .c_str());
+
+    TRITONSERVER_ErrorDelete(err);
+    return full_err;
+  }
+
+  // Only "prune" maximum dims for the input given context max dim and
+  // config shape, user may provide fixed config value even for dynamic dim,
+  // to reduce the size of allocation.
+  RETURN_IF_ERROR(MaximumDims(
+      context->max_dims_[io_index], full_config_dims, maximum_dims));
+  DimVecToDims(*maximum_dims, &context->max_dims_[io_index]);
+
+  if (!context->context_->setBindingDimensions(
+          binding_index, context->max_dims_[io_index])) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("trt failed to set binding dimension to ") +
+          DimsDebugString(context->max_dims_[io_index]) + " for input '" +
+          instance_->engine_->getBindingName(io_index) + "' for " + instance_->Name())
+            .c_str());
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv2Interface::MaximumDims(
+    const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
+    std::vector<int64_t>* max_dims)
+{
+  if (max_profile_dims.nbDims != (int32_t)dims.size()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("can not maximize dimension ") +
+         backend::ShapeToString(dims) + " to " +
+         DimsDebugString(max_profile_dims) + " due to  incompatibility.")
+            .c_str());
+  }
+
+  for (uint64_t i = 0; i < dims.size(); ++i) {
+    if (dims[i] == WILDCARD_DIM) {
+      max_dims->emplace_back(max_profile_dims.d[i]);
+    } else {
+      if (dims[i] <= max_profile_dims.d[i]) {
+        max_dims->emplace_back(dims[i]);
+      } else {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string("can not maximize dimension ") +
+             backend::ShapeToString(dims) + " to " +
+             DimsDebugString(max_profile_dims) + " due to incompatibility.")
+                .c_str());
+      }
+    }
+  }
+  return nullptr;
+}
 
 }}}  // namespace triton::backend::tensorrt

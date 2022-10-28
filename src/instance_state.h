@@ -84,6 +84,16 @@ struct TensorRTContext {
   // that uniqueness is guaranteed and the CUDA graphs are sorted to
   // provide convinence to find the closest CUDA graph in the
   // future.
+  //
+  // vector is used to map index of event sets to corresponding
+  // collection.
+  // [FIXME] need to be careful in the case of having multiple sets of
+  // binding buffer, see BuildCudaGraph that in such a case
+  // (num_copy_streams_ != 1), the index of binding set is tied to the same
+  // value for index of event set. This is fine for now as there is at most
+  // 2 sets of bindings (the same as number of event sets), but wrong CUDA graph
+  // may be used if we change to mismatching number such that the assumption
+  // fails.
   std::vector<std::map<std::vector<int64_t>, CudaGraph>> cuda_graph_execs_;
 
   // Min Dimensions per bindings
@@ -122,11 +132,36 @@ struct GraphSpec {
   bool captured_;
 };
 
+struct TensorFormat {
+  TensorFormat() : is_linear_format_(true), vectorized_dim_(-1), components_per_element_(1)  {}
+  bool is_linear_format_;
+  int vectorized_dim_;
+  int components_per_element_;
+};
+
 // [WIP] temporary workaround to separate TRT v1 and TRT v3 usage
 // in polymorphic style
 class TRTInterface {
  public:
   TRTInterface(ModelInstanceState* i) : instance_(i) {}
+  // [WIP] revisit below
+  // NOTE: before calling this function, members of 'instance_' must be properly
+  // set for all variants of IExecutionContext::enqueue().
+  virtual bool Enqueue(nvinfer1::IExecutionContext* context) = 0;
+
+  // [FIXME] this workaround shouldn't be needed if the key always contains
+  // full shape
+  virtual bool AddShapeToCudaGraphKey() = 0;
+
+  // Return the full shape of the binding, batch dimension will be included
+  virtual std::vector<int64_t> GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index) = 0;
+
+  virtual TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) = 0;
+
+  // [WIP] execution? shape? -> should be the same with v3
+  // get max input shape needed for the binding buffer of the given TensorRTContext (optimization profile)
+  // member of 'context' may be updated
+  virtual TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims) = 0;
  protected:
   ModelInstanceState* instance_;
 
@@ -140,6 +175,11 @@ class TRTInterface {
 class TRTv1Interface : public TRTInterface {
  public:
   TRTv1Interface(ModelInstanceState* i) : TRTInterface(i) {}
+  bool Enqueue(nvinfer1::IExecutionContext* context) override;
+  bool AddShapeToCudaGraphKey() override { return false; }
+  std::vector<int64_t> GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
+  TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
+  TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims) override;
 #ifdef TRITON_ENABLE_CUDA_GRAPH
  public:
   bool BuildCudaGraph(
@@ -150,7 +190,15 @@ class TRTv1Interface : public TRTInterface {
 class TRTv2Interface : public TRTInterface {
  public:
   TRTv2Interface(ModelInstanceState* i) : TRTInterface(i) {}
-
+  bool Enqueue(nvinfer1::IExecutionContext* context) override;
+  bool AddShapeToCudaGraphKey() override { return true; }
+  std::vector<int64_t> GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
+  TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
+  TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims) override;
+ private:
+  TRITONSERVER_Error* MaximumDims(
+    const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
+    std::vector<int64_t>* max_dims);
 #ifdef TRITON_ENABLE_CUDA_GRAPH
  public:
   bool BuildCudaGraph(
@@ -409,8 +457,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     IOBindingInfo()
         : byte_size_(0), buffer_(nullptr), device_buffer_(nullptr),
           memory_type_(TRITONSERVER_MEMORY_GPU), memory_type_id_(0),
-          buffer_is_ragged_(false), is_linear_format_(true),
-          vectorized_dim_(-1), components_per_element_(1),
+          buffer_is_ragged_(false), format_(),
           is_state_output_(false), is_requested_output_tensor_(false)
     {
     }
@@ -420,9 +467,8 @@ class ModelInstanceState : public TensorRTModelInstance {
     TRITONSERVER_MemoryType memory_type_;
     int64_t memory_type_id_;
     bool buffer_is_ragged_;
-    bool is_linear_format_;
-    int vectorized_dim_;
-    int components_per_element_;
+    // Meta data for reformat-free I/O
+    TensorFormat format_;
     const BatchOutput* batch_output_;
     // Instructions on constructing the batch input and the CPU buffer
     // for storing mutable data
