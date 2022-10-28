@@ -643,7 +643,7 @@ ModelInstanceState::Run(
           "error getting the batch input shape");
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
-          SetBindingDimensions(
+          interface_->SetBindingDimensions(
               name, shape, citr->second, io_index, binding_index, &input_dims),
           "error setting the binding dimension");
 
@@ -708,7 +708,7 @@ ModelInstanceState::Run(
 
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
-          SetBindingDimensions(
+          interface_->SetBindingDimensions(
               name, ragged_shape, citr->second, io_index, binding_index,
               &input_dims),
           "error setting the binding dimension");
@@ -763,7 +763,7 @@ ModelInstanceState::Run(
       if (!engine_->isShapeBinding(binding_index)) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
-            SetBindingDimensions(
+            interface_->SetBindingDimensions(
                 name, batchn_shape, citr->second, io_index, binding_index,
                 &input_dims),
             "error setting the binding dimension");
@@ -843,7 +843,7 @@ ModelInstanceState::Run(
       }
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
-          SetBindingDimensions(
+          interface_->SetBindingDimensions(
               "CUDA graph input", cuda_graph->input_dims_[input_idx],
               citr->second, io_index, binding_index, nullptr),
           "error setting the binding dimension");
@@ -1205,60 +1205,6 @@ ModelInstanceState::Run(
       }
     }
   }
-}
-
-TRITONSERVER_Error*
-ModelInstanceState::SetBindingDimensions(
-    const std::string& input_name, const std::vector<int64_t>& shape,
-    const TensorRTContext& trt_context, const size_t io_index,
-    const size_t binding_index, std::vector<int64_t>* input_dims)
-{
-  if (interface_->AddShapeToCudaGraphKey() && (input_dims != nullptr)) {
-    input_dims->insert(input_dims->end(), shape.begin(), shape.end());
-  }
-
-  // [WIP] can this check be moved to here?
-  if (!trt_context.is_dynamic_per_binding_[io_index]) {
-    // No need to set dimension for the binding that does not inlcude
-    // dynamic shape.
-    return nullptr;
-  }
-
-  nvinfer1::Dims this_dim;
-  // Set the binding dimension so that output dimensions can be
-  // obtained
-  if (!DimVecToDims(shape, &this_dim)) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("failed to create dims object for ") +
-         ShapeToString(shape) + " for input '" + input_name + "' for " + name_ +
-         ".")
-            .c_str());
-  }
-  TRITONSERVER_Error* err = ValidateDimension(
-      this_dim, trt_context.min_dims_[io_index],
-      trt_context.max_dims_[io_index]);
-  if (err != nullptr) {
-    TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("request specifies invalid shape for input '") +
-         input_name + "' for " + name_ +
-         ". Error details: " + TRITONSERVER_ErrorMessage(err))
-            .c_str());
-    TRITONSERVER_ErrorDelete(err);
-    return full_err;
-  }
-
-  if (!trt_context.context_->setBindingDimensions(binding_index, this_dim)) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("trt failed to set binding dimension to ") +
-         DimsDebugString(this_dim) + " for input '" + input_name + "' for " +
-         Name())
-            .c_str());
-  }
-
-  return nullptr;
 }
 
 bool
@@ -2780,11 +2726,18 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
     std::vector<int64_t> full_config_dim;
     // if ragged, full shape is defined to be [-1]
-    // if batch input, "config shape" has been populated in 'input_dims'
     if (is_ragged) {
       // [WIP] does with max batch size work well here?
       full_config_dim = {-1};
-    } else {
+    } else if (io_binding_info.batch_input_ != nullptr) {
+      // if batch input, "config shape" has been populated in 'input_dims',
+      // but if batching is supported, batch dimension doesn't necessary limited
+      // by config max batch size
+      RETURN_IF_ERROR(DimsJsonToDimVec(input_dims, &full_config_dim));
+      if (model_state_->MaxBatchSize() > 0) {
+        full_config_dim.insert(full_config_dim.begin(), -1);
+      }
+    }else {
       RETURN_IF_ERROR(DimsJsonToDimVec(input_dims, &full_config_dim));
       if (model_state_->MaxBatchSize() > 0) {
         full_config_dim.insert(full_config_dim.begin(), model_state_->MaxBatchSize());
@@ -3928,7 +3881,7 @@ TRTv1Interface::SetFormat(int binding_index, TensorFormat* format)
 }
 
 TRITONSERVER_Error*
-TRTv1Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims)
+TRTv1Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
 {
   // Below is more of a sanity check, v1 only support fixed shape tensor so
   // config shape must be exact match of engine shape
@@ -3948,6 +3901,18 @@ TRTv1Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index,
     return full_err;
   }
   *maximum_dims = full_config_dims;
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv1Interface::SetBindingDimensions(
+    const std::string& input_name, const std::vector<int64_t>& shape,
+    const TensorRTContext& trt_context, const size_t io_index,
+    const size_t binding_index, std::vector<int64_t>* cuda_graph_key)
+{
+  // NO-OP, v1 engine doesn't support dynamic shape, so input shape won't
+  // need to be set at runtime, for the same reason 'cuda_graph_key' won't
+  // be changed at runtime as long as the batch size has set.
   return nullptr;
 }
 
@@ -3992,8 +3957,15 @@ TRTv2Interface::SetFormat(int binding_index, TensorFormat* format)
 }
 
 TRITONSERVER_Error*
-TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, const std::vector<int64_t>& full_config_dims, std::vector<int64_t>* maximum_dims)
+TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
 {
+  // [FIXME] WAR: max batch size needs to be special handled as it is really
+  // a dynamic shape, setting it to fixed value will interfere with below
+  // dimension checkings
+  const auto batch_dim = full_config_dims[0];
+  if (instance_->support_batching_) {
+    full_config_dims[0] = -1;
+  }
   // [WIP] v1 slightly different
   TRITONSERVER_Error* err = ValidateDimension(
       full_config_dims, context->min_dims_[io_index],
@@ -4016,6 +3988,10 @@ TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index,
   // to reduce the size of allocation.
   RETURN_IF_ERROR(MaximumDims(
       context->max_dims_[io_index], full_config_dims, maximum_dims));
+  // WAR, see [FIXME] above
+  if (instance_->support_batching_ && (batch_dim != -1)) {
+    (*maximum_dims)[0] = std::min((*maximum_dims)[0], batch_dim);
+  }
   DimVecToDims(*maximum_dims, &context->max_dims_[io_index]);
 
   if (!context->context_->setBindingDimensions(
@@ -4061,6 +4037,59 @@ TRTv2Interface::MaximumDims(
       }
     }
   }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv2Interface::SetBindingDimensions(
+    const std::string& input_name, const std::vector<int64_t>& shape,
+    const TensorRTContext& trt_context, const size_t io_index,
+    const size_t binding_index, std::vector<int64_t>* cuda_graph_key)
+{
+  if (cuda_graph_key != nullptr) {
+    cuda_graph_key->insert(cuda_graph_key->end(), shape.begin(), shape.end());
+  }
+
+  nvinfer1::Dims this_dim;
+  // Set the binding dimension so that output dimensions can be
+  // obtained
+  if (!DimVecToDims(shape, &this_dim)) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("failed to create dims object for ") +
+         ShapeToString(shape) + " for input '" + input_name + "' for " + instance_->name_ +
+         ".")
+            .c_str());
+  }
+  TRITONSERVER_Error* err = ValidateDimension(
+      this_dim, trt_context.min_dims_[io_index],
+      trt_context.max_dims_[io_index]);
+  if (err != nullptr) {
+    TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("request specifies invalid shape for input '") +
+         input_name + "' for " + instance_->name_ +
+         ". Error details: " + TRITONSERVER_ErrorMessage(err))
+            .c_str());
+    TRITONSERVER_ErrorDelete(err);
+    return full_err;
+  }
+
+  if (!trt_context.is_dynamic_per_binding_[io_index]) {
+    // No need to set dimension for the binding that does not inlcude
+    // dynamic shape.
+    return nullptr;
+  }
+
+  if (!trt_context.context_->setBindingDimensions(binding_index, this_dim)) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("trt failed to set binding dimension to ") +
+         DimsDebugString(this_dim) + " for input '" + input_name + "' for " +
+         instance_->Name())
+            .c_str());
+  }
+
   return nullptr;
 }
 
