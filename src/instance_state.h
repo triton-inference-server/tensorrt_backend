@@ -139,14 +139,15 @@ struct TensorFormat {
   int components_per_element_;
 };
 
-// [WIP] temporary workaround to separate TRT v1 and TRT v3 usage
+// [DLIS-4283] temporary workaround to separate TRT v1 and TRT v2 usage
 // in polymorphic style
 class TRTInterface {
  public:
   TRTInterface(ModelInstanceState* i) : instance_(i) {}
-  // [WIP] revisit below
+
   // NOTE: before calling this function, members of 'instance_' must be properly
-  // set for all variants of IExecutionContext::enqueue().
+  // set for all variants of IExecutionContext::enqueue(), i.e. input shapes and
+  // I/O bindings
   virtual bool Enqueue(nvinfer1::IExecutionContext* context) = 0;
 
   // This function will be called to specify the runtime shape of the input and
@@ -157,13 +158,12 @@ class TRTInterface {
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key) = 0;
 
   // Return the full shape of the binding, batch dimension will be included
-  virtual std::vector<int64_t> GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index) = 0;
+  virtual std::vector<int64_t> GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index) = 0;
 
   virtual TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) = 0;
 
-  // [WIP] execution? shape? -> should be the same with v3
-  // get max input shape needed for the binding buffer of the given TensorRTContext (optimization profile)
-  // member of 'context' may be updated
+  // get max input shape of the binding buffer based on the given
+  // TensorRTContext (optimization profile),member of 'context' may be updated
   virtual TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) = 0;
  protected:
   ModelInstanceState* instance_;
@@ -183,7 +183,7 @@ class TRTv1Interface : public TRTInterface {
     const std::string& input_name, const std::vector<int64_t>& shape,
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key) override;
-  std::vector<int64_t> GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
+  std::vector<int64_t> GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
   TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
   TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
 #ifdef TRITON_ENABLE_CUDA_GRAPH
@@ -201,7 +201,7 @@ class TRTv2Interface : public TRTInterface {
     const std::string& input_name, const std::vector<int64_t>& shape,
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key) override;
-  std::vector<int64_t> GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
+  std::vector<int64_t> GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
   TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
   TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
  private:

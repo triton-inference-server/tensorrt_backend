@@ -153,22 +153,17 @@ ModelInstanceState::Create(
             "' for model instance '" + (*state)->Name() + "'");
   }
 
-  // [WIP] order matters?
   (*state)->RegisterSemaphore();
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
 
+  // Create TRT API interface once able to obtain implicit batch info,
+  // all TRT operations must be done after the interface is instantiated.
   if (UseTensorRTv1API((*state)->Engine())) {
-    std::cerr << "=====================================" << std::endl;
-    std::cerr << "use v1 API / implicit batch dimension" << std::endl;
-    std::cerr << "=====================================" << std::endl;
     (*state)->interface_.reset(new TRTv1Interface(*state));
   } else {
-    std::cerr << "=====================================" << std::endl;
-    std::cerr << "use v2 API / explicit batch dimension" << std::endl;
-    std::cerr << "=====================================" << std::endl;
     (*state)->interface_.reset(new TRTv2Interface(*state));
   }
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
@@ -827,7 +822,7 @@ ModelInstanceState::Run(
   bool found_exact = false;
   // FIXME closest_cuda_graph
   FindClosestCudaGraph(citr->second, input_dims, &cuda_graph, &found_exact);
-  // [WIP] should re-visit below...
+  // [DLIS-4283] should re-visit below...
   // is below even necessary if we are going to launch a CUDA graph?
   // regular input buffer has been filled and batch input buffer has been set,
   // unless the below is something that must be changed based on selected graph
@@ -926,8 +921,8 @@ ModelInstanceState::Run(
                   .c_str()),
           "failed to run TRT inference");
     }
-    // [FIXME] should not need this as TRT adopted the new CUDA graph
-    // API that exposed event activity
+    // [DLIS-4283] [FIXME] should not need this as TRT adopted the new CUDA
+    // graph API that exposed event activity
     // Event recorded during CUDA graph capture is not visible outside
     // of the graph, need to explicitly record it.
     cudaEventRecord(events_[next_set_].ready_for_input_, stream_);
@@ -2225,7 +2220,6 @@ ModelInstanceState::InitializeBatchInputBindings(
       TRITONSERVER_DataType tensor_datatype = batch_input.DataType();
       common::TritonJson::Value dims{
           triton::common::TritonJson::ValueType::ARRAY};
-      // [WIP] fix batch input shape generation
       // Different batch input expects different shape, note that
       // we are setting config input shape here so the batch dimension
       // is not included
@@ -2490,7 +2484,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      // [WIP] part of initializing binding (binding_info to be exact?)
+      // [DLIS-4283] Note that the initialize-binding functions are
+      // configuring the binding infos, may be group in separate class?
       RETURN_IF_ERROR(interface_->SetFormat(binding_index, &io_binding_info.format_));
 
       common::TritonJson::Value model_config_dims;
@@ -2725,9 +2720,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
     }
 
     std::vector<int64_t> full_config_dim;
-    // if ragged, full shape is defined to be [-1]
     if (is_ragged) {
-      // [WIP] does with max batch size work well here?
+      // if ragged, full shape is defined to be [-1]
       full_config_dim = {-1};
     } else if (io_binding_info.batch_input_ != nullptr) {
       // if batch input, "config shape" has been populated in 'input_dims',
@@ -2921,7 +2915,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    std::vector<int64_t> dim_vec = interface_->GetMaxFullBindingShape(context.context_.get(), binding_index);
+    std::vector<int64_t> dim_vec = interface_->GetFullDimensions(context.context_.get(), binding_index);
     int64_t byte_size = GetByteSize(dt, dim_vec);
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
@@ -3838,7 +3832,7 @@ TRTv1Interface::Enqueue(nvinfer1::IExecutionContext* context)
 }
 
 std::vector<int64_t>
-TRTv1Interface::GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index)
+TRTv1Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index)
 {
   const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
   std::vector<int64_t> dim_vec;
@@ -3884,7 +3878,9 @@ TRITONSERVER_Error*
 TRTv1Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
 {
   // Below is more of a sanity check, v1 only support fixed shape tensor so
-  // config shape must be exact match of engine shape
+  // config shape must be exact match of engine shape.
+
+  // v1 slightly different that TRT dim doesn't contain batch dimension
   TRITONSERVER_Error* err = ValidateDimension(
       full_config_dims, context->min_dims_[io_index],
       context->max_dims_[io_index], instance_->support_batching_/* skip_first_dimension */);
@@ -3925,7 +3921,7 @@ TRTv2Interface::Enqueue(nvinfer1::IExecutionContext* context)
 }
 
 std::vector<int64_t>
-TRTv2Interface::GetMaxFullBindingShape(nvinfer1::IExecutionContext* context, int32_t binding_index)
+TRTv2Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index)
 {
   const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
   std::vector<int64_t> dim_vec;
@@ -3966,7 +3962,6 @@ TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index,
   if (instance_->support_batching_) {
     full_config_dims[0] = -1;
   }
-  // [WIP] v1 slightly different
   TRITONSERVER_Error* err = ValidateDimension(
       full_config_dims, context->min_dims_[io_index],
       context->max_dims_[io_index], false /* skip_first_dimension */);
