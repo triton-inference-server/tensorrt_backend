@@ -244,7 +244,7 @@ class ModelState : public TensorRTModel {
   }
 
   // Testing, number of requests in execution among all model instances
-  std::atomic<int> requests_in_execution_{0};
+  // std::atomic<int> requests_in_execution_{0};
 
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
@@ -2413,12 +2413,12 @@ ModelInstanceState::Run(
     //     (std::string("Event passed to TRT: ") + event)
     //         .c_str());
     //TODO: Test passing in nullptr, then manually setting ready_for_input_ done when tensorrt done with execution
-    if(++model_state_->requests_in_execution_ > 2){
-      TRITONSERVER_LogMessage(
-            TRITONSERVER_LOG_ERROR, __FILE__, __LINE__,
-            (std::string("UNEXPECTED: Expected 2 or fewer requests in execution, got ") + std::to_string(model_state_->requests_in_execution_))
-                .c_str());
-    }
+    // if(++model_state_->requests_in_execution_ > 2){
+    //   TRITONSERVER_LogMessage(
+    //         TRITONSERVER_LOG_ERROR, __FILE__, __LINE__,
+    //         (std::string("UNEXPECTED: Expected 2 or fewer requests in execution, got ") + std::to_string(model_state_->requests_in_execution_))
+    //             .c_str());
+    // }
     if (UseTensorRTv2API(engine_)) {
       if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
@@ -2841,7 +2841,7 @@ ModelInstanceState::ProcessResponse()
     //     (std::string("[Output Ready] Waiting for... ") + event)
     //         .c_str());
     cudaEventSynchronize(event_set.output_ready_);
-    model_state_->requests_in_execution_--;
+    // model_state_->requests_in_execution_--;
     NVTX_MARKER("plan_output_ready");
 
     // Update the states
