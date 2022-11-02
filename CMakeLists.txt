@@ -97,8 +97,8 @@ endif() # TRITON_ENABLE_NVTX
 #
 # Address Sanitizer
 #
-add_compile_options(-O1 -g -fsanitize=thread -fno-omit-frame-pointer)
-add_link_options(-fsanitize=thread)
+# add_compile_options(-O1 -g -fsanitize=thread -fno-omit-frame-pointer)
+# add_link_options(-fsanitize=thread)
 
 #
 # Shared library implementing the Triton Backend API
