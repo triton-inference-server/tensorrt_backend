@@ -139,7 +139,7 @@ struct TensorFormat {
   int components_per_element_;
 };
 
-// [DLIS-4283] temporary workaround to separate TRT v1 and TRT v2 usage
+// [DLIS-4283] temporary workaround to separate TRT v1 and TRT v3 usage
 // in polymorphic style
 class TRTInterface {
  public:
@@ -193,9 +193,9 @@ class TRTv1Interface : public TRTInterface {
 #endif  // TRITON_ENABLE_CUDA_GRAPH
 };
 
-class TRTv2Interface : public TRTInterface {
+class TRTv3Interface : public TRTInterface {
  public:
-  TRTv2Interface(ModelInstanceState* i) : TRTInterface(i) {}
+  TRTv3Interface(ModelInstanceState* i) : TRTInterface(i) {}
   bool Enqueue(nvinfer1::IExecutionContext* context) override;
   TRITONSERVER_Error* SetBindingDimensions(
     const std::string& input_name, const std::vector<int64_t>& shape,
@@ -205,6 +205,11 @@ class TRTv2Interface : public TRTInterface {
   TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
   TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
  private:
+  // Helper function to be called in Enqueue(). In v3, the binding buffer is set
+  // in execution context instead of being provided on enqueue, so in the case
+  // where different buffers are used alternatively in execution, we need to set
+  // tensor address to proper buffers.
+  bool SetTensorAddress(nvinfer1::IExecutionContext* context);
   TRITONSERVER_Error* MaximumDims(
     const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
     std::vector<int64_t>* max_dims);
@@ -258,7 +263,7 @@ class ModelInstanceState : public TensorRTModelInstance {
 
  protected:
   friend class TRTv1Interface;
-  friend class TRTv2Interface;
+  friend class TRTv3Interface;
 
   ModelInstanceState(
       ModelState* model_state,
@@ -466,7 +471,12 @@ class ModelInstanceState : public TensorRTModelInstance {
           is_state_output_(false), is_requested_output_tensor_(false)
     {
     }
+    std::string name_;
     uint64_t byte_size_;
+    // [WIP] Make it clear that 'buffer_' is what we operate on,
+    // 'device_buffer_' is just extra wrapper used only on TRT enqueue,
+    // i.e. WAR for Jetson "zero-copy" where 'buffer_' is actually on host
+    // while TRT expect device pointer.
     void* buffer_;
     void* device_buffer_;
     TRITONSERVER_MemoryType memory_type_;
@@ -498,6 +508,9 @@ class ModelInstanceState : public TensorRTModelInstance {
   // elements for copy stream.
   std::vector<std::vector<IOBindingInfo>> io_binding_infos_;
 
+  // [DLIS-4283] no longer needed for v3, but v1 still needs it. Should
+  // encapsulate to v1 specific handling and gradually remove it from regular
+  // workflow.
   // The pointer to the CUDA buffer for each binding index of the
   // TensorRT engine. This is used to match the TensorRT context
   // execution declaration while minimizing memory allocation. The

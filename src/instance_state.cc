@@ -164,7 +164,7 @@ ModelInstanceState::Create(
   if (UseTensorRTv1API((*state)->Engine())) {
     (*state)->interface_.reset(new TRTv1Interface(*state));
   } else {
-    (*state)->interface_.reset(new TRTv2Interface(*state));
+    (*state)->interface_.reset(new TRTv3Interface(*state));
   }
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
@@ -2334,6 +2334,7 @@ ModelInstanceState::InitializeBatchInputBindings(
       int io_index = engine_->getBindingIndex(tensor_name.c_str());
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
+      io_binding_info.name_ = tensor_name;
       // Special handling hint for InitializeExecuteInputBinding()
       io_binding_info.batch_input_.reset(
           new BatchInputData(batch_input, nullptr));
@@ -2378,6 +2379,7 @@ ModelInstanceState::InitializeBatchOutputBindings(
       int io_index = engine_->getBindingIndex(name.c_str());
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
+      io_binding_info.name_ = name;
       if (engine_->isShapeBinding(io_index)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
@@ -2431,6 +2433,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     int io_index = engine_->getBindingIndex(io_name.c_str());
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
+    io_binding_info.name_ = io_name;
     for (auto& trt_context : trt_contexts_) {
       auto& profile_index = trt_context.first;
       auto& context = trt_context.second;
@@ -2617,6 +2620,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
   int64_t max_byte_size = 0;
   int io_index = engine_->getBindingIndex(input_name.c_str());
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  io_binding_info.name_ = input_name;
 
   if ((io_binding_info.buffer_ != nullptr) && is_state) {
     // The input bindings for the given state input is already allocated,
@@ -2840,6 +2844,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   int io_index = engine_->getBindingIndex(output_name.c_str());
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  io_binding_info.name_ = output_name;
 
   // State output is initialized before the requested output tensor.
   if (is_state) {
@@ -3001,6 +3006,7 @@ ModelInstanceState::InitializeShapeInputBinding(
   int io_index = engine_->getBindingIndex(input_name.c_str());
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  io_binding_info.name_ = input_name;
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
@@ -3085,6 +3091,10 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
         binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
+    // [WIP] on initialization, seems to be more consistent to copy the
+    // max shape to the actual preallocated buffer for shape tensor.
+    // [FIXME] resolve how the shape tensor buffer is used (currently it seems
+    // like allocating inflight during Run()? Shouldn't be handled this way?)
     if (!context.context_->setInputShapeBinding(
             binding_index, context.max_shapes_[io_index])) {
       return TRITONSERVER_ErrorNew(
@@ -3591,7 +3601,7 @@ TRTv1Interface::BuildCudaGraph(
 }
 
 bool
-TRTv2Interface::BuildCudaGraph(
+TRTv3Interface::BuildCudaGraph(
     TensorRTContext* trt_context, const GraphSpec& graph_spec)
 {
   // FIXME handle shape tensor properly, for now if model uses shape
@@ -3622,11 +3632,21 @@ TRTv2Interface::BuildCudaGraph(
     return false;
   }
 
+  // [DLIS-4283] keeping current event / buffer idx for later recovery,
+  // however do we need to restore them?
+  int curr_buffer_binding_set = instance_->next_buffer_binding_set_;
+  size_t curr_event_set_idx = instance_->next_set_;
+
   // Enqueue to TRT to setup resources properly BEFORE capturing CUDA
-  // graph
+  // graph, so there hasn't been association with input consumed event yet.
+  // [DLIS-4283] shouldn't need to repeat for all sets of bindings, reason
+  // being that the resource setup is more likely to be related to the execution
+  // context and not the binding buffers
   for (int s = 0; s < instance_->num_copy_streams_; s++) {
-    if (!trt_context->context_->enqueueV2(
-            instance_->buffer_bindings_[s].data(), instance_->CudaStream(), nullptr)) {
+    // Use helper function to setTensorAddress if different buffer binding
+    // should be used.
+    instance_->next_buffer_binding_set_ = s;
+    if (!Enqueue(trt_context->context_.get())) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("unable to record CUDA graph for ") + instance_->Name()).c_str());
@@ -3639,7 +3659,8 @@ TRTv2Interface::BuildCudaGraph(
 
   for (int set_idx = 0; set_idx < EVENT_SET_COUNT; set_idx++) {
     cudaGraph_t graph;
-    int buffer_bindings_index = instance_->num_copy_streams_ == 1 ? 0 : set_idx;
+    instance_->next_buffer_binding_set_ = instance_->num_copy_streams_ == 1 ? 0 : set_idx;
+    instance_->next_set_ = set_idx;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph capture
     // to this thread and avoid interference from other potentially unsafe cuda
     // calls.
@@ -3654,9 +3675,7 @@ TRTv2Interface::BuildCudaGraph(
       captured = false;
     } else {
       auto context = trt_context->context_;
-      if (!context->enqueueV2(
-              instance_->buffer_bindings_[buffer_bindings_index].data(), instance_->CudaStream(),
-              &instance_->events_[set_idx].ready_for_input_)) {
+      if (!Enqueue(context.get())) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
             (std::string("unable to record CUDA graph for ") + instance_->Name()).c_str());
@@ -3721,6 +3740,8 @@ TRTv2Interface::BuildCudaGraph(
       }
     }
   }
+  instance_->next_buffer_binding_set_ = curr_buffer_binding_set;
+  instance_->next_set_ = curr_event_set_idx;
 
   if (captured) {
     LOG_MESSAGE(
@@ -3734,7 +3755,7 @@ TRTv2Interface::BuildCudaGraph(
 }
 
 TRITONSERVER_Error*
-TRTv2Interface::SetCudaGraphShape(
+TRTv3Interface::SetCudaGraphShape(
     TensorRTContext* trt_context, const GraphSpec& graph_spec,
     std::vector<int64_t>* cuda_graph_key,
     TensorRTContext::CudaGraph* cuda_graph)
@@ -3913,15 +3934,31 @@ TRTv1Interface::SetBindingDimensions(
 }
 
 bool
-TRTv2Interface::Enqueue(nvinfer1::IExecutionContext* context)
+TRTv3Interface::Enqueue(nvinfer1::IExecutionContext* context)
 {
-  return context->enqueueV2(
-              instance_->buffer_bindings_[instance_->next_buffer_binding_set_].data(), instance_->stream_,
-              &instance_->events_[instance_->next_set_].ready_for_input_);
+  if (SetTensorAddress(context)) {
+    if (context->setInputConsumedEvent(instance_->events_[instance_->next_set_].ready_for_input_)) {
+      return context->enqueueV3(instance_->stream_);
+    }
+  }
+  return false;
+}
+
+bool
+TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
+{
+  const auto& io_binding_info = instance_->io_binding_infos_[instance_->next_buffer_binding_set_];
+  for (const auto& info : io_binding_info) {
+    // [FIXME] set things for shape tensor properly
+    if (!context->setTensorAddress(info.name_.c_str(), info.device_buffer_)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 std::vector<int64_t>
-TRTv2Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index)
+TRTv3Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index)
 {
   const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
   std::vector<int64_t> dim_vec;
@@ -3930,7 +3967,7 @@ TRTv2Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t 
 }
 
 TRITONSERVER_Error*
-TRTv2Interface::SetFormat(int binding_index, TensorFormat* format)
+TRTv3Interface::SetFormat(int binding_index, TensorFormat* format)
 {
   format->is_linear_format_ =
           (instance_->engine_->getBindingFormat(binding_index) ==
@@ -3953,7 +3990,7 @@ TRTv2Interface::SetFormat(int binding_index, TensorFormat* format)
 }
 
 TRITONSERVER_Error*
-TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
+TRTv3Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
 {
   // [FIXME] WAR: max batch size needs to be special handled as it is really
   // a dynamic shape, setting it to fixed value will interfere with below
@@ -4003,7 +4040,7 @@ TRTv2Interface::ConfigureInputDimensions(TensorRTContext* context, int io_index,
 }
 
 TRITONSERVER_Error*
-TRTv2Interface::MaximumDims(
+TRTv3Interface::MaximumDims(
     const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
     std::vector<int64_t>* max_dims)
 {
@@ -4036,7 +4073,7 @@ TRTv2Interface::MaximumDims(
 }
 
 TRITONSERVER_Error*
-TRTv2Interface::SetBindingDimensions(
+TRTv3Interface::SetBindingDimensions(
     const std::string& input_name, const std::vector<int64_t>& shape,
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key)
