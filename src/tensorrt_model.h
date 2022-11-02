@@ -43,6 +43,7 @@ class TensorRTModel : public BackendModel {
 
   enum Priority { DEFAULT = 0, MIN = 1, MAX = 2 };
   Priority ModelPriority() { return priority_; }
+  int GetCudaStreamPriority();
   bool UseCudaGraphs() { return use_cuda_graphs_; }
   size_t GatherKernelBufferThreshold()
   {

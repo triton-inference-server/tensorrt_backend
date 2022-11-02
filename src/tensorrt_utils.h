@@ -35,7 +35,7 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-bool UseTensorRTv2API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine);
+bool UseTensorRTv1API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine);
 
 TRITONSERVER_Error* GetProfileIndex(
     const std::string& profile_name, int* profile_index);
@@ -53,8 +53,10 @@ bool CompareDims(const nvinfer1::Dims& ldims, const nvinfer1::Dims& rdims);
 
 TRITONSERVER_Error* ValidateDimension(
     const nvinfer1::Dims& this_dims, const nvinfer1::Dims& min_dims,
-    const nvinfer1::Dims& max_dims, const bool skip_first_dimension);
+    const nvinfer1::Dims& max_dims);
 
+// 'skip_first_dimension' should be set to true if the model has implicit batch
+// dimension as 'this_dims' should be the full shape (contains batch dimension).
 template <typename T>
 TRITONSERVER_Error* ValidateDimension(
     const T& this_dims, const nvinfer1::Dims& min_dims,
@@ -85,11 +87,6 @@ TRITONSERVER_Error* ValidateShapeValues(
     const int32_t* min_shape_values, const int32_t* max_shape_values,
     size_t nb_shape_values, const bool support_batching);
 
-TRITONSERVER_Error* MaximumDims(
-    const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
-    const bool support_batching, const int max_batch_size,
-    std::vector<int64_t>* maximum_dims);
-
 void DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims);
 
 TRITONSERVER_Error* DimsJsonToDimVec(
@@ -106,6 +103,10 @@ bool ContainsWildcardAtExplicitBatchDim(const nvinfer1::Dims& dims);
 const std::string DimsDebugString(const nvinfer1::Dims& dims);
 
 const std::string DimsJsonToString(common::TritonJson::Value& dims);
+
+TRITONSERVER_Error*
+SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support);
+
 //
 // Templates
 //
@@ -117,29 +118,29 @@ ValidateDimension(
     const nvinfer1::Dims& max_dims, const bool skip_first_dimension)
 {
   const int nonbatch_start_idx = (skip_first_dimension ? 1 : 0);
-  if (int(this_dims.size() + nonbatch_start_idx) != max_dims.nbDims) {
+  if (int(this_dims.size()) != (max_dims.nbDims + nonbatch_start_idx)) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INVALID_ARG,
         (std::string("model expected ") +
-         std::to_string(max_dims.nbDims - nonbatch_start_idx) +
+         std::to_string(max_dims.nbDims + nonbatch_start_idx) +
          " dimensions but received " + std::to_string(this_dims.size()) +
          " dimensions")
             .c_str());
   }
 
-  for (int i = 0; i < int(this_dims.size()); i++) {
+  for (int i = 0; i < max_dims.nbDims; i++) {
     if (this_dims[i] == -1) {
       continue;
     }
-    if (this_dims[i] < min_dims.d[i + nonbatch_start_idx] ||
-        this_dims[i] > max_dims.d[i + nonbatch_start_idx]) {
+    if (this_dims[i + nonbatch_start_idx] < min_dims.d[i] ||
+        this_dims[i + nonbatch_start_idx] > max_dims.d[i]) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("model expected the shape of dimension ") +
-           std::to_string(i) + " to be between " +
-           std::to_string(min_dims.d[i + nonbatch_start_idx]) + " and " +
-           std::to_string(max_dims.d[i + nonbatch_start_idx]) +
-           " but received " + std::to_string(this_dims[i]))
+           std::to_string(i + nonbatch_start_idx) + " to be between " +
+           std::to_string(min_dims.d[i]) + " and " +
+           std::to_string(max_dims.d[i]) +
+           " but received " + std::to_string(this_dims[i + nonbatch_start_idx]))
               .c_str());
     }
   }

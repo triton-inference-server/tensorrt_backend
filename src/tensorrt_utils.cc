@@ -81,13 +81,11 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
 }
 
 bool
-UseTensorRTv2API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine)
+UseTensorRTv1API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine)
 {
-  // In order to use TensorRT V2 API, engine must contain
-  // an explicit batch dimension. Detecting the presence of
-  // an implicit batch dimension to detect whether or not
-  // to use the TensorRT V2 API.
-  return !engine->hasImplicitBatchDimension();
+  // If the engine still uses implicit batch dimension (deprecated),
+  // TensorRT V1 API must be used to serve the model.
+  return engine->hasImplicitBatchDimension();
 }
 
 TRITONSERVER_Error*
@@ -317,72 +315,29 @@ CompareShapeDimsSupported(
 }
 
 TRITONSERVER_Error*
-MaximumDims(
-    const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
-    const bool support_batching, const int max_batch_size,
-    std::vector<int64_t>* max_dims)
-{
-  const int nonbatch_start_idx = (support_batching ? 1 : 0);
-  if (max_profile_dims.nbDims != (int32_t)(dims.size() + nonbatch_start_idx)) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        (std::string("can not maximize dimension ") +
-         backend::ShapeToString(dims) + " to " +
-         DimsDebugString(max_profile_dims) + " due to  incompatibility.")
-            .c_str());
-  }
-
-  if (support_batching) {
-    int this_batch_size = max_batch_size > max_profile_dims.d[0]
-                              ? max_profile_dims.d[0]
-                              : max_batch_size;
-    max_dims->emplace_back(this_batch_size);
-  }
-
-  for (uint64_t i = 0; i < dims.size(); ++i) {
-    if (dims[i] == WILDCARD_DIM) {
-      max_dims->emplace_back(max_profile_dims.d[i + nonbatch_start_idx]);
-    } else {
-      if (dims[i] <= max_profile_dims.d[i + nonbatch_start_idx]) {
-        max_dims->emplace_back(dims[i]);
-      } else {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("can not maximize dimension ") +
-             backend::ShapeToString(dims) + " to " +
-             DimsDebugString(max_profile_dims) + " due to incompatibility.")
-                .c_str());
-      }
-    }
-  }
-  return nullptr;
-}
-
-TRITONSERVER_Error*
 ValidateDimension(
     const nvinfer1::Dims& this_dims, const nvinfer1::Dims& min_dims,
-    const nvinfer1::Dims& max_dims, const bool skip_first_dimension)
+    const nvinfer1::Dims& max_dims)
 {
-  const int nonbatch_start_idx = (skip_first_dimension ? 1 : 0);
-  if ((this_dims.nbDims + nonbatch_start_idx) != max_dims.nbDims) {
+  if ((this_dims.nbDims) != max_dims.nbDims) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("model expected ") +
-         std::to_string(max_dims.nbDims - nonbatch_start_idx) +
+         std::to_string(max_dims.nbDims) +
          " dimensions but received " + std::to_string(this_dims.nbDims) +
          " dimensions")
             .c_str());
   }
 
   for (int i = 0; i < this_dims.nbDims; i++) {
-    if (this_dims.d[i] < min_dims.d[i + nonbatch_start_idx] ||
-        this_dims.d[i] > max_dims.d[i + nonbatch_start_idx]) {
+    if (this_dims.d[i] < min_dims.d[i] ||
+        this_dims.d[i] > max_dims.d[i]) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("model expected the shape of dimension ") +
            std::to_string(i) + " to be between " +
-           std::to_string(min_dims.d[i + nonbatch_start_idx]) + " and " +
-           std::to_string(max_dims.d[i + nonbatch_start_idx]) +
+           std::to_string(min_dims.d[i]) + " and " +
+           std::to_string(max_dims.d[i]) +
            " but received " + std::to_string(this_dims.d[i]))
               .c_str());
     }
@@ -534,6 +489,31 @@ DimsJsonToString(common::TritonJson::Value& dims)
     return std::string("UNPARSABLE");
   }
   return ShapeToString(dims_vec);
+}
+
+TRITONSERVER_Error*
+SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
+{
+  // Query the device to check if integrated
+  cudaDeviceProp cuprops;
+  cudaError_t cuerr = cudaGetDeviceProperties(&cuprops, gpu_id);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to get CUDA device properties for GPU ID") +
+         std::to_string(gpu_id) + ": " + cudaGetErrorString(cuerr))
+            .c_str());
+  }
+
+  // Zero-copy supported only on integrated GPU when it can map host
+  // memory
+  if (cuprops.integrated && cuprops.canMapHostMemory) {
+    *zero_copy_support = true;
+  } else {
+    *zero_copy_support = false;
+  }
+
+  return nullptr;
 }
 
 }}}  // namespace triton::backend::tensorrt

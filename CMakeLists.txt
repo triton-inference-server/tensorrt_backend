@@ -102,8 +102,10 @@ configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYO
 add_library(
   triton-tensorrt-backend SHARED
   src/tensorrt.cc
+  src/model_state.cc
   src/tensorrt_model.cc
   src/tensorrt_model.h
+  src/instance_state.cc
   src/tensorrt_model_instance.cc
   src/tensorrt_model_instance.h
   src/tensorrt_utils.cc
