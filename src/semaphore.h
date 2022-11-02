@@ -35,8 +35,10 @@ class Semaphore {
 
   void Release()
   {
-    std::unique_lock<std::mutex> lck(mtx_);
-    count_++;
+    {
+      std::unique_lock<std::mutex> lck(mtx_);
+      count_++;
+    }
     cv_.notify_one();
   }
 
