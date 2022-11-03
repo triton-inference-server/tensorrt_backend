@@ -162,8 +162,13 @@ ModelInstanceState::Create(
   // Create TRT API interface once able to obtain implicit batch info,
   // all TRT operations must be done after the interface is instantiated.
   if (UseTensorRTv1API((*state)->Engine())) {
+    std::cerr << "==================================================" << std::endl;
+    std::cerr << "V1" << std::endl;
     (*state)->interface_.reset(new TRTv1Interface(*state));
   } else {
+    std::cerr << "==================================================" << std::endl;
+    std::cerr << "V3" << std::endl;
+    std::cerr << "==================================================" << std::endl;
     (*state)->interface_.reset(new TRTv3Interface(*state));
   }
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
@@ -613,13 +618,19 @@ ModelInstanceState::Run(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             err, "invalid shape values encountered for shape inputs");
       } else {
+        // [FIXME] formalize it
+        memcpy(io_binding_info.buffer_, &(it->second[0]), sizeof(int32_t) * it->second.size());
+        citr->second.context_->setInputTensorAddress(
+            name.c_str(), io_binding_info.buffer_);
+        // [FIXME] should be replaced by above, see another use of
+        // setInputShapeBinding for detail
         citr->second.context_->setInputShapeBinding(
-            binding_index, &(it->second[0]));
+            binding_index, reinterpret_cast<int32_t*>(io_binding_info.buffer_));
       }
     }
 
-    // Skip the upcoming section if not an execution tensor
-    if (!engine_->isExecutionBinding(binding_index)) {
+    // Skip the upcoming section if it is a shape tensor
+    if (engine_->isShapeInferenceIO(name.c_str())) {
       continue;
     }
 
@@ -775,38 +786,39 @@ ModelInstanceState::Run(
         total_byte_size = GetByteSize(datatype, batchn_shape);
       }
 
-      if ((engine_->isShapeBinding(binding_index)) && (support_batching_)) {
-        // Set the first 4 bytes to the shape value representing the
-        // batch size.
-        bool cuda_used = false;
-        FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            CopyBuffer(
-                name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
-                io_binding_info.memory_type_id_, sizeof(int32_t),
-                (void*)&payload_->total_batch_size_,
-                static_cast<char*>(io_binding_info.buffer_), input_copy_stream_,
-                &cuda_used),
-            "error input data for the batch");
+      // [WIP] shouldn't need to copy explicitly
+      // if ((engine_->isShapeBinding(binding_index)) && (support_batching_)) {
+      //   // Set the first 4 bytes to the shape value representing the
+      //   // batch size.
+      //   bool cuda_used = false;
+      //   FAIL_ALL_AND_RETURN_IF_ERROR(
+      //       payload_->requests_, payload_->request_count_, payload_->responses_,
+      //       CopyBuffer(
+      //           name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
+      //           io_binding_info.memory_type_id_, sizeof(int32_t),
+      //           (void*)&payload_->total_batch_size_,
+      //           static_cast<char*>(io_binding_info.buffer_), input_copy_stream_,
+      //           &cuda_used),
+      //       "error input data for the batch");
 
-        // Copy rest of the shape values to the buffer.
-        FAIL_ALL_AND_RETURN_IF_ERROR(
-            payload_->requests_, payload_->request_count_, payload_->responses_,
-            CopyBuffer(
-                name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
-                io_binding_info.memory_type_id_,
-                (request_shape_values[io_index].size() - 1) * sizeof(int32_t),
-                (void*)(&request_shape_values[io_index] + 1),
-                (static_cast<char*>(io_binding_info.buffer_) + sizeof(int32_t)),
-                input_copy_stream_, &cuda_used),
-            "error input data for the batch");
+      //   // Copy rest of the shape values to the buffer.
+      //   FAIL_ALL_AND_RETURN_IF_ERROR(
+      //       payload_->requests_, payload_->request_count_, payload_->responses_,
+      //       CopyBuffer(
+      //           name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
+      //           io_binding_info.memory_type_id_,
+      //           (request_shape_values[io_index].size() - 1) * sizeof(int32_t),
+      //           (void*)(&request_shape_values[io_index] + 1),
+      //           (static_cast<char*>(io_binding_info.buffer_) + sizeof(int32_t)),
+      //           input_copy_stream_, &cuda_used),
+      //       "error input data for the batch");
 
-      } else {
+      // } else {
         payload_->collector_->ProcessTensor(
             name.c_str(), static_cast<char*>(io_binding_info.buffer_),
             total_byte_size, io_binding_info.memory_type_,
             io_binding_info.memory_type_id_);
-      }
+      // }
     }
   }
   payload_->collector_->Finalize();
@@ -898,6 +910,13 @@ ModelInstanceState::Run(
   if (model_state_->SeparateOutputStream()) {
     cudaStreamWaitEvent(stream_, events_[next_set_].output_ready_, 0);
   }
+
+  // std::vector<const char*> names(num_expected_bindings_, nullptr);
+  // auto res = citr->second.context_->inferShapes(names.size(), names.data());
+  // std::cerr << "================================" << std::endl;
+  // std::cerr << res << std::endl;
+  // std::cerr << "================================" << std::endl;
+
   // Async execute the inference using a CUDA graph if available for
   // the batch-size, otherwise execution normally.
   if (cuda_graph != nullptr) {
@@ -1992,6 +2011,11 @@ ModelInstanceState::InitIOBindingBuffers()
           TRITONSERVER_ERROR_INTERNAL,
           "failed to specify the values of all input shape tensors");
     }
+    // std::vector<const char*> names(num_expected_bindings_, nullptr);
+    // auto res = trt_context.second.context_->inferShapes(names.size(), names.data());
+    // std::cerr << "============== init ==================" << std::endl;
+    // std::cerr << res << std::endl;
+    // std::cerr << "================================" << std::endl;
   }
 
   // Validate the batch dimension against the implicit batch dimension
@@ -2515,21 +2539,30 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       int64_t byte_size = GetByteSize(dt, dim_vec);
 
       max_byte_size = std::max(max_byte_size, byte_size);
+
+      std::cerr << "==================================================" << std::endl;
+    std::cerr << "shape tensor: " << io_name << std::endl
+    << "new_is_shape: " << engine_->isShapeInferenceIO(io_name.c_str()) << std::endl
+    << "is_shape: " << engine_->isShapeBinding(binding_index) << std::endl
+    << "is_execution: " << engine_->isExecutionBinding(binding_index) << std::endl;
+    std::cerr << ((engine_->getTensorLocation(io_name.c_str()) == nvinfer1::TensorLocation::kDEVICE) ? "device" : "host" )<< std::endl;
+    std::cerr << "==================================================" << std::endl;
     }
 
     if (max_byte_size != 0) {
+      // [FIXME] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. We rely on buffer_bindings_ being non-nullptr to
       // indicate that the buffer has been correctly initalized so
       // even for zero-sized tensors always allocate something.
       void* buffer = nullptr;
       cudaError_t err = cudaSuccess;
-      if (zero_copy_support_) {
-        err = cudaHostAlloc(
-            &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
-      } else {
-        err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
-      }
+      // [DLIS-4283] by knowing that shape tensor should be on host, ideally
+      // should perform allocation based on getTensorLocation(), in such way
+      // the handling can be unified between shape tensor and execution tensor
+      auto cuda_flag = zero_copy_support_ ? cudaHostAllocMapped : cudaHostAllocDefault;
+      err = cudaHostAlloc(
+          &buffer, std::max((int64_t)1, max_byte_size), cuda_flag);
       if (err != cudaSuccess) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -2541,9 +2574,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       io_binding_info.byte_size_ = max_byte_size;
       io_binding_info.buffer_ = buffer;
       io_binding_info.device_buffer_ = buffer;
+      io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
+      io_binding_info.memory_type_id_ = 0;
       if (zero_copy_support_) {
-        io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
-        io_binding_info.memory_type_id_ = 0;
         err = cudaHostGetDevicePointer(
             &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
         if (err != cudaSuccess) {
@@ -2554,9 +2587,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                io_name + " for " + Name() + ": " + cudaGetErrorString(err))
                   .c_str());
         }
-      } else {
-        io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
-        io_binding_info.memory_type_id_ = DeviceId();
       }
 
       // Set buffer bindings of all optimization profile since buffer
@@ -2566,6 +2596,11 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             num_expected_bindings_ * trt_context.first + io_index;
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
+        // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
+        // not on device for shape tensor, the name can be misleading, perhaps
+        // something like 'trt_enqueue_buffer'
+        // [WIP] check return value
+        trt_context.second.context_->setTensorAddress(io_name.c_str(), io_binding_info.device_buffer_);
       }
     }
   }
@@ -2764,6 +2799,14 @@ ModelInstanceState::InitializeExecuteInputBinding(
               .c_str());
     }
     max_byte_size = std::max(max_byte_size, byte_size);
+
+    std::cerr << "==================================================" << std::endl;
+    std::cerr << "execute tensor: " << input_name << std::endl
+    << "new_is_shape: " << engine_->isShapeInferenceIO(input_name.c_str()) << std::endl
+    << "is_shape: " << engine_->isShapeBinding(binding_index) << std::endl
+    << "is_execution: " << engine_->isExecutionBinding(binding_index) << std::endl;
+    std::cerr << ((engine_->getTensorLocation(input_name.c_str()) == nvinfer1::TensorLocation::kDEVICE) ? "device" : "host" )<< std::endl;
+    std::cerr << "==================================================" << std::endl;
   }
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
@@ -2828,6 +2871,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     buffer_bindings_[next_buffer_binding_set_][binding_index] =
         io_binding_info.device_buffer_;
+    // [WIP] check return value
+    trt_context.second.context_->setTensorAddress(input_name.c_str(), io_binding_info.device_buffer_);
   }
 
   return nullptr;
@@ -2930,6 +2975,14 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
     max_byte_size = std::max(max_byte_size, byte_size);
+
+    std::cerr << "==================================================" << std::endl;
+    std::cerr << "execute tensor: " << output_name << std::endl
+    << "new_is_shape: " << engine_->isShapeInferenceIO(output_name.c_str()) << std::endl
+    << "is_shape: " << engine_->isShapeBinding(binding_index) << std::endl
+    << "is_execution: " << engine_->isExecutionBinding(binding_index) << std::endl;
+    std::cerr << ((engine_->getTensorLocation(output_name.c_str()) == nvinfer1::TensorLocation::kDEVICE) ? "device" : "host" )<< std::endl;
+    std::cerr << "==================================================" << std::endl;
   }
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
@@ -2991,6 +3044,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     buffer_bindings_[next_buffer_binding_set_][binding_index] =
         io_binding_info.device_buffer_;
+    // [WIP] check return value
+    trt_context.second.context_->setTensorAddress(output_name.c_str(), io_binding_info.device_buffer_);
   }
 
   return nullptr;
@@ -3091,10 +3146,33 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
         binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
+    std::cerr << "==================================================" << std::endl;
+    std::cerr << "shape tensor: " << input_name << std::endl
+    << "new_is_shape: " << engine_->isShapeInferenceIO(input_name.c_str()) << std::endl
+    << "is_shape: " << engine_->isShapeBinding(binding_index) << std::endl
+    << "is_execution: " << engine_->isExecutionBinding(binding_index) << std::endl;
+    std::cerr << ((engine_->getTensorLocation(input_name.c_str()) == nvinfer1::TensorLocation::kDEVICE) ? "device" : "host" )<< std::endl;
+    std::cerr << "==================================================" << std::endl;
     // [WIP] on initialization, seems to be more consistent to copy the
     // max shape to the actual preallocated buffer for shape tensor.
     // [FIXME] resolve how the shape tensor buffer is used (currently it seems
     // like allocating inflight during Run()? Shouldn't be handled this way?)
+
+    // Set shape tensor address to buffer that contains max allowed value so
+    // later shape inference will return max output shape / size for
+    // pre-allocation.
+    if (!context.context_->setInputTensorAddress(
+            input_name.c_str(), context.max_shapes_[io_index])) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("trt failed to set the input shape binding for '") +
+           input_name + "' for " + Name())
+              .c_str());
+    }
+    // [FIXME] setInputShapeBinding() is deprecated and setInputTensorAddress()
+    // above alone should be sufficient. There is bug in TRT that
+    // getMaxOutputSize() won't work without setInputShapeBinding() for shape
+    // tensor, ETA fix in 8.5.2
     if (!context.context_->setInputShapeBinding(
             binding_index, context.max_shapes_[io_index])) {
       return TRITONSERVER_ErrorNew(
@@ -3130,12 +3208,12 @@ ModelInstanceState::InitializeShapeInputBinding(
     // tensors always allocate something.
     void* buffer = nullptr;
     cudaError_t err = cudaSuccess;
-    if (zero_copy_support_) {
-      err = cudaHostAlloc(
-          &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
-    } else {
-      err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
-    }
+    // [DLIS-4283] by knowing that shape tensor should be on host, ideally
+    // should perform allocation based on getTensorLocation(), in such way
+    // the handling can be unified between shape tensor and execution tensor
+    auto cuda_flag = zero_copy_support_ ? cudaHostAllocMapped : cudaHostAllocDefault;
+    err = cudaHostAlloc(
+        &buffer, std::max((int64_t)1, max_byte_size), cuda_flag);
     if (err != cudaSuccess) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -3147,9 +3225,9 @@ ModelInstanceState::InitializeShapeInputBinding(
     io_binding_info.byte_size_ = max_byte_size;
     io_binding_info.buffer_ = buffer;
     io_binding_info.device_buffer_ = buffer;
+    io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
+    io_binding_info.memory_type_id_ = 0;
     if (zero_copy_support_) {
-      io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
-      io_binding_info.memory_type_id_ = 0;
       err = cudaHostGetDevicePointer(
           &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
       if (err != cudaSuccess) {
@@ -3159,11 +3237,16 @@ ModelInstanceState::InitializeShapeInputBinding(
              input_name + "' for " + Name() + ": " + cudaGetErrorString(err))
                 .c_str());
       }
-    } else {
-      io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
-      io_binding_info.memory_type_id_ = DeviceId();
     }
 
+    // Different from other tensors that setTensorAdress() will be set to the
+    // allocated buffer at the end, we keep it to be the 'max_shapes_' set above
+    // because the buffer content will affect the output shape inference.
+    // We rely on Enqueue() function to make sure the correct buffer is set
+    // during runtime.
+
+    // [DLIS-4283] below is v1 handling and v1 doesn't support shape tensor,
+    // can be removed.
     // Set buffer bindings of all optimization profile since buffer is
     // allocated
     for (auto& trt_context : trt_contexts_) {
