@@ -157,8 +157,8 @@ class TRTInterface {
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key) = 0;
 
-  // Return the full shape of the binding, batch dimension will be included
-  virtual std::vector<int64_t> GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index) = 0;
+  // Return the max byte size of the binding
+  virtual int64_t GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index) = 0;
 
   virtual TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) = 0;
 
@@ -183,7 +183,7 @@ class TRTv1Interface : public TRTInterface {
     const std::string& input_name, const std::vector<int64_t>& shape,
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key) override;
-  std::vector<int64_t> GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
+  int64_t GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index) override;
   TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
   TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
 #ifdef TRITON_ENABLE_CUDA_GRAPH
@@ -201,7 +201,7 @@ class TRTv3Interface : public TRTInterface {
     const std::string& input_name, const std::vector<int64_t>& shape,
     const TensorRTContext& trt_context, const size_t io_index,
     const size_t binding_index, std::vector<int64_t>* cuda_graph_key) override;
-  std::vector<int64_t> GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index) override;
+  int64_t GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index) override;
   TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
   TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
  private:

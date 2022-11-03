@@ -2965,8 +2965,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    std::vector<int64_t> dim_vec = interface_->GetFullDimensions(context.context_.get(), binding_index);
-    int64_t byte_size = GetByteSize(dt, dim_vec);
+    int64_t byte_size = interface_->GetFullByteSize(context.context_.get(), output_name, binding_index);
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -3935,9 +3934,10 @@ TRTv1Interface::Enqueue(nvinfer1::IExecutionContext* context)
               &instance_->events_[instance_->next_set_].ready_for_input_);
 }
 
-std::vector<int64_t>
-TRTv1Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index)
+int64_t
+TRTv1Interface::GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index)
 {
+  auto dt = ConvertTrtTypeToDataType(instance_->engine_->getBindingDataType(binding_index));
   const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
   std::vector<int64_t> dim_vec;
   DimsToDimVec(output_dim, &dim_vec);
@@ -3948,7 +3948,7 @@ TRTv1Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t 
   }
   dim_vec_with_mbs.insert(
       dim_vec_with_mbs.end(), dim_vec.begin(), dim_vec.end());
-  return dim_vec_with_mbs;
+  return GetByteSize(dt, dim_vec_with_mbs);
 }
 
 TRITONSERVER_Error*
@@ -4040,13 +4040,16 @@ TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
   return true;
 }
 
-std::vector<int64_t>
-TRTv3Interface::GetFullDimensions(nvinfer1::IExecutionContext* context, int32_t binding_index)
+int64_t
+TRTv3Interface::GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index)
 {
-  const nvinfer1::Dims output_dim = context->getBindingDimensions(binding_index);
-  std::vector<int64_t> dim_vec;
-  DimsToDimVec(output_dim, &dim_vec);
-  return dim_vec;
+  // [FIXME] getMaxOutputSize() may give over-estimated value, if the
+  // allocation size is a concern, should experiment with output allocator
+  // approach. Note that allocator must be well-designed to avoid runtime
+  // allocation as much as possible.
+  // i.e. nonzero model that has input with shape [4], the output size
+  // should be <= 4 * sizeof(data type) while getMaxOutputSize() returns 528
+  return context->getMaxOutputSize(tensor_name.c_str());
 }
 
 TRITONSERVER_Error*
