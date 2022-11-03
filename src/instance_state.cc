@@ -618,7 +618,8 @@ ModelInstanceState::Run(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             err, "invalid shape values encountered for shape inputs");
       } else {
-        // [FIXME] formalize it
+        // [FIXME] formalize it, the 'buffer_' may be set directly while forming
+        // the shape value
         memcpy(io_binding_info.buffer_, &(it->second[0]), sizeof(int32_t) * it->second.size());
         citr->second.context_->setInputTensorAddress(
             name.c_str(), io_binding_info.buffer_);
@@ -786,39 +787,10 @@ ModelInstanceState::Run(
         total_byte_size = GetByteSize(datatype, batchn_shape);
       }
 
-      // [WIP] shouldn't need to copy explicitly
-      // if ((engine_->isShapeBinding(binding_index)) && (support_batching_)) {
-      //   // Set the first 4 bytes to the shape value representing the
-      //   // batch size.
-      //   bool cuda_used = false;
-      //   FAIL_ALL_AND_RETURN_IF_ERROR(
-      //       payload_->requests_, payload_->request_count_, payload_->responses_,
-      //       CopyBuffer(
-      //           name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
-      //           io_binding_info.memory_type_id_, sizeof(int32_t),
-      //           (void*)&payload_->total_batch_size_,
-      //           static_cast<char*>(io_binding_info.buffer_), input_copy_stream_,
-      //           &cuda_used),
-      //       "error input data for the batch");
-
-      //   // Copy rest of the shape values to the buffer.
-      //   FAIL_ALL_AND_RETURN_IF_ERROR(
-      //       payload_->requests_, payload_->request_count_, payload_->responses_,
-      //       CopyBuffer(
-      //           name, TRITONSERVER_MEMORY_CPU, 0, io_binding_info.memory_type_,
-      //           io_binding_info.memory_type_id_,
-      //           (request_shape_values[io_index].size() - 1) * sizeof(int32_t),
-      //           (void*)(&request_shape_values[io_index] + 1),
-      //           (static_cast<char*>(io_binding_info.buffer_) + sizeof(int32_t)),
-      //           input_copy_stream_, &cuda_used),
-      //       "error input data for the batch");
-
-      // } else {
-        payload_->collector_->ProcessTensor(
-            name.c_str(), static_cast<char*>(io_binding_info.buffer_),
-            total_byte_size, io_binding_info.memory_type_,
-            io_binding_info.memory_type_id_);
-      // }
+      payload_->collector_->ProcessTensor(
+          name.c_str(), static_cast<char*>(io_binding_info.buffer_),
+          total_byte_size, io_binding_info.memory_type_,
+          io_binding_info.memory_type_id_);
     }
   }
   payload_->collector_->Finalize();
@@ -1073,21 +1045,7 @@ ModelInstanceState::Run(
       // Custom handling for shape tensors
       // Obtain the shape value
       if (dims.nbDims != 0) {
-        int32_t* shape_value_ptr =
-            (int32_t*)malloc(dims.d[0] * sizeof(int32_t));
-        if (!citr->second.context_->getShapeBinding(
-                binding_index, shape_value_ptr)) {
-          FAIL_ALL_AND_RETURN_IF_ERROR(
-              payload_->requests_, payload_->request_count_,
-              payload_->responses_,
-              TRITONSERVER_ErrorNew(
-                  TRITONSERVER_ERROR_INTERNAL,
-                  (std::string("failed to retrieve the output shape values "
-                               "from binding '") +
-                   Name() + "'")
-                      .c_str()),
-              "failed to get TRT response");
-        }
+        auto shape_value_ptr = reinterpret_cast<int32_t const*>(citr->second.context_->getTensorAddress(name.c_str()));
 
         // The first shape value must be equal to the total batch_size
         if (support_batching_ &&
@@ -1147,8 +1105,6 @@ ModelInstanceState::Run(
                 batchn_shape[0], stream_);
           }
         }
-
-        free(shape_value_ptr);
       }
     } else if (io_binding_info.buffer_is_ragged_) {
       // FIXME add correctness checking like below
@@ -2550,7 +2506,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     }
 
     if (max_byte_size != 0) {
-      // [FIXME] review below comment
+      // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. We rely on buffer_bindings_ being non-nullptr to
       // indicate that the buffer has been correctly initalized so
@@ -2560,9 +2516,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       // [DLIS-4283] by knowing that shape tensor should be on host, ideally
       // should perform allocation based on getTensorLocation(), in such way
       // the handling can be unified between shape tensor and execution tensor
-      auto cuda_flag = zero_copy_support_ ? cudaHostAllocMapped : cudaHostAllocDefault;
       err = cudaHostAlloc(
-          &buffer, std::max((int64_t)1, max_byte_size), cuda_flag);
+          &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocDefault);
       if (err != cudaSuccess) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -2576,19 +2531,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       io_binding_info.device_buffer_ = buffer;
       io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
       io_binding_info.memory_type_id_ = 0;
-      if (zero_copy_support_) {
-        err = cudaHostGetDevicePointer(
-            &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
-        if (err != cudaSuccess) {
-          return TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INTERNAL,
-              (std::string("unable to get mapped device address for "
-                           "output '") +
-               io_name + " for " + Name() + ": " + cudaGetErrorString(err))
-                  .c_str());
-        }
-      }
 
+      // [DLIS-4283] below is v1 handling and v1 doesn't support shape tensor,
+      // can be removed.
       // Set buffer bindings of all optimization profile since buffer
       // is allocated
       for (auto& trt_context : trt_contexts_) {
@@ -2599,8 +2544,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
         // something like 'trt_enqueue_buffer'
-        // [WIP] check return value
-        trt_context.second.context_->setTensorAddress(io_name.c_str(), io_binding_info.device_buffer_);
+        RETURN_ERROR_IF_FALSE(trt_context.second.context_->setTensorAddress(io_name.c_str(), io_binding_info.device_buffer_),
+        TRITONSERVER_ERROR_INVALID_ARG, (std::string("'") + io_name + "' does not map to an input or output tensor"));
       }
     }
   }
@@ -2871,8 +2816,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     buffer_bindings_[next_buffer_binding_set_][binding_index] =
         io_binding_info.device_buffer_;
-    // [WIP] check return value
-    trt_context.second.context_->setTensorAddress(input_name.c_str(), io_binding_info.device_buffer_);
+    RETURN_ERROR_IF_FALSE(trt_context.second.context_->setTensorAddress(input_name.c_str(), io_binding_info.device_buffer_),
+        TRITONSERVER_ERROR_INVALID_ARG, (std::string("'") + input_name + "' does not map to an input or output tensor"));
   }
 
   return nullptr;
@@ -3043,8 +2988,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     buffer_bindings_[next_buffer_binding_set_][binding_index] =
         io_binding_info.device_buffer_;
-    // [WIP] check return value
-    trt_context.second.context_->setTensorAddress(output_name.c_str(), io_binding_info.device_buffer_);
+    RETURN_ERROR_IF_FALSE(trt_context.second.context_->setTensorAddress(output_name.c_str(), io_binding_info.device_buffer_),
+        TRITONSERVER_ERROR_INVALID_ARG, (std::string("'") + output_name + "' does not map to an input or output tensor"));
   }
 
   return nullptr;
@@ -3152,10 +3097,6 @@ ModelInstanceState::InitializeShapeInputBinding(
     << "is_execution: " << engine_->isExecutionBinding(binding_index) << std::endl;
     std::cerr << ((engine_->getTensorLocation(input_name.c_str()) == nvinfer1::TensorLocation::kDEVICE) ? "device" : "host" )<< std::endl;
     std::cerr << "==================================================" << std::endl;
-    // [WIP] on initialization, seems to be more consistent to copy the
-    // max shape to the actual preallocated buffer for shape tensor.
-    // [FIXME] resolve how the shape tensor buffer is used (currently it seems
-    // like allocating inflight during Run()? Shouldn't be handled this way?)
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
@@ -3226,17 +3167,6 @@ ModelInstanceState::InitializeShapeInputBinding(
     io_binding_info.device_buffer_ = buffer;
     io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
     io_binding_info.memory_type_id_ = 0;
-    if (zero_copy_support_) {
-      err = cudaHostGetDevicePointer(
-          &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
-      if (err != cudaSuccess) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            (std::string("unable to get mapped device address for input '") +
-             input_name + "' for " + Name() + ": " + cudaGetErrorString(err))
-                .c_str());
-      }
-    }
 
     // Different from other tensors that setTensorAdress() will be set to the
     // allocated buffer at the end, we keep it to be the 'max_shapes_' set above
@@ -4032,7 +3962,6 @@ TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
 {
   const auto& io_binding_info = instance_->io_binding_infos_[instance_->next_buffer_binding_set_];
   for (const auto& info : io_binding_info) {
-    // [FIXME] set things for shape tensor properly
     if (!context->setTensorAddress(info.name_.c_str(), info.device_buffer_)) {
       return false;
     }

@@ -87,7 +87,7 @@ struct TensorRTContext {
   //
   // vector is used to map index of event sets to corresponding
   // collection.
-  // [FIXME] need to be careful in the case of having multiple sets of
+  // [DLIS-4283] need to be careful in the case of having multiple sets of
   // binding buffer, see BuildCudaGraph that in such a case
   // (num_copy_streams_ != 1), the index of binding set is tied to the same
   // value for index of event set. This is fine for now as there is at most
@@ -473,7 +473,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     }
     std::string name_;
     uint64_t byte_size_;
-    // [WIP] Make it clear that 'buffer_' is what we operate on,
+    // [DLIS-4283] Make it clear that 'buffer_' is what we operate on,
     // 'device_buffer_' is just extra wrapper used only on TRT enqueue,
     // i.e. WAR for Jetson "zero-copy" where 'buffer_' is actually on host
     // while TRT expect device pointer.
