@@ -115,11 +115,9 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
     case TRITONSERVER_TYPE_INT8:
       trt_type = nvinfer1::DataType::kINT8;
       break;
-#if (TENSORRT_VERSION >= 8500)
     case TRITONSERVER_TYPE_UINT8:
       trt_type = nvinfer1::DataType::kUINT8;
       break;
-#endif  // TENSORRT_VERSION >= 8500
     case TRITONSERVER_TYPE_INT32:
       trt_type = nvinfer1::DataType::kINT32;
       break;
