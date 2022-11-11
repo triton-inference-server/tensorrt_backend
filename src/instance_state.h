@@ -281,6 +281,12 @@ class ModelInstanceState : public TensorRTModelInstance {
       const std::set<std::string>& allowed_shape_tensors, const bool is_input);
 
   TRITONSERVER_Error* InitIOBindingBuffers();
+  TRITONSERVER_Error* InitializeInputBindingInfos(
+    common::TritonJson::Value& config_inputs);
+  TRITONSERVER_Error* InitializeInputBinding(
+      const std::string& input_name, const TRITONSERVER_DataType input_datatype,
+      common::TritonJson::Value& input_dims, const bool is_control = false,
+      const bool is_ragged = false, const bool is_state = false);
   TRITONSERVER_Error* InitializeConfigShapeInputBindings(
       common::TritonJson::Value& config_inputs);
   TRITONSERVER_Error* InitializeConfigExecuteInputBindings(

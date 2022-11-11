@@ -2000,6 +2000,46 @@ ModelInstanceState::InitIOBindingBuffers()
 }
 
 TRITONSERVER_Error*
+ModelInstanceState::InitializeInputBindingInfos(
+    common::TritonJson::Value& config_inputs)
+{
+  for (size_t i = 0; i < config_inputs.ArraySize(); i++) {
+    triton::common::TritonJson::Value io;
+    RETURN_IF_ERROR(config_inputs.IndexAsObject(i, &io));
+    std::string io_name;
+    RETURN_IF_ERROR(io.MemberAsString("name", &io_name));
+    std::string io_datatype;
+    RETURN_IF_ERROR(io.MemberAsString("data_type", &io_datatype));
+    common::TritonJson::Value model_config_dims;
+    common::TritonJson::Value reshape;
+    if (io.Find("reshape", &reshape)) {
+      RETURN_IF_ERROR(reshape.MemberAsArray("shape", &model_config_dims));
+    } else {
+      RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
+    }
+    bool io_allow_ragged_batch = false;
+    triton::common::TritonJson::Value allow_ragged_batch;
+    if (io.Find("allow_ragged_batch", &allow_ragged_batch)) {
+      RETURN_IF_ERROR(allow_ragged_batch.AsBool(&io_allow_ragged_batch));
+    }
+
+    RETURN_IF_ERROR(InitializeInputBinding(
+        io_name, io_datatype, model_config_dims, false, io_allow_ragged_batch));
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ModelInstanceState::InitializeInputBinding(
+    const std::string& input_name, const std::string& input_datatype,
+    common::TritonJson::Value& input_dims, const bool is_control,
+    const bool is_ragged, const bool is_state)
+{
+  // [WIP] unify execution tensor and shape tensor
+}
+
+TRITONSERVER_Error*
 ModelInstanceState::InitializeConfigShapeInputBindings(
     common::TritonJson::Value& config_inputs)
 {
