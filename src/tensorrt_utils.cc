@@ -30,10 +30,6 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-// FIXME: Remove ifdefs when Jetpack upgrades to tensorrt 8.5.*. DLIS-4144
-#define TENSORRT_VERSION \
-  ((NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + NV_TENSORRT_PATCH)
-
 TRITONSERVER_DataType
 ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
 {
@@ -44,17 +40,15 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
       return TRITONSERVER_TYPE_FP16;
     case nvinfer1::DataType::kINT8:
       return TRITONSERVER_TYPE_INT8;
-#if (TENSORRT_VERSION >= 8500)
     case nvinfer1::DataType::kUINT8:
       return TRITONSERVER_TYPE_UINT8;
-#endif  // TENSORRT_VERSION >= 8500
     case nvinfer1::DataType::kINT32:
       return TRITONSERVER_TYPE_INT32;
     case nvinfer1::DataType::kBOOL:
       return TRITONSERVER_TYPE_BOOL;
+    default:
+      return TRITONSERVER_TYPE_INVALID;
   }
-
-  return TRITONSERVER_TYPE_INVALID;
 }
 
 std::string
@@ -67,17 +61,15 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
       return "TYPE_FP16";
     case nvinfer1::DataType::kINT8:
       return "TYPE_INT8";
-#if (TENSORRT_VERSION >= 8500)
     case nvinfer1::DataType::kUINT8:
       return "TYPE_UINT8";
-#endif  // TENSORRT_VERSION >= 8500
     case nvinfer1::DataType::kINT32:
       return "TYPE_INT32";
     case nvinfer1::DataType::kBOOL:
       return "TYPE_BOOL";
+    default:
+      return "TYPE_INVALID";
   }
-
-  return "TYPE_INVALID";
 }
 
 bool
@@ -123,11 +115,9 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
     case TRITONSERVER_TYPE_INT8:
       trt_type = nvinfer1::DataType::kINT8;
       break;
-#if (TENSORRT_VERSION >= 8500)
     case TRITONSERVER_TYPE_UINT8:
       trt_type = nvinfer1::DataType::kUINT8;
       break;
-#endif  // TENSORRT_VERSION >= 8500
     case TRITONSERVER_TYPE_INT32:
       trt_type = nvinfer1::DataType::kINT32;
       break;
