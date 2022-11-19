@@ -56,6 +56,7 @@ class ModelState : public TensorRTModel {
   struct SemaphoreContext {
     SemaphoreContext() : next_sem_idx_(0) {}
 
+    std::mutex mtx_;
     std::vector<std::unique_ptr<Semaphore>> semaphore_list_;
     int next_sem_idx_;
   };

@@ -92,8 +92,8 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // Set the execution policy as device blocking for the backend.
-  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
-      backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
+  // RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
+  //     backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
 
   // The backend configuration may contain information needed by the
   // backend, such a command-line arguments.

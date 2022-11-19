@@ -371,9 +371,15 @@ ModelInstanceState::ProcessRequests(
 
   auto& sem_context = (model_state_->SemaphoreDeviceContext(DeviceId()));
 
-  auto sem_idx = sem_context->next_sem_idx_;
+  // size_t sem_idx = 0;
+  // {
+  //   std::lock_guard<std::mutex> lk(sem_context->mtx_);
+  //   sem_idx = sem_context->next_sem_idx_;
+  //   sem_context->next_sem_idx_ =
+  //       (sem_idx + 1) % sem_context->semaphore_list_.size();
+  // }
 
-  Run(requests, request_count, sem_idx);
+  Run(requests, request_count, sem_idx_);
 
   bool run_failed = true;
   for (size_t i = 0; i < request_count; ++i) {
@@ -389,7 +395,7 @@ ModelInstanceState::ProcessRequests(
   if (run_failed) {
     // On inference error, place the slot back to the queue
     // immediately as all works for the slot should be ignored.
-    sem_context->semaphore_list_[sem_idx]->Release();
+    sem_context->semaphore_list_[sem_idx_]->Release();
   } else {
     auto event_set_idx = next_set_;
     next_set_ = (event_set_idx + 1) % EVENT_SET_COUNT;
@@ -412,9 +418,7 @@ ModelInstanceState::ProcessRequests(
   }
 
   // Block the execution if there are no available contexts.
-  sem_context->next_sem_idx_ =
-      (sem_idx + 1) % sem_context->semaphore_list_.size();
-  sem_context->semaphore_list_[sem_idx]->Acquire();
+  sem_context->semaphore_list_[sem_idx_]->Acquire();
 }
 
 void
@@ -1692,12 +1696,14 @@ ModelInstanceState::RegisterSemaphore()
                  std::make_pair(DeviceId(), new ModelState::SemaphoreContext()))
              .first;
   }
-  it->second->semaphore_list_.emplace_back(new Semaphore(sem_count));
+  sem_idx_ = it->second->semaphore_list_.size();
+  it->second->semaphore_list_.emplace_back(new Semaphore(sem_count-1));
 
-  if (it->second->semaphore_list_.size() == 1) {
-    // Need to acquire a semaphore for first inference request
-    it->second->semaphore_list_[it->second->next_sem_idx_]->Acquire();
-  }
+  // [FIXME] the interaction looks weird
+  // if (it->second->semaphore_list_.size() == 1) {
+  //   // Need to acquire a semaphore for first inference request
+  //   it->second->semaphore_list_[it->second->next_sem_idx_]->Acquire();
+  // }
 }
 
 TRITONSERVER_Error*

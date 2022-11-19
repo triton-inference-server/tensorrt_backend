@@ -540,6 +540,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   ModelState* model_state_;
 
   std::unique_ptr<TRTInterface> interface_;
+
+  size_t sem_idx_;
 };
 
 }}}  // namespace triton::backend::tensorrt
