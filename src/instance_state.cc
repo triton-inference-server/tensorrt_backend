@@ -26,7 +26,6 @@
 
 #include "instance_state.h"
 #include "tensorrt_utils.h"
-#include "semaphore.h"
 #include "triton/common/nvtx.h"
 
 namespace triton { namespace backend { namespace tensorrt {
@@ -153,7 +152,7 @@ ModelInstanceState::Create(
             "' for model instance '" + (*state)->Name() + "'");
   }
 
-  (*state)->RegisterSemaphore();
+  (*state)->InitSemaphore();
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
@@ -180,6 +179,8 @@ ModelInstanceState::Create(
     RETURN_IF_ERROR((*state)->InitializeCudaGraph());
   }
 #endif
+
+  model_state->RegisterInstance((*state)->DeviceId(), *state);
 
   std::string profiles_desc;
   (*state)->GetConfiguredProfiles(&profiles_desc);
@@ -369,17 +370,7 @@ ModelInstanceState::ProcessRequests(
        std::to_string(request_count) + " requests")
           .c_str());
 
-  auto& sem_context = (model_state_->SemaphoreDeviceContext(DeviceId()));
-
-  // size_t sem_idx = 0;
-  // {
-  //   std::lock_guard<std::mutex> lk(sem_context->mtx_);
-  //   sem_idx = sem_context->next_sem_idx_;
-  //   sem_context->next_sem_idx_ =
-  //       (sem_idx + 1) % sem_context->semaphore_list_.size();
-  // }
-
-  Run(requests, request_count, sem_idx_);
+  Run(requests, request_count);
 
   bool run_failed = true;
   for (size_t i = 0; i < request_count; ++i) {
@@ -395,7 +386,7 @@ ModelInstanceState::ProcessRequests(
   if (run_failed) {
     // On inference error, place the slot back to the queue
     // immediately as all works for the slot should be ignored.
-    sem_context->semaphore_list_[sem_idx_]->Release();
+    semaphore_->Release();
   } else {
     auto event_set_idx = next_set_;
     next_set_ = (event_set_idx + 1) % EVENT_SET_COUNT;
@@ -416,15 +407,11 @@ ModelInstanceState::ProcessRequests(
       barrier_->get_future().wait();
     }
   }
-
-  // Block the execution if there are no available contexts.
-  sem_context->semaphore_list_[sem_idx_]->Acquire();
 }
 
 void
 ModelInstanceState::Run(
-    TRITONBACKEND_Request** requests, const uint32_t request_count,
-    const size_t context_idx)
+    TRITONBACKEND_Request** requests, const uint32_t request_count)
 {
   LOG_MESSAGE(
       TRITONSERVER_LOG_VERBOSE,
@@ -442,7 +429,7 @@ ModelInstanceState::Run(
 
   // Need to move the TRITONBACKEND_Request objects as the lifetime
   // must be extended till ProcessResponse completes.
-  payload_.reset(new Payload(next_set_, requests, request_count, context_idx));
+  payload_.reset(new Payload(next_set_, requests, request_count));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
   cudaSetDevice(DeviceId());
@@ -574,7 +561,7 @@ ModelInstanceState::Run(
                                     ? events_[prev_set].ready_for_input_
                                     : nullptr;
   std::vector<int64_t> input_dims{(int64_t)payload_->total_batch_size_};
-  payload_->collector_.reset(new BackendInputCollector(
+   payload_->collector_.reset(new BackendInputCollector(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
       model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
       input_copy_stream_, events_[next_set_].input_ready_,
@@ -1240,9 +1227,7 @@ ModelInstanceState::ProcessResponse()
           input_copy_stream_);
     }
 
-    (model_state_->SemaphoreDeviceContext(DeviceId()))
-        ->semaphore_list_[payload->sem_idx_]
-        ->Release();
+    semaphore_->Release();
     NVTX_MARKER("plan_input_available");
 
     // Call Finalize() here to defer CUDA synchronization as much as
@@ -1680,7 +1665,7 @@ ModelInstanceState::DestroyEventSet()
 }
 
 void
-ModelInstanceState::RegisterSemaphore()
+ModelInstanceState::InitSemaphore()
 {
   // If eager batching is set, we add to the semaphore resource count
   // which allows to start preparing next batch before the previous
@@ -1689,21 +1674,7 @@ ModelInstanceState::RegisterSemaphore()
   // ahead and to avoid interference of the event communication in
   // the previous execution
   int sem_count = (model_state_->EagerBatching()) ? EVENT_SET_COUNT : 1;
-  auto it = (model_state_->SemaphoreMap()).find(DeviceId());
-  if (it == (model_state_->SemaphoreMap()).end()) {
-    it = (model_state_->SemaphoreMap())
-             .emplace(
-                 std::make_pair(DeviceId(), new ModelState::SemaphoreContext()))
-             .first;
-  }
-  sem_idx_ = it->second->semaphore_list_.size();
-  it->second->semaphore_list_.emplace_back(new Semaphore(sem_count-1));
-
-  // [FIXME] the interaction looks weird
-  // if (it->second->semaphore_list_.size() == 1) {
-  //   // Need to acquire a semaphore for first inference request
-  //   it->second->semaphore_list_[it->second->next_sem_idx_]->Acquire();
-  // }
+  semaphore_.reset(new Semaphore(sem_count));
 }
 
 TRITONSERVER_Error*

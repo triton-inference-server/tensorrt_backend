@@ -91,10 +91,6 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         "triton backend API version does not support this backend");
   }
 
-  // Set the execution policy as device blocking for the backend.
-  // RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
-  //     backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
-
   // The backend configuration may contain information needed by the
   // backend, such a command-line arguments.
   TRITONSERVER_Message* backend_config_message;
@@ -113,6 +109,9 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (byte_size != 0) {
     RETURN_IF_ERROR(backend_config.Parse(buffer, byte_size));
   }
+
+  // Default execution policy, may be overriden by backend config
+  auto execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
 
   std::unique_ptr<BackendConfiguration> lconfig(new BackendConfiguration());
   triton::common::TritonJson::Value cmdline;
@@ -148,7 +147,21 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         value_str.erase(0, pos);
       }
     }
+
+    // Set the execution policy according to backend config, default will be
+    // DEVICE_BLOCKING
+    if (cmdline.Find("execution-policy", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      if (value_str == "DEVICE_BLOCKING") {
+        execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
+      } else if (value_str == "BLOCKING") {
+        execution_policy = TRITONBACKEND_EXECUTION_BLOCKING;
+      }
+    }
   }
+
+  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
+      backend, execution_policy));
 
   // Register all the default and custom plugins that come with TensorRT
   bool success = true;
@@ -315,10 +328,21 @@ TRITONBACKEND_ModelInstanceExecute(
   // from this function so that it is again available to be used for
   // another call to TRITONBACKEND_ModelInstanceExecute.
 
+  // For TensorRT backend, the actual instance is not closely tied to
+  // TRITONBACKEND_ModelInstance, the instance will be looked up during
+  // TRITONBACKEND_ModelInstanceExecute.
+  // [WIP] document more on how it still works on different 
+  // TRITONBACKEND_ExecutionPolicy
+  int32_t device_id;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceDeviceId(instance, &device_id));
+  auto instance_semaphore = model_state->ExecutionState(device_id, instance_state);
+  auto curr_instance = instance_semaphore.first;
+  auto semaphore = instance_semaphore.second;
+
   LOG_MESSAGE(
       TRITONSERVER_LOG_VERBOSE,
       (std::string("model ") + model_state->Name() + ", instance " +
-       instance_state->Name() + ", executing " + std::to_string(request_count) +
+       curr_instance->Name() + ", executing " + std::to_string(request_count) +
        " requests")
           .c_str());
 
@@ -327,7 +351,18 @@ TRITONBACKEND_ModelInstanceExecute(
   // this function. If something does go wrong in processing a
   // particular request then we send an error response just for the
   // specific request.
-  instance_state->ProcessRequests(requests, request_count);
+  curr_instance->ProcessRequests(requests, request_count);
+
+  // Block the execution if there is no instance ready for preparing the next
+  // execution. Acquiring at the end so that the instance execution won't return
+  // and retrieve the next batch early and then wait. We want to retrieve the
+  // batch as late as possible, otherwise we may get a smaller batch as more
+  // requests may arrive between when the batch is formed and when batch is
+  // executed.
+  // Here we simplify the "available instance" look-up by round-robin the
+  // instances associated with the given device, as the executions are less
+  // likely to finish out of order.
+  semaphore->Acquire();
 
   return nullptr;  // success
 }

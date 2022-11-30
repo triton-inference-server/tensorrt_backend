@@ -27,11 +27,21 @@
 #pragma once
 
 #include "tensorrt_model.h"
+#include "tensorrt_model_instance.h"
 
 #include <NvInfer.h>
 #include "semaphore.h"
 
 namespace triton { namespace backend { namespace tensorrt {
+
+class ModelInstanceState;
+// Helper class to determine the ModelInstanceState to be used for current
+// execution and the semaphore to be blocked for next execution.
+class ExecutionArbitrator {
+  public:
+  virtual void RegisterInstance(const int device_id, ModelInstanceState* instance) = 0;
+  virtual std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) = 0;
+};
 
 //
 // ModelState
@@ -53,22 +63,16 @@ class ModelState : public TensorRTModel {
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
 
-  struct SemaphoreContext {
-    SemaphoreContext() : next_sem_idx_(0) {}
-
-    std::mutex mtx_;
-    std::vector<std::unique_ptr<Semaphore>> semaphore_list_;
-    int next_sem_idx_;
-  };
-
-  std::map<int, std::unique_ptr<SemaphoreContext>>& SemaphoreMap()
-  {
-    return semaphore_map_;
+  void RegisterInstance(const int device_id, ModelInstanceState* instance) {
+    execution_arbitrator_->RegisterInstance(device_id, instance);
   }
 
-  std::unique_ptr<SemaphoreContext>& SemaphoreDeviceContext(const int device_id)
-  {
-    return semaphore_map_[device_id];
+  // [WIP] udpate doc below, no longer act the same
+  // Multi-step function, this function will return the current instance and
+  // the next instance of the given device ID. And the pointer will advance so
+  // that the next instance becomes current in the next invocation.
+  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) {
+    return execution_arbitrator_->ExecutionState(device_id, instance);
   }
 
  private:
@@ -116,8 +120,7 @@ class ModelState : public TensorRTModel {
       device_engines_;
   bool engine_sharing_;
 
-  // A map between device id to its semaphore context
-  std::map<int, std::unique_ptr<SemaphoreContext>> semaphore_map_;
+  std::unique_ptr<ExecutionArbitrator> execution_arbitrator_;
 };
 
 

@@ -50,15 +50,29 @@ main Triton [issues page](https://github.com/triton-inference-server/server/issu
 The command-line options configure properties of the TensorRT
 backend that are then applied to all models that use the backend.
 
+Below is an example of how to specify the backend config and the full list of
+options.
+
 ##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins="/path/plugin1.so;/path2/plugin2.so"
 
-The coalesce-request-input flag instructs TensorRT to consider the requests' inputs with the same name as
+* `coalesce-request-input` flag instructs TensorRT to consider the requests' inputs with the same name as
 one contiguous buffer if their memory addresses align with each other.
 This option should only be enabled if all requests' input tensors are allocated
 from the same memory region. Default value is false.
 
-The plugins flag provides a way to load any custom TensorRT plugins that your models rely on. If you have
+* `plugins` flag provides a way to load any custom TensorRT plugins that your models rely on. If you have
 multiple plugins to load, use a semicolon as the delimiter.
+
+* `execution-policy` flag instructs TensorRT backend to execute the model with
+different Triton execution policies (see `TRITONBACKEND_ExecutionPolicy`
+for detail). Currently the following values are accepted:
+  * `DEVICE_BLOCKING`: corresponds to `TRITONBACKEND_EXECUTION_DEVICE_BLOCKING`,
+  this option can be set to avoid possible CUDA contention from launching
+  many kernels from multiple threads.
+  * `BLOCKING`: corresponds to `TRITONBACKEND_EXECUTION_BLOCKING`, this option
+  can be set to overlap the host thread workload between model instances.
+
+
 
 ## Build the TensorRT Backend
 
