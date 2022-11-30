@@ -52,14 +52,16 @@ class DeviceBlockingArbitrator : public ExecutionArbitrator {
   }
 
   std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
+    std::lock_guard<std::mutex> lk(mtx_);
     auto& il = device_instances_[device_id];
     auto current_instance = il.instances_[il.idx_];
-    // Note that device blocking guarentee exclusive access to InstanceList and
-    // thus 'idx_' can be modified without lock
     il.idx_ = ((il.idx_ + 1) % il.instances_.size());
-    // In device blocking, the semaphore of the "next instance" will be used to
+    // In DEVICE_BLOCKING, the semaphore of the "next instance" will be used to
     // determine whether the execution should wait for resources to be ready for
     // next execution.
+    // Here we simplify the "available instance" look-up by round-robin the
+    // instances associated with the given device, as the executions are less
+    // likely to finish out of order.
     auto semaphore = il.instances_[il.idx_]->SemaphorePtr();
     return {current_instance, semaphore};
   }
@@ -86,6 +88,7 @@ class InstanceBlockingArbitrator : public ExecutionArbitrator {
     instance->SemaphorePtr()->Acquire();
   }
   std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
+    // In BLOCKING, the TRITONBACKEND_ModelInstance and executing instance are coupled
     return {instance, instance->SemaphorePtr()};
   }
 };

@@ -322,17 +322,9 @@ TRITONBACKEND_ModelInstanceExecute(
       instance, reinterpret_cast<void**>(&instance_state)));
   ModelState* model_state = instance_state->StateForModel();
 
-  // This backend specifies BLOCKING execution policy. That means that
-  // we should not return from this function until execution is
-  // complete. Triton will automatically release 'instance' on return
-  // from this function so that it is again available to be used for
-  // another call to TRITONBACKEND_ModelInstanceExecute.
-
-  // For TensorRT backend, the actual instance is not closely tied to
-  // TRITONBACKEND_ModelInstance, the instance will be looked up during
-  // TRITONBACKEND_ModelInstanceExecute.
-  // [WIP] document more on how it still works on different 
-  // TRITONBACKEND_ExecutionPolicy
+  // For TensorRT backend, the executing instance may not closely tie to
+  // TRITONBACKEND_ModelInstance, the instance will be assigned based on
+  // execution policy.
   int32_t device_id;
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceDeviceId(instance, &device_id));
   auto instance_semaphore = model_state->ExecutionState(device_id, instance_state);
@@ -353,15 +345,14 @@ TRITONBACKEND_ModelInstanceExecute(
   // specific request.
   curr_instance->ProcessRequests(requests, request_count);
 
-  // Block the execution if there is no instance ready for preparing the next
-  // execution. Acquiring at the end so that the instance execution won't return
-  // and retrieve the next batch early and then wait. We want to retrieve the
-  // batch as late as possible, otherwise we may get a smaller batch as more
-  // requests may arrive between when the batch is formed and when batch is
-  // executed.
-  // Here we simplify the "available instance" look-up by round-robin the
-  // instances associated with the given device, as the executions are less
-  // likely to finish out of order.
+  // Returning from TRITONBACKEND_ModelInstanceExecute signals Triton to start
+  // preparing next batch. Due to the async execution in TensorRT backend, we
+  // need to block the function if there is no instance ready for preparing the
+  // next execution.
+  // Acquire() implies that the next execution can be initiated, and it is done
+  // at the end of current execution because we want to form the batch as late
+  // as possible, otherwise we may get a smaller batch while more requests may
+  // arrive between when the batch is formed and when batch is executed.
   semaphore->Acquire();
 
   return nullptr;  // success

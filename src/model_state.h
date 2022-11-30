@@ -63,14 +63,15 @@ class ModelState : public TensorRTModel {
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
 
+  // Register the instance and its associated device ID to execution arbitrator.
   void RegisterInstance(const int device_id, ModelInstanceState* instance) {
     execution_arbitrator_->RegisterInstance(device_id, instance);
   }
 
-  // [WIP] udpate doc below, no longer act the same
-  // Multi-step function, this function will return the current instance and
-  // the next instance of the given device ID. And the pointer will advance so
-  // that the next instance becomes current in the next invocation.
+  // Query the execution arbitrator to return the instance for the execution and
+  // the semaphre to check whether the next execution should be initiated.
+  // 'device_id', 'instance' are the metadata assoicated with the
+  // TRITONBACKEND_ModelInstance.
   std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) {
     return execution_arbitrator_->ExecutionState(device_id, instance);
   }
