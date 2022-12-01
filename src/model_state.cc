@@ -147,9 +147,20 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
   case TRITONBACKEND_EXECUTION_BLOCKING:
     execution_arbitrator_.reset(new InstanceBlockingArbitrator());
     break;
-  case TRITONBACKEND_EXECUTION_DEVICE_BLOCKING:
-    execution_arbitrator_.reset(new DeviceBlockingArbitrator());
+  case TRITONBACKEND_EXECUTION_DEVICE_BLOCKING: {
+    // [FIXME] ad-hoc way to resolve the issue that in sequence batching,
+    // Triton instance must tie to the actual execution instance so that the
+    // model state is properly maintained.
+    triton::common::TritonJson::Value value;
+    bool found_sequence_batching =
+        ModelConfig().Find("sequence_batching", &value);
+    if (found_sequence_batching) {
+      execution_arbitrator_.reset(new InstanceBlockingArbitrator());
+    } else {
+      execution_arbitrator_.reset(new DeviceBlockingArbitrator());
+    }
     break;
+  }
   }
 }
 
