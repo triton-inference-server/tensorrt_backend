@@ -111,7 +111,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // Default execution policy, may be overriden by backend config
-  auto execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
+  auto execution_policy = TRITONBACKEND_EXECUTION_BLOCKING;
 
   std::unique_ptr<BackendConfiguration> lconfig(new BackendConfiguration());
   triton::common::TritonJson::Value cmdline;
