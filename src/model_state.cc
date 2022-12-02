@@ -49,20 +49,21 @@ class DeviceBlockingArbitrator : public ExecutionArbitrator {
       instance->SemaphorePtr()->Acquire();
     }
     it->second.instances_.emplace_back(instance);
+    it->second.it_ = it->second.instances_.begin();
   }
 
   std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
     std::lock_guard<std::mutex> lk(mtx_);
     auto& il = device_instances_[device_id];
-    auto current_instance = il.instances_[il.idx_];
-    il.idx_ = ((il.idx_ + 1) % il.instances_.size());
+    auto current_instance = *il.it_;
+    (il.it_ == il.instances_.end()) ? (il.it_ = il.instances_.begin()) : il.it_++;
     // In DEVICE_BLOCKING, the semaphore of the "next instance" will be used to
     // determine whether the execution should wait for resources to be ready for
     // next execution.
     // Here we simplify the "available instance" look-up by round-robin the
     // instances associated with the given device, as the executions are less
     // likely to finish out of order.
-    auto semaphore = il.instances_[il.idx_]->SemaphorePtr();
+    auto semaphore = (*il.it_)->SemaphorePtr();
     return {current_instance, semaphore};
   }
 
@@ -70,9 +71,9 @@ class DeviceBlockingArbitrator : public ExecutionArbitrator {
   // A list of instances associated with the same device ID an the index
   // to the instance to be used for execution.
   struct InstanceList {
-    InstanceList() : idx_(0) {}
+    InstanceList() : instances_(), it_(instances_.end()) {}
     std::vector<ModelInstanceState*> instances_;
-    int idx_;
+    decltype(instances_)::iterator it_;
   };
   // map between device ID and associated instances
   std::map<int, InstanceList> device_instances_;
