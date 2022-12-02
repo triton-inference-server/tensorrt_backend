@@ -25,10 +25,73 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "model_state.h"
+#include "instance_state.h"
 #include "tensorrt_utils.h"
 #include "loader.h"
 
 namespace triton { namespace backend { namespace tensorrt {
+
+class DeviceBlockingArbitrator : public ExecutionArbitrator {
+ public:
+  DeviceBlockingArbitrator() {}
+  void RegisterInstance(const int device_id, ModelInstanceState* instance) override {
+    // instance may be created in parallel
+    std::lock_guard<std::mutex> lk(mtx_);
+    auto it = device_instances_.find(device_id);
+    if (it == device_instances_.end()) {
+      it = device_instances_
+              .emplace(
+                  std::make_pair(device_id, InstanceList()))
+              .first;
+      // The first instance of the device should have 1-less items because
+      // it is naturally ready for next execution. See
+      // TRITONBACKEND_ModelInstanceExecute for the implication of acquisition.
+      instance->SemaphorePtr()->Acquire();
+    }
+    it->second.instances_.emplace_back(instance);
+  }
+
+  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
+    std::lock_guard<std::mutex> lk(mtx_);
+    auto& il = device_instances_[device_id];
+    auto current_instance = il.instances_[il.idx_];
+    il.idx_ = ((il.idx_ + 1) % il.instances_.size());
+    // In DEVICE_BLOCKING, the semaphore of the "next instance" will be used to
+    // determine whether the execution should wait for resources to be ready for
+    // next execution.
+    // Here we simplify the "available instance" look-up by round-robin the
+    // instances associated with the given device, as the executions are less
+    // likely to finish out of order.
+    auto semaphore = il.instances_[il.idx_]->SemaphorePtr();
+    return {current_instance, semaphore};
+  }
+
+ private:
+  // A list of instances associated with the same device ID an the index
+  // to the instance to be used for execution.
+  struct InstanceList {
+    InstanceList() : idx_(0) {}
+    std::vector<ModelInstanceState*> instances_;
+    int idx_;
+  };
+  // map between device ID and associated instances
+  std::map<int, InstanceList> device_instances_;
+
+  std::mutex mtx_;
+};
+
+class InstanceBlockingArbitrator : public ExecutionArbitrator {
+ public:
+  InstanceBlockingArbitrator() {}
+  void RegisterInstance(const int device_id, ModelInstanceState* instance) override {
+    // all instances are naturally ready for next execution after initialization.
+    instance->SemaphorePtr()->Acquire();
+  }
+  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
+    // In BLOCKING, the TRITONBACKEND_ModelInstance and executing instance are coupled
+    return {instance, instance->SemaphorePtr()};
+  }
+};
 
 
 TRITONSERVER_Error*
@@ -76,6 +139,29 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
   TRITONBACKEND_Backend* backend;
   THROW_IF_BACKEND_MODEL_ERROR(
       TRITONBACKEND_ModelBackend(triton_model, &backend));
+  TRITONBACKEND_ExecutionPolicy policy;
+  THROW_IF_BACKEND_MODEL_ERROR(
+      TRITONBACKEND_BackendExecutionPolicy(backend, &policy));
+  switch (policy)
+  {
+  case TRITONBACKEND_EXECUTION_BLOCKING:
+    execution_arbitrator_.reset(new InstanceBlockingArbitrator());
+    break;
+  case TRITONBACKEND_EXECUTION_DEVICE_BLOCKING: {
+    // [FIXME] ad-hoc way to resolve the issue that in sequence batching,
+    // Triton instance must tie to the actual execution instance so that the
+    // model state is properly maintained.
+    triton::common::TritonJson::Value value;
+    bool found_sequence_batching =
+        ModelConfig().Find("sequence_batching", &value);
+    if (found_sequence_batching) {
+      execution_arbitrator_.reset(new InstanceBlockingArbitrator());
+    } else {
+      execution_arbitrator_.reset(new DeviceBlockingArbitrator());
+    }
+    break;
+  }
+  }
 }
 
 ModelState::~ModelState()
