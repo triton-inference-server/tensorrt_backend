@@ -561,7 +561,7 @@ ModelInstanceState::Run(
                                     ? events_[prev_set].ready_for_input_
                                     : nullptr;
   std::vector<int64_t> input_dims{(int64_t)payload_->total_batch_size_};
-   payload_->collector_.reset(new BackendInputCollector(
+  payload_->collector_.reset(new BackendInputCollector(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
       model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
       input_copy_stream_, events_[next_set_].input_ready_,
