@@ -91,10 +91,6 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         "triton backend API version does not support this backend");
   }
 
-  // Set the execution policy as device blocking for the backend.
-  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
-      backend, TRITONBACKEND_EXECUTION_DEVICE_BLOCKING));
-
   // The backend configuration may contain information needed by the
   // backend, such a command-line arguments.
   TRITONSERVER_Message* backend_config_message;
@@ -113,6 +109,9 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   if (byte_size != 0) {
     RETURN_IF_ERROR(backend_config.Parse(buffer, byte_size));
   }
+
+  // Default execution policy, may be overriden by backend config
+  auto execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
 
   std::unique_ptr<BackendConfiguration> lconfig(new BackendConfiguration());
   triton::common::TritonJson::Value cmdline;
@@ -148,7 +147,21 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         value_str.erase(0, pos);
       }
     }
+
+    // Set the execution policy according to backend config, default will be
+    // DEVICE_BLOCKING
+    if (cmdline.Find("execution-policy", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      if (value_str == "DEVICE_BLOCKING") {
+        execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
+      } else if (value_str == "BLOCKING") {
+        execution_policy = TRITONBACKEND_EXECUTION_BLOCKING;
+      }
+    }
   }
+
+  RETURN_IF_ERROR(TRITONBACKEND_BackendSetExecutionPolicy(
+      backend, execution_policy));
 
   // Register all the default and custom plugins that come with TensorRT
   bool success = true;
@@ -309,16 +322,19 @@ TRITONBACKEND_ModelInstanceExecute(
       instance, reinterpret_cast<void**>(&instance_state)));
   ModelState* model_state = instance_state->StateForModel();
 
-  // This backend specifies BLOCKING execution policy. That means that
-  // we should not return from this function until execution is
-  // complete. Triton will automatically release 'instance' on return
-  // from this function so that it is again available to be used for
-  // another call to TRITONBACKEND_ModelInstanceExecute.
+  // For TensorRT backend, the executing instance may not closely tie to
+  // TRITONBACKEND_ModelInstance, the instance will be assigned based on
+  // execution policy.
+  int32_t device_id;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceDeviceId(instance, &device_id));
+  auto instance_semaphore = model_state->ExecutionState(device_id, instance_state);
+  auto curr_instance = instance_semaphore.first;
+  auto semaphore = instance_semaphore.second;
 
   LOG_MESSAGE(
       TRITONSERVER_LOG_VERBOSE,
       (std::string("model ") + model_state->Name() + ", instance " +
-       instance_state->Name() + ", executing " + std::to_string(request_count) +
+       curr_instance->Name() + ", executing " + std::to_string(request_count) +
        " requests")
           .c_str());
 
@@ -327,7 +343,17 @@ TRITONBACKEND_ModelInstanceExecute(
   // this function. If something does go wrong in processing a
   // particular request then we send an error response just for the
   // specific request.
-  instance_state->ProcessRequests(requests, request_count);
+  curr_instance->ProcessRequests(requests, request_count);
+
+  // Returning from TRITONBACKEND_ModelInstanceExecute signals Triton to start
+  // preparing next batch. Due to the async execution in TensorRT backend, we
+  // need to block the function if there is no instance ready for preparing the
+  // next execution.
+  // Acquire() implies that the next execution can be initiated, and it is done
+  // at the end of current execution because we want to form the batch as late
+  // as possible, otherwise we may get a smaller batch while more requests may
+  // arrive between when the batch is formed and when batch is executed.
+  semaphore->Acquire();
 
   return nullptr;  // success
 }
