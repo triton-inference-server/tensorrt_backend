@@ -27,6 +27,7 @@
 #pragma once
 
 #include "model_state.h"
+#include "semaphore.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
@@ -258,8 +259,9 @@ class ModelInstanceState : public TensorRTModelInstance {
       TRITONBACKEND_Request** requests, const uint32_t request_count);
 
   void Run(
-      TRITONBACKEND_Request** requests, const uint32_t request_count,
-      const size_t context_idx);
+      TRITONBACKEND_Request** requests, const uint32_t request_count);
+
+  Semaphore* SemaphorePtr() { return semaphore_.get(); }
 
  protected:
   friend class TRTv1Interface;
@@ -269,7 +271,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       ModelState* model_state,
       TRITONBACKEND_ModelInstance* triton_model_instance);
 
-  void RegisterSemaphore();
+  void InitSemaphore();
   TRITONSERVER_Error* InitStreamsAndEvents();
   TRITONSERVER_Error* InitEventSet(bool busy_wait_events);
   TRITONSERVER_Error* DestroyEventSet();
@@ -415,11 +417,11 @@ class ModelInstanceState : public TensorRTModelInstance {
   struct Payload {
     explicit Payload(
         size_t event_set_idx, TRITONBACKEND_Request** requests,
-        uint32_t request_count, size_t sem_idx)
+        uint32_t request_count)
         : event_set_idx_(event_set_idx), total_batch_size_(0),
           compute_start_ns_(0), compute_input_end_ns_(0),
           compute_output_start_ns_(0), requests_(requests),
-          request_count_(request_count), sem_idx_(sem_idx)
+          request_count_(request_count)
     {
     }
 
@@ -438,7 +440,6 @@ class ModelInstanceState : public TensorRTModelInstance {
     std::vector<TRITONBACKEND_Request*> requests_list_;
     TRITONBACKEND_Request** requests_;
     uint32_t request_count_;
-    size_t sem_idx_;
 
     // All the generated InferenceResponse objects
     std::vector<TRITONBACKEND_Response*> responses_;
@@ -540,6 +541,11 @@ class ModelInstanceState : public TensorRTModelInstance {
   ModelState* model_state_;
 
   std::unique_ptr<TRTInterface> interface_;
+
+  // TRT model instance performs execution asynchorously and thus may go
+  // ahead to prepare further executions. Use semaphore to prevent going too
+  // far ahead and overwriting resources that are still in use.
+  std::unique_ptr<Semaphore> semaphore_;
 };
 
 }}}  // namespace triton::backend::tensorrt
