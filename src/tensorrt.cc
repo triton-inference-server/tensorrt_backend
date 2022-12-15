@@ -24,7 +24,16 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <NvInferPlugin.h>
+#include <cuda_runtime_api.h>
+#include <atomic>
+#include <chrono>
 #include <future>
+#include <map>
+#include <memory>
+#include <set>
+#include <thread>
+#include <unordered_map>
 #include "loader.h"
 #include "logging.h"
 #include "semaphore.h"
@@ -35,16 +44,6 @@
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
 #include "triton/common/nvtx.h"
-
-#include <NvInferPlugin.h>
-#include <cuda_runtime_api.h>
-#include <atomic>
-#include <chrono>
-#include <map>
-#include <memory>
-#include <set>
-#include <thread>
-#include <unordered_map>
 
 //
 // TensorRT Backend that implements the TRITONBACKEND API.
@@ -83,12 +82,6 @@ namespace {
       return;                                                                  \
     }                                                                          \
   } while (false)
-
-void CUDART_CB
-TimestampCaptureCallback(void* data)
-{
-  SET_TIMESTAMP(*(reinterpret_cast<uint64_t*>(data)));
-}
 
 #else
 #define FAIL_ALL_AND_RETURN_IF_ERROR(                                 \
@@ -1213,7 +1206,9 @@ class ModelInstanceState : public TensorRTModelInstance {
     cudaEvent_t output_ready_;
 
     // CUDA event for synchronizing the order of timestamp capture.
-    cudaEvent_t timestamp_signal_;
+    cudaEvent_t compute_output_start_;
+    cudaEvent_t compute_input_end_;
+    cudaEvent_t compute_input_start_;
   };
 
   // Use two sets of events each for current request and next request.
@@ -1372,9 +1367,9 @@ ModelInstanceState::Create(
     cc_model_filename = "model.plan";
   }
 
-  auto model_path =
-      JoinPath({model_state->RepositoryPath(),
-                std::to_string(model_state->Version()), cc_model_filename});
+  auto model_path = JoinPath(
+      {model_state->RepositoryPath(), std::to_string(model_state->Version()),
+       cc_model_filename});
 
   {
     bool exists;
@@ -1468,7 +1463,9 @@ ModelInstanceState::ModelInstanceState(
     events_[idx].ready_for_input_ = nullptr;
     events_[idx].output_ready_ = nullptr;
     events_[idx].ready_for_output_ = nullptr;
-    events_[idx].timestamp_signal_ = nullptr;
+    events_[idx].compute_input_start_ = nullptr;
+    events_[idx].compute_input_end_ = nullptr;
+    events_[idx].compute_output_start_ = nullptr;
   }
   support_batching_ = (model_state_->MaxBatchSize() > 0);
 
@@ -1672,9 +1669,20 @@ ModelInstanceState::Run(
   // Need to move the TRITONBACKEND_Request objects as the lifetime
   // must be extended till ProcessResponse completes.
   payload_.reset(new Payload(next_set_, requests, request_count, context_idx));
-  SET_TIMESTAMP(payload_->compute_start_ns_);
 
   cudaSetDevice(DeviceId());
+#ifdef TRITON_ENABLE_STATS
+  {
+    NVTX_RANGE(nvtx_, "Compute Input Start " + Name());
+    SET_TIMESTAMP(payload_->compute_start_ns_);
+
+    LOG_IF_CUDA_ERROR(
+        cudaEventRecord(
+            events_[next_set_].compute_input_start_, signal_stream_),
+        "cuda event record failed.");
+  }
+#endif  // TRITON_ENABLE_STATS
+
 
   const int max_batch_size = StateForModel()->MaxBatchSize();
 
@@ -1809,6 +1817,7 @@ ModelInstanceState::Run(
       input_copy_stream_, events_[next_set_].input_ready_,
       prev_input_ready_event, model_state_->GatherKernelBufferThreshold(),
       HostPolicyName().c_str(), zero_copy_support_, coalesce_request_input_));
+
   // For each input, concatenate input values from each request into
   // the corresponding binding.
   for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
@@ -1902,7 +1911,10 @@ ModelInstanceState::Run(
                 io_binding_info.buffer_, input_copy_stream_, &cuda_used),
             "error copying the batch input buffer");
         if (cuda_used) {
-          cudaEventRecord(events_[next_set_].input_ready_, input_copy_stream_);
+          LOG_IF_CUDA_ERROR(
+              cudaEventRecord(
+                  events_[next_set_].input_ready_, input_copy_stream_),
+              "event record");
         }
       }
     } else if (io_binding_info.buffer_is_ragged_) {
@@ -2047,14 +2059,12 @@ ModelInstanceState::Run(
       }
     }
   }
-  payload_->collector_->Finalize();
-
-#ifdef TRITON_ENABLE_STATS
-  cudaStreamWaitEvent(signal_stream_, events_[next_set_].input_ready_, 0);
-  cudaLaunchHostFunc(
-      signal_stream_, TimestampCaptureCallback,
-      reinterpret_cast<void*>(&payload_->compute_input_end_ns_));
-#endif  // TRITON_ENABLE_STATS
+  bool cuda_used = payload_->collector_->Finalize();
+  if (cuda_used) {
+    LOG_IF_CUDA_ERROR(
+        cudaEventRecord(events_[next_set_].input_ready_, input_copy_stream_),
+        "input copy stream");
+  }
 
   const TensorRTContext::CudaGraph* cuda_graph = nullptr;
   bool found_exact = false;
@@ -2114,8 +2124,10 @@ ModelInstanceState::Run(
                   input_copy_stream_, &cuda_used),
               "error copying the batch input buffer");
           if (cuda_used) {
-            cudaEventRecord(
-                events_[next_set_].input_ready_, input_copy_stream_);
+            LOG_IF_CUDA_ERROR(
+                cudaEventRecord(
+                    events_[next_set_].input_ready_, input_copy_stream_),
+                "event record");
           }
         }
       }
@@ -2126,11 +2138,27 @@ ModelInstanceState::Run(
   // Ensure inputs are ready before execution.
   // Output buffers are guaranteed to be available at this point when
   // the execution and output copy are on the same stream.
-  cudaStreamWaitEvent(stream_, events_[next_set_].input_ready_, 0);
+  LOG_IF_CUDA_ERROR(
+      cudaStreamWaitEvent(stream_, events_[next_set_].input_ready_, 0),
+      "stream wait");
+#ifdef TRITON_ENABLE_STATS
+  {
+    NVTX_RANGE(nvtx_, "Compute Input end " + Name());
+    LOG_IF_CUDA_ERROR(
+        cudaStreamWaitEvent(signal_stream_, events_[next_set_].input_ready_, 0),
+        "stream wait event");
+    LOG_IF_CUDA_ERROR(
+        cudaEventRecord(events_[next_set_].compute_input_end_, signal_stream_),
+        "event record");
+  }
+#endif  // TRITON_ENABLE_STATS
   // Wait for the output buffers to be available at this point when
   // the execution and output copy are on separate streams
   if (model_state_->SeparateOutputStream()) {
-    cudaStreamWaitEvent(stream_, events_[next_set_].output_ready_, 0);
+    LOG_IF_CUDA_ERROR(
+        cudaStreamWaitEvent(stream_, events_[next_set_].output_ready_, 0),
+
+        "stream wait event");
   }
   // Async execute the inference using a CUDA graph if available for
   // the batch-size, otherwise execution normally.
@@ -2145,7 +2173,7 @@ ModelInstanceState::Run(
     cudaError_t cuda_err =
         cudaGraphLaunch(cuda_graph->cuda_graph_exec_, stream_);
     if (cuda_err != cudaSuccess) {
-      cudaStreamSynchronize(stream_);
+      LOG_IF_CUDA_ERROR(cudaStreamSynchronize(stream_), "synchronize");
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           TRITONSERVER_ErrorNew(
@@ -2157,7 +2185,9 @@ ModelInstanceState::Run(
     }
     // Event recorded during CUDA graph capture is not visible outside
     // of the graph, need to explicitly record it.
-    cudaEventRecord(events_[next_set_].ready_for_input_, stream_);
+    LOG_IF_CUDA_ERROR(
+        cudaEventRecord(events_[next_set_].ready_for_input_, stream_),
+        "event record");
   } else {
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
@@ -2206,7 +2236,7 @@ ModelInstanceState::Run(
       if (!citr->second.context_->enqueueV2(
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
               &events_[next_set_].ready_for_input_)) {
-        cudaStreamSynchronize(stream_);
+        LOG_IF_CUDA_ERROR(cudaStreamSynchronize(stream_), "synchronize");
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             TRITONSERVER_ErrorNew(
@@ -2220,7 +2250,7 @@ ModelInstanceState::Run(
               payload_->total_batch_size_,
               buffer_bindings_[next_buffer_binding_set_].data(), stream_,
               &events_[next_set_].ready_for_input_)) {
-        cudaStreamSynchronize(stream_);
+        LOG_IF_CUDA_ERROR(cudaStreamSynchronize(stream_), "synchronize");
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             TRITONSERVER_ErrorNew(
@@ -2232,14 +2262,22 @@ ModelInstanceState::Run(
     }
   }
 
-  cudaEventRecord(events_[next_set_].ready_for_output_, stream_);
+  LOG_IF_CUDA_ERROR(
+      cudaEventRecord(events_[next_set_].ready_for_output_, stream_),
+      "stream wait event");
 
 #ifdef TRITON_ENABLE_STATS
-  cudaStreamWaitEvent(signal_stream_, events_[next_set_].ready_for_output_, 0);
-  cudaLaunchHostFunc(
-      signal_stream_, TimestampCaptureCallback,
-      reinterpret_cast<void*>(&payload_->compute_output_start_ns_));
-  cudaEventRecord(events_[next_set_].timestamp_signal_, signal_stream_);
+  {
+    NVTX_RANGE(nvtx_, "Compute output start " + Name());
+    LOG_IF_CUDA_ERROR(
+        cudaStreamWaitEvent(
+            signal_stream_, events_[next_set_].ready_for_output_, 0),
+        "stream wait event");
+    LOG_IF_CUDA_ERROR(
+        cudaEventRecord(
+            events_[next_set_].compute_output_start_, signal_stream_),
+        "event record");
+  }
 #endif  // TRITON_ENABLE_STATS
 
   // Collect the names of requested outputs. Do not include outputs
@@ -2554,6 +2592,7 @@ ModelInstanceState::SetOutputShapeTensorBuffer(
 void
 ModelInstanceState::ProcessResponse()
 {
+  cudaSetDevice(DeviceId());
   while (true) {
     NVTX_RANGE(nvtx_, "ProcessResponse " + Name());
     auto payload = std::move(completion_queue_.Get());
@@ -2566,7 +2605,8 @@ ModelInstanceState::ProcessResponse()
     // has consumed the inputs. Put the slot back into the available
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
-    cudaEventSynchronize(event_set.ready_for_input_);
+    LOG_IF_CUDA_ERROR(
+        cudaEventSynchronize(event_set.ready_for_input_), "event synchronize");
 
     // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
     for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
@@ -2583,7 +2623,8 @@ ModelInstanceState::ProcessResponse()
     // Call Finalize() here to defer CUDA synchronization as much as
     // possible
     payload->responder_->Finalize();
-    cudaEventSynchronize(event_set.output_ready_);
+    LOG_IF_CUDA_ERROR(
+        cudaEventSynchronize(event_set.output_ready_), "event synchronize");
     NVTX_MARKER("plan_output_ready");
 
     // Update the states
@@ -2600,8 +2641,27 @@ ModelInstanceState::ProcessResponse()
     // Compute ends when the output data copy is completed
     uint64_t compute_end_ns = 0;
 #ifdef TRITON_ENABLE_STATS
-    cudaEventSynchronize(event_set.timestamp_signal_);
+    LOG_IF_CUDA_ERROR(
+        cudaEventSynchronize(event_set.compute_output_start_), "sync failed");
     SET_TIMESTAMP(compute_end_ns);
+    float compute_infer = 0;
+    LOG_IF_CUDA_ERROR(
+        cudaEventElapsedTime(
+            &compute_infer, event_set.compute_input_end_,
+            event_set.compute_output_start_),
+        "elapsed failed");
+
+    float compute_input = 0;
+    LOG_IF_CUDA_ERROR(
+        cudaEventElapsedTime(
+            &compute_input, event_set.compute_input_start_,
+            event_set.compute_input_end_),
+        "elapsed time failed.");
+
+    payload->compute_input_end_ns_ =
+        payload->compute_start_ns_ + (compute_input * 1e6);
+    payload->compute_output_start_ns_ =
+        payload->compute_input_end_ns_ + (compute_infer * 1e6);
 #endif  // TRITON_ENABLE_STATS
 
     // Send all the responses that haven't already been sent because
@@ -2984,8 +3044,14 @@ ModelInstanceState::InitEventSet(bool busy_wait_events)
         &events_[idx].output_ready_));
 #ifdef TRITON_ENABLE_STATS
     RETURN_IF_ERROR(CreateCudaEvent(
-        "Set " + std::to_string(idx) + " timestamp signal", event_flags,
-        &events_[idx].timestamp_signal_));
+        "Set " + std::to_string(idx) + " compute output start", cudaEventDefault,
+        &events_[idx].compute_output_start_));
+    RETURN_IF_ERROR(CreateCudaEvent(
+        "Set " + std::to_string(idx) + " compute input start", cudaEventDefault,
+        &events_[idx].compute_input_start_));
+    RETURN_IF_ERROR(CreateCudaEvent(
+        "Set " + std::to_string(idx) + " compute input end", cudaEventDefault,
+        &events_[idx].compute_input_end_));
 #endif  // TRITON_ENABLE_STATS
   }
   return nullptr;
@@ -3007,8 +3073,14 @@ ModelInstanceState::DestroyEventSet()
     if (events_[idx].output_ready_ != nullptr) {
       cudaEventDestroy(events_[idx].output_ready_);
     }
-    if (events_[idx].timestamp_signal_ != nullptr) {
-      cudaEventDestroy(events_[idx].timestamp_signal_);
+    if (events_[idx].compute_output_start_ != nullptr) {
+      cudaEventDestroy(events_[idx].compute_output_start_);
+    }
+    if (events_[idx].compute_input_start_ != nullptr) {
+      cudaEventDestroy(events_[idx].compute_input_start_);
+    }
+    if (events_[idx].compute_input_end_ != nullptr) {
+      cudaEventDestroy(events_[idx].compute_input_end_);
     }
   }
   return nullptr;
@@ -3129,7 +3201,8 @@ ModelInstanceState::InitOptimizationProfiles()
                std::to_string(engine_->getNbOptimizationProfiles() - 1))
                   .c_str());
         }
-        cudaStreamSynchronize(CudaStream());
+        LOG_IF_CUDA_ERROR(
+            cudaStreamSynchronize(CudaStream()), "cuda syncrhonize failed");
       }
       // Store the profile dimensions and set binding dimensions to
       // max dims for later initializing the input bindings
@@ -3438,9 +3511,9 @@ ModelInstanceState::InitializeSequenceControlInputBindings(
   common::TritonJson::Value sequence_batching;
   if (model_state_->ModelConfig().Find(
           "sequence_batching", &sequence_batching)) {
-    std::vector<std::string> boolean_kinds{"CONTROL_SEQUENCE_START",
-                                           "CONTROL_SEQUENCE_END",
-                                           "CONTROL_SEQUENCE_READY"};
+    std::vector<std::string> boolean_kinds{
+        "CONTROL_SEQUENCE_START", "CONTROL_SEQUENCE_END",
+        "CONTROL_SEQUENCE_READY"};
 
     for (const auto& control_kind : boolean_kinds) {
       const bool required = false;
@@ -4935,7 +5008,8 @@ ModelInstanceState::BuildCudaGraph(
           (std::string("unable to record CUDA graph for ") + Name()).c_str());
       return false;
     }
-    cudaStreamSynchronize(CudaStream());
+    LOG_IF_CUDA_ERROR(
+        cudaStreamSynchronize(CudaStream()), "failed to synchronize");
   }
 
   bool captured = true;
@@ -5091,7 +5165,8 @@ ModelInstanceState::BuildCudaGraphV2(
           (std::string("unable to record CUDA graph for ") + Name()).c_str());
       return false;
     }
-    cudaStreamSynchronize(CudaStream());
+    LOG_IF_CUDA_ERROR(
+        cudaStreamSynchronize(CudaStream()), "Cuda synchronize failed.");
   }
 
   bool captured = true;
