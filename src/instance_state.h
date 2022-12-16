@@ -399,7 +399,9 @@ class ModelInstanceState : public TensorRTModelInstance {
     cudaEvent_t output_ready_;
 
     // CUDA event for synchronizing the order of timestamp capture.
-    cudaEvent_t timestamp_signal_;
+    cudaEvent_t compute_output_start_;
+    cudaEvent_t compute_input_end_;
+    cudaEvent_t compute_input_start_;
   };
 
   // Use two sets of events each for current request and next request.
