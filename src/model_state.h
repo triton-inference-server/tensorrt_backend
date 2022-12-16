@@ -38,9 +38,12 @@ class ModelInstanceState;
 // Helper class to determine the ModelInstanceState to be used for current
 // execution and the semaphore to be blocked for next execution.
 class ExecutionArbitrator {
-  public:
-  virtual void RegisterInstance(const int device_id, ModelInstanceState* instance) = 0;
-  virtual std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) = 0;
+ public:
+  virtual void RegisterInstance(
+      const int device_id, ModelInstanceState* instance) = 0;
+  virtual std::pair<ModelInstanceState*, Semaphore*> ExecutionState(
+      const int device_id, ModelInstanceState* instance) = 0;
+  virtual ~ExecutionArbitrator(){};
 };
 
 //
@@ -64,7 +67,8 @@ class ModelState : public TensorRTModel {
   bool IsEngineSharingEnabled() { return engine_sharing_; }
 
   // Register the instance and its associated device ID to execution arbitrator.
-  void RegisterInstance(const int device_id, ModelInstanceState* instance) {
+  void RegisterInstance(const int device_id, ModelInstanceState* instance)
+  {
     execution_arbitrator_->RegisterInstance(device_id, instance);
   }
 
@@ -72,7 +76,9 @@ class ModelState : public TensorRTModel {
   // the semaphore to check whether the next execution should be initiated.
   // 'device_id', 'instance' are the metadata assoicated with the
   // TRITONBACKEND_ModelInstance.
-  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) {
+  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(
+      const int device_id, ModelInstanceState* instance)
+  {
     return execution_arbitrator_->ExecutionState(device_id, instance);
   }
 
