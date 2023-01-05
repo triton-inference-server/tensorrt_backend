@@ -3570,7 +3570,7 @@ TRTv1Interface::BuildCudaGraph(
 
       if (captured) {
         cudaGraphExec_t graph_exec;
-        cuerr = cudaGraphInstantiate(&graph_exec, graph, NULL, NULL, 0);
+        cuerr = cudaGraphInstantiate(&graph_exec, graph, 0);
         if (cuerr != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
@@ -3727,7 +3727,7 @@ TRTv3Interface::BuildCudaGraph(
 
       if (captured) {
         cudaGraphExec_t graph_exec;
-        cuerr = cudaGraphInstantiate(&graph_exec, graph, NULL, NULL, 0);
+        cuerr = cudaGraphInstantiate(&graph_exec, graph, 0);
         if (cuerr != cudaSuccess) {
           LOG_MESSAGE(
               TRITONSERVER_LOG_ERROR,
