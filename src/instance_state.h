@@ -40,7 +40,7 @@
 namespace triton { namespace backend { namespace tensorrt {
 
 // Number of CUDA event set for each instance.
-static constexpr int EVENT_SET_COUNT = 2;
+static constexpr int EVENT_SET_COUNT = 3;
 
 //
 // BackendConfiguration
