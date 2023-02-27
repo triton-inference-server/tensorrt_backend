@@ -400,6 +400,12 @@ ModelInstanceState::ProcessRequests(
     payload_->requests_ = &payload_->requests_list_[0];
     // Put the details needed by the ProcessResponse thread on the
     // queue
+
+    TRITONSERVER_InferenceTrace* trace;
+    TRITONBACKEND_RequestTrace(requests[0], &trace);
+    uint64_t timestamp;
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(trace, "COMPLETION_QUEUE_START", timestamp);
     completion_queue_.Put(std::move(payload_));
     next_buffer_binding_set_ =
         (next_buffer_binding_set_ + 1) % num_copy_streams_;
@@ -1217,16 +1223,28 @@ ModelInstanceState::ProcessResponse()
   while (true) {
     NVTX_RANGE(nvtx_, "ProcessResponse " + Name());
     auto payload = std::move(completion_queue_.Get());
+    auto& request = payload->requests_[0];
+    TRITONSERVER_InferenceTrace* trace;
+    TRITONBACKEND_RequestTrace(request, &trace);
+
+    uint64_t timestamp;
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(trace, "COMPLETION_QUEUE_END", timestamp);
+
     if (payload.get() == nullptr) {
       break;
     }
     auto& event_set = events_[payload->event_set_idx_];
+
 
     // The model execution associated with the current slot
     // has consumed the inputs. Put the slot back into the available
     // slots so that it can begin enqueuing new memcpys into the input
     // buffers
     cudaEventSynchronize(event_set.ready_for_input_);
+
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(trace, "INPUT_EVENT_SYNCHRONIZE", timestamp);
 
     // This will be empty unless TRITONSERVER_RESET_BINDING_BUFFERS is set to 1
     for (auto& buffer_binding_pair : payload->buffer_input_binding_pairs_) {
@@ -1236,12 +1254,23 @@ ModelInstanceState::ProcessResponse()
     }
 
     semaphore_->Release();
+
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(trace, "SEMAPHORE_RELEASE", timestamp);
+
     NVTX_MARKER("plan_input_available");
 
     // Call Finalize() here to defer CUDA synchronization as much as
     // possible
     payload->responder_->Finalize();
+
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(trace, "FINALIZE_DONE", timestamp);
     cudaEventSynchronize(event_set.output_ready_);
+
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(
+        trace, "OUTPUT_READY_EVENT_SYNCHRONIZE", timestamp);
     NVTX_MARKER("plan_output_ready");
 
     // Update the states
@@ -1258,7 +1287,12 @@ ModelInstanceState::ProcessResponse()
     // Compute ends when the output data copy is completed
     uint64_t compute_end_ns = 0;
 #ifdef TRITON_ENABLE_STATS
+
     cudaEventSynchronize(event_set.compute_output_start_);
+    SET_TIMESTAMP(timestamp);
+    TRITONSERVER_ReportActivity(
+        trace, "OUTPUT_START_EVENT_SYNCHRONIZE", timestamp);
+
     float compute_infer = 0;
     LOG_IF_CUDA_ERROR(
         cudaEventElapsedTime(
