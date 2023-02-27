@@ -527,9 +527,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether zero copy is supported on this device
   bool zero_copy_support_;
 
-  // Whether to reset input binding buffers
-  bool reset_input_buffer_;
-
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible
   bool coalesce_request_input_;
