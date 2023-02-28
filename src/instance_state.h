@@ -40,7 +40,9 @@
 namespace triton { namespace backend { namespace tensorrt {
 
 // Number of CUDA event set for each instance.
-static constexpr int EVENT_SET_COUNT = 2;
+// We need three sets to avoid event overlaps between issue
+// and response threads. 
+static constexpr int EVENT_SET_COUNT = 3;
 
 //
 // BackendConfiguration
@@ -526,9 +528,6 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   // Whether zero copy is supported on this device
   bool zero_copy_support_;
-
-  // Whether to reset input binding buffers
-  bool reset_input_buffer_;
 
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible

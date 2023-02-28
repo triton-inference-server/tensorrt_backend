@@ -255,16 +255,6 @@ ModelInstanceState::ModelInstanceState(
   } else {
     LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Zero copy optimization is disabled");
   }
-
-  // The envvar TRITONSERVER_RESET_BINDING_BUFFERS is used only for testing
-  // purposes and should not be used otherwise
-  reset_input_buffer_ = false;
-  const char* reset_str = getenv("TRITONSERVER_RESET_BINDING_BUFFERS");
-  if (reset_str != nullptr) {
-    if (atoi(reset_str)) {
-      reset_input_buffer_ = true;
-    }
-  }
 }
 
 ModelInstanceState::~ModelInstanceState()
@@ -931,23 +921,6 @@ ModelInstanceState::Run(
               "failed to specify the values for all input shape "
               "tensors"),
           "failed to run TRT inference");
-    }
-
-    // Only record input binding buffers in payload if
-    // TRITONSERVER_RESET_BINDING_BUFFERS is enabled
-    if (reset_input_buffer_) {
-      for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
-        auto& io_binding_info =
-            io_binding_infos_[next_buffer_binding_set_][io_index];
-        int binding_index = binding_offset + io_index;
-        if (!engine_->bindingIsInput(binding_index)) {
-          continue;
-        }
-
-        payload_->buffer_input_binding_pairs_.push_back(std::make_pair(
-            buffer_bindings_[next_buffer_binding_set_][binding_index],
-            io_binding_info.byte_size_));
-      }
     }
 
     if (!interface_->Enqueue(citr->second.context_.get())) {
