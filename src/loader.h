@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "logging.h"
 #include "triton/core/tritonserver.h"
 
 namespace triton { namespace backend { namespace tensorrt {
@@ -41,6 +42,7 @@ namespace triton { namespace backend { namespace tensorrt {
 /// \param plan_path The path to the model plan file.
 /// \param dla_core_id The DLA core to use for this runtime. Does not
 /// use DLA when set to -1.
+/// \param tensorrt_logger The logger to be used by this TensorRT plan.
 /// \param runtime Returns the IRuntime object, or nullptr if failed
 /// to create.
 /// \param engine Returns the ICudaEngine object, or nullptr if failed
@@ -49,6 +51,7 @@ namespace triton { namespace backend { namespace tensorrt {
 TRITONSERVER_Error* LoadPlan(
     const std::string& plan_path, const int64_t dla_core_id,
     std::shared_ptr<nvinfer1::IRuntime>* runtime,
-    std::shared_ptr<nvinfer1::ICudaEngine>* engine);
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine,
+    TensorRTLogger* tensorrt_logger);
 
 }}}  // namespace triton::backend::tensorrt

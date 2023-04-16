@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -30,8 +30,6 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-TensorRTLogger tensorrt_logger;
-
 void
 TensorRTLogger::log(Severity severity, const char* msg) noexcept
 {
@@ -40,6 +38,7 @@ TensorRTLogger::log(Severity severity, const char* msg) noexcept
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
       break;
     case Severity::kERROR:
+      StoreMsg(severity, msg);
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
       break;
     case Severity::kWARNING:
@@ -52,6 +51,25 @@ TensorRTLogger::log(Severity severity, const char* msg) noexcept
       LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, msg);
       break;
   }
+}
+
+void
+TensorRTLogger::StoreMsg(Severity severity, const char* msg) noexcept
+{
+  // Currently, only the 'Severity::kERROR' message is interested and this
+  // function will only be called when a 'Severity::kERROR' message arrives, but
+  // the interface is designed to be called by 'TensorRTLogger::log()' for any
+  // messages under any severity level, if the other messages become interested
+  // in the future.
+  std::lock_guard<std::mutex> lock(mu_);
+  last_error_msg_ = std::string(msg);
+}
+
+std::string
+TensorRTLogger::LastErrorMsg()
+{
+  std::lock_guard<std::mutex> lock(mu_);
+  return last_error_msg_;
 }
 
 }}}  // namespace triton::backend::tensorrt

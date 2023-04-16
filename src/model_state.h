@@ -1,4 +1,4 @@
-// Copyright 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "logging.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
 
@@ -82,6 +83,8 @@ class ModelState : public TensorRTModel {
     return execution_arbitrator_->ExecutionState(device_id, instance);
   }
 
+  TensorRTLogger& GetTensorRTLogger() { return tensorrt_logger_; }
+
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
@@ -116,6 +119,9 @@ class ModelState : public TensorRTModel {
 
   // Parses the parameters in config
   TRITONSERVER_Error* ParseParameters();
+
+  // TensorRT logger for this model
+  TensorRTLogger tensorrt_logger_;
 
   // CUDA engine shared across all model instances using the same (or no) DLA
   // core on same GPU. The first element in the key pair is the GPU ID, the

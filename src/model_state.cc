@@ -1,4 +1,4 @@
-// Copyright 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -212,7 +212,8 @@ ModelState::CreateEngine(
 
     const bool new_runtime = (eit->second.first == nullptr);
     RETURN_IF_ERROR(LoadPlan(
-        model_path, dla_core_id, &eit->second.first, &eit->second.second));
+        model_path, dla_core_id, &eit->second.first, &eit->second.second,
+        &tensorrt_logger_));
     *engine = eit->second.second;
 
     if (new_runtime) {
@@ -388,8 +389,9 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 {
   std::shared_ptr<nvinfer1::IRuntime> runtime;
   std::shared_ptr<nvinfer1::ICudaEngine> engine;
-  if (LoadPlan(model_path, -1 /* dla_core_id */, &runtime, &engine) !=
-      nullptr) {
+  if (LoadPlan(
+          model_path, -1 /* dla_core_id */, &runtime, &engine,
+          &tensorrt_logger_) != nullptr) {
     if (engine.get() != nullptr) {
       engine.reset();
     }

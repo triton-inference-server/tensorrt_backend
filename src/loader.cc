@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -29,7 +29,6 @@
 #include <NvInferPlugin.h>
 #include <memory>
 #include <mutex>
-#include "logging.h"
 #include "triton/backend/backend_common.h"
 
 namespace triton { namespace backend { namespace tensorrt {
@@ -38,14 +37,18 @@ TRITONSERVER_Error*
 LoadPlan(
     const std::string& plan_path, const int64_t dla_core_id,
     std::shared_ptr<nvinfer1::IRuntime>* runtime,
-    std::shared_ptr<nvinfer1::ICudaEngine>* engine)
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine,
+    TensorRTLogger* tensorrt_logger)
 {
   // Create runtime only if it is not provided
   if (*runtime == nullptr) {
-    runtime->reset(nvinfer1::createInferRuntime(tensorrt_logger));
+    runtime->reset(nvinfer1::createInferRuntime(*tensorrt_logger));
     if (*runtime == nullptr) {
       return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT runtime");
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to create TensorRT runtime: ") +
+           tensorrt_logger->LastErrorMsg())
+              .c_str());
     }
   }
 
@@ -72,7 +75,10 @@ LoadPlan(
       (*runtime)->deserializeCudaEngine(&model_data[0], model_data.size()));
   if (*engine == nullptr) {
     return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT engine");
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to create TensorRT engine: ") +
+         tensorrt_logger->LastErrorMsg())
+            .c_str());
   }
 
   return nullptr;

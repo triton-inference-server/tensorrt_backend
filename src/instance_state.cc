@@ -1,4 +1,4 @@
-// Copyright 022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -1704,7 +1704,10 @@ ModelInstanceState::InitOptimizationProfiles()
       engine_->createExecutionContext());
   if (default_trt_context == nullptr) {
     return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to create TensorRT context: ") +
+         model_state_->GetTensorRTLogger().LastErrorMsg())
+            .c_str());
   }
 
   num_expected_bindings_ = total_bindings_ / total_profiles;
@@ -1745,7 +1748,10 @@ ModelInstanceState::InitOptimizationProfiles()
       res.first->second.context_.reset(engine_->createExecutionContext());
       if (res.first->second.context_ == nullptr) {
         return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL, "unable to create TensorRT context");
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("unable to create TensorRT context: ") +
+             model_state_->GetTensorRTLogger().LastErrorMsg())
+                .c_str());
       }
       if (!res.first->second.context_->setOptimizationProfileAsync(
               profile_index, stream_)) {
