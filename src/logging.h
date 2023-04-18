@@ -42,10 +42,10 @@ class TensorRTLogger : public nvinfer1::ILogger {
   std::string LastErrorMsg();
 
  private:
-  // Store messages logged by TensorRT
-  void StoreMsg(Severity severity, const char* msg) noexcept;
+  // Record error messages logged by TensorRT
+  void RecordErrorMsg(const char* msg) noexcept;
 
-  std::mutex mu_;  // serialize all state changing operations
+  std::mutex last_error_msg_mu_;  // Protect the last error message string.
   std::string last_error_msg_;
 };
 

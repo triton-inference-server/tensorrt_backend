@@ -38,7 +38,7 @@ TensorRTLogger::log(Severity severity, const char* msg) noexcept
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
       break;
     case Severity::kERROR:
-      StoreMsg(severity, msg);
+      RecordErrorMsg(msg);
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
       break;
     case Severity::kWARNING:
@@ -54,21 +54,16 @@ TensorRTLogger::log(Severity severity, const char* msg) noexcept
 }
 
 void
-TensorRTLogger::StoreMsg(Severity severity, const char* msg) noexcept
+TensorRTLogger::RecordErrorMsg(const char* msg) noexcept
 {
-  // Currently, only the 'Severity::kERROR' message is interested and this
-  // function will only be called when a 'Severity::kERROR' message arrives, but
-  // the interface is designed to be called by 'TensorRTLogger::log()' for any
-  // messages under any severity level, if the other messages become interested
-  // in the future.
-  std::lock_guard<std::mutex> lock(mu_);
+  std::lock_guard<std::mutex> lock(last_error_msg_mu_);
   last_error_msg_ = std::string(msg);
 }
 
 std::string
 TensorRTLogger::LastErrorMsg()
 {
-  std::lock_guard<std::mutex> lock(mu_);
+  std::lock_guard<std::mutex> lock(last_error_msg_mu_);
   return last_error_msg_;
 }
 
