@@ -34,10 +34,7 @@ void
 TensorRTLogger::log(Severity severity, const char* msg) noexcept
 {
   switch (severity) {
-    case Severity::kINTERNAL_ERROR:
-      RecordErrorMsg(msg);
-      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
-      break;
+    case Severity::kINTERNAL_ERROR:  // fall-through to 'Severity::kERROR'
     case Severity::kERROR:
       RecordErrorMsg(msg);
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
