@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -30,16 +30,13 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-TensorRTLogger tensorrt_logger;
-
 void
 TensorRTLogger::log(Severity severity, const char* msg) noexcept
 {
   switch (severity) {
-    case Severity::kINTERNAL_ERROR:
-      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
-      break;
+    case Severity::kINTERNAL_ERROR:  // fall-through to 'Severity::kERROR'
     case Severity::kERROR:
+      RecordErrorMsg(msg);
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
       break;
     case Severity::kWARNING:
@@ -52,6 +49,20 @@ TensorRTLogger::log(Severity severity, const char* msg) noexcept
       LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, msg);
       break;
   }
+}
+
+void
+TensorRTLogger::RecordErrorMsg(const char* msg) noexcept
+{
+  std::lock_guard<std::mutex> lock(last_error_msg_mu_);
+  last_error_msg_ = std::string(msg);
+}
+
+std::string
+TensorRTLogger::LastErrorMsg()
+{
+  std::lock_guard<std::mutex> lock(last_error_msg_mu_);
+  return last_error_msg_;
 }
 
 }}}  // namespace triton::backend::tensorrt

@@ -1,4 +1,4 @@
-// Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -27,13 +27,26 @@
 
 #include <NvInfer.h>
 
+#include <mutex>
+#include <string>
+
 namespace triton { namespace backend { namespace tensorrt {
 
 // Logger for TensorRT API
 class TensorRTLogger : public nvinfer1::ILogger {
+  // Called by TensorRT to log messages
   void log(Severity severity, const char* msg) noexcept override;
-};
 
-extern TensorRTLogger tensorrt_logger;
+ public:
+  // Return the last 'Severity::kERROR' message logged by TensorRT
+  std::string LastErrorMsg();
+
+ private:
+  // Record error messages logged by TensorRT
+  void RecordErrorMsg(const char* msg) noexcept;
+
+  std::mutex last_error_msg_mu_;  // Protect the last error message string.
+  std::string last_error_msg_;
+};
 
 }}}  // namespace triton::backend::tensorrt
