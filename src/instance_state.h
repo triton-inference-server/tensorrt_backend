@@ -26,13 +26,13 @@
 
 #pragma once
 
+#include <future>
+#include <map>
 #include "model_state.h"
 #include "semaphore.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
-#include <map>
-#include <future>
 
 
 #include <NvInfer.h>
@@ -41,7 +41,7 @@ namespace triton { namespace backend { namespace tensorrt {
 
 // Number of CUDA event set for each instance.
 // We need three sets to avoid event overlaps between issue
-// and response threads. 
+// and response threads.
 static constexpr int EVENT_SET_COUNT = 3;
 
 //
@@ -49,8 +49,33 @@ static constexpr int EVENT_SET_COUNT = 3;
 //
 // Struct to hold values specified via backend config
 struct BackendConfiguration {
-  BackendConfiguration() : coalesce_request_input_(false) {}
-  bool coalesce_request_input_;
+  static const BackendConfiguration& RetriveFrom(TRITONBACKEND_Backend* backend)
+  {
+    void* state = nullptr;
+    THROW_IF_BACKEND_INSTANCE_ERROR(
+        TRITONBACKEND_BackendState(backend, &state));
+    return *reinterpret_cast<BackendConfiguration*>(state);
+  }
+
+  static const BackendConfiguration& RetriveFrom(TRITONBACKEND_Model* model)
+  {
+    TRITONBACKEND_Backend* backend = nullptr;
+    THROW_IF_BACKEND_INSTANCE_ERROR(
+        TRITONBACKEND_ModelBackend(model, &backend));
+    return RetriveFrom(backend);
+  }
+
+  static const BackendConfiguration& RetriveFrom(
+      TRITONBACKEND_ModelInstance* instance)
+  {
+    TRITONBACKEND_Model* model = nullptr;
+    THROW_IF_BACKEND_INSTANCE_ERROR(
+        TRITONBACKEND_ModelInstanceModel(instance, &model));
+    return RetriveFrom(model);
+  }
+
+  bool enable_memory_tracker_{false};
+  bool coalesce_request_input_{false};
 };
 
 class ModelInstanceState;
@@ -125,9 +150,7 @@ struct TensorRTContext {
 };
 
 struct GraphSpec {
-  GraphSpec() : batch_size_(0), lower_bound_batch_size_(0), captured_(false)
-  {
-  }
+  GraphSpec() : batch_size_(0), lower_bound_batch_size_(0), captured_(false) {}
   int64_t batch_size_;
   std::map<std::string, std::vector<int64_t>> shapes_;
   int64_t lower_bound_batch_size_;
@@ -136,7 +159,10 @@ struct GraphSpec {
 };
 
 struct TensorFormat {
-  TensorFormat() : is_linear_format_(true), vectorized_dim_(-1), components_per_element_(1)  {}
+  TensorFormat()
+      : is_linear_format_(true), vectorized_dim_(-1), components_per_element_(1)
+  {
+  }
   bool is_linear_format_;
   int vectorized_dim_;
   int components_per_element_;
@@ -156,18 +182,25 @@ class TRTInterface {
   // This function will be called to specify the runtime shape of the input and
   // adding metadata into exisiting 'cuda_graph_key' for graph lookup.
   virtual TRITONSERVER_Error* SetBindingDimensions(
-    const std::string& input_name, const std::vector<int64_t>& shape,
-    const TensorRTContext& trt_context, const size_t io_index,
-    const size_t binding_index, std::vector<int64_t>* cuda_graph_key) = 0;
+      const std::string& input_name, const std::vector<int64_t>& shape,
+      const TensorRTContext& trt_context, const size_t io_index,
+      const size_t binding_index, std::vector<int64_t>* cuda_graph_key) = 0;
 
   // Return the max byte size of the binding
-  virtual int64_t GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index) = 0;
+  virtual int64_t GetFullByteSize(
+      nvinfer1::IExecutionContext* context, const std::string& tensor_name,
+      int32_t binding_index) = 0;
 
-  virtual TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) = 0;
+  virtual TRITONSERVER_Error* SetFormat(
+      int binding_index, TensorFormat* format) = 0;
 
   // get max input shape of the binding buffer based on the given
   // TensorRTContext (optimization profile),member of 'context' may be updated
-  virtual TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) = 0;
+  virtual TRITONSERVER_Error* ConfigureInputDimensions(
+      TensorRTContext* context, int io_index, int binding_index,
+      std::vector<int64_t> full_config_dims,
+      std::vector<int64_t>* maximum_dims) = 0;
+
  protected:
   ModelInstanceState* instance_;
 
@@ -183,12 +216,19 @@ class TRTv1Interface : public TRTInterface {
   TRTv1Interface(ModelInstanceState* i) : TRTInterface(i) {}
   bool Enqueue(nvinfer1::IExecutionContext* context) override;
   TRITONSERVER_Error* SetBindingDimensions(
-    const std::string& input_name, const std::vector<int64_t>& shape,
-    const TensorRTContext& trt_context, const size_t io_index,
-    const size_t binding_index, std::vector<int64_t>* cuda_graph_key) override;
-  int64_t GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index) override;
-  TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
-  TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
+      const std::string& input_name, const std::vector<int64_t>& shape,
+      const TensorRTContext& trt_context, const size_t io_index,
+      const size_t binding_index,
+      std::vector<int64_t>* cuda_graph_key) override;
+  int64_t GetFullByteSize(
+      nvinfer1::IExecutionContext* context, const std::string& tensor_name,
+      int32_t binding_index) override;
+  TRITONSERVER_Error* SetFormat(
+      int binding_index, TensorFormat* format) override;
+  TRITONSERVER_Error* ConfigureInputDimensions(
+      TensorRTContext* context, int io_index, int binding_index,
+      std::vector<int64_t> full_config_dims,
+      std::vector<int64_t>* maximum_dims) override;
 #ifdef TRITON_ENABLE_CUDA_GRAPH
  public:
   bool BuildCudaGraph(
@@ -201,12 +241,20 @@ class TRTv3Interface : public TRTInterface {
   TRTv3Interface(ModelInstanceState* i) : TRTInterface(i) {}
   bool Enqueue(nvinfer1::IExecutionContext* context) override;
   TRITONSERVER_Error* SetBindingDimensions(
-    const std::string& input_name, const std::vector<int64_t>& shape,
-    const TensorRTContext& trt_context, const size_t io_index,
-    const size_t binding_index, std::vector<int64_t>* cuda_graph_key) override;
-  int64_t GetFullByteSize(nvinfer1::IExecutionContext* context, const std::string& tensor_name, int32_t binding_index) override;
-  TRITONSERVER_Error* SetFormat(int binding_index, TensorFormat* format) override;
-  TRITONSERVER_Error* ConfigureInputDimensions(TensorRTContext* context, int io_index, int binding_index, std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims) override;
+      const std::string& input_name, const std::vector<int64_t>& shape,
+      const TensorRTContext& trt_context, const size_t io_index,
+      const size_t binding_index,
+      std::vector<int64_t>* cuda_graph_key) override;
+  int64_t GetFullByteSize(
+      nvinfer1::IExecutionContext* context, const std::string& tensor_name,
+      int32_t binding_index) override;
+  TRITONSERVER_Error* SetFormat(
+      int binding_index, TensorFormat* format) override;
+  TRITONSERVER_Error* ConfigureInputDimensions(
+      TensorRTContext* context, int io_index, int binding_index,
+      std::vector<int64_t> full_config_dims,
+      std::vector<int64_t>* maximum_dims) override;
+
  private:
   // Helper function to be called in Enqueue(). In v3, the binding buffer is set
   // in execution context instead of being provided on enqueue, so in the case
@@ -214,12 +262,13 @@ class TRTv3Interface : public TRTInterface {
   // tensor address to proper buffers.
   bool SetTensorAddress(nvinfer1::IExecutionContext* context);
   TRITONSERVER_Error* MaximumDims(
-    const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
-    std::vector<int64_t>* max_dims);
+      const nvinfer1::Dims& max_profile_dims, const std::vector<int64_t>& dims,
+      std::vector<int64_t>* max_dims);
 #ifdef TRITON_ENABLE_CUDA_GRAPH
  public:
   bool BuildCudaGraph(
       TensorRTContext* trt_context, const GraphSpec& graph_spec) override;
+
  private:
   TRITONSERVER_Error* SetCudaGraphShape(
       TensorRTContext* trt_context, const GraphSpec& graph_spec,
@@ -260,8 +309,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   void ProcessRequests(
       TRITONBACKEND_Request** requests, const uint32_t request_count);
 
-  void Run(
-      TRITONBACKEND_Request** requests, const uint32_t request_count);
+  void Run(TRITONBACKEND_Request** requests, const uint32_t request_count);
 
   Semaphore* SemaphorePtr() { return semaphore_.get(); }
 
@@ -472,8 +520,8 @@ class ModelInstanceState : public TensorRTModelInstance {
     IOBindingInfo()
         : byte_size_(0), buffer_(nullptr), device_buffer_(nullptr),
           memory_type_(TRITONSERVER_MEMORY_GPU), memory_type_id_(0),
-          buffer_is_ragged_(false), format_(),
-          is_state_output_(false), is_requested_output_tensor_(false)
+          buffer_is_ragged_(false), format_(), is_state_output_(false),
+          is_requested_output_tensor_(false)
     {
     }
     std::string name_;
