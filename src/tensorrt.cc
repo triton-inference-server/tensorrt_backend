@@ -224,11 +224,10 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
   // Utilizing DeviceMemoryTracker behavior that function calls with
   // 'nullptr' for usage will be no-ops.
   std::unique_ptr<DeviceMemoryTracker::MemoryUsage> lusage;
-  if (BackendConfiguration::RetriveFrom(model).enable_memory_tracker_) {
+  if (BackendConfiguration::RetrieveFrom(model).enable_memory_tracker_) {
     lusage.reset(new DeviceMemoryTracker::MemoryUsage());
+    DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
   }
-
-  DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
 
   // With each model we create a ModelState object and associate it
   // with the TRITONBACKEND_Model.
@@ -237,14 +236,14 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
   RETURN_IF_ERROR(
       TRITONBACKEND_ModelSetState(model, reinterpret_cast<void*>(model_state)));
 
-  DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
-  TRITONSERVER_BufferAttributes** ba_array;
-  uint32_t ba_len = 0;
   if (lusage) {
+    DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
+    TRITONSERVER_BufferAttributes** ba_array;
+    uint32_t ba_len = 0;
     RETURN_IF_ERROR(lusage->SerializeToBufferAttributes(&ba_array, &ba_len));
+    RETURN_IF_ERROR(
+        TRITONBACKEND_ModelReportMemoryUsage(model, ba_array, ba_len));
   }
-  RETURN_IF_ERROR(
-      TRITONBACKEND_ModelReportMemoryUsage(model, ba_array, ba_len));
 
   return nullptr;  // success
 }
@@ -301,11 +300,11 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   // Utilizing DeviceMemoryTracker behavior that function calls with
   // 'nullptr' for usage will be no-ops.
   std::unique_ptr<DeviceMemoryTracker::MemoryUsage> lusage;
-  if (BackendConfiguration::RetriveFrom(instance).enable_memory_tracker_) {
+  if (BackendConfiguration::RetrieveFrom(instance).enable_memory_tracker_) {
     lusage.reset(new DeviceMemoryTracker::MemoryUsage());
+    DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
   }
 
-  DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
 
   // With each instance we create a ModelInstanceState object and
   // associate it with the TRITONBACKEND_ModelInstance.
@@ -315,14 +314,14 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
       instance, reinterpret_cast<void*>(instance_state)));
 
-  DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
-  TRITONSERVER_BufferAttributes** ba_array;
-  uint32_t ba_len = 0;
   if (lusage) {
+    DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
+    TRITONSERVER_BufferAttributes** ba_array;
+    uint32_t ba_len = 0;
     RETURN_IF_ERROR(lusage->SerializeToBufferAttributes(&ba_array, &ba_len));
+    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceReportMemoryUsage(
+        instance, ba_array, ba_len));
   }
-  RETURN_IF_ERROR(
-      TRITONBACKEND_ModelInstanceReportMemoryUsage(instance, ba_array, ba_len));
 
   return nullptr;  // success
 }

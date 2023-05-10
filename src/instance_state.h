@@ -49,7 +49,8 @@ static constexpr int EVENT_SET_COUNT = 3;
 //
 // Struct to hold values specified via backend config
 struct BackendConfiguration {
-  static const BackendConfiguration& RetriveFrom(TRITONBACKEND_Backend* backend)
+  static const BackendConfiguration& RetrieveFrom(
+      TRITONBACKEND_Backend* backend)
   {
     void* state = nullptr;
     THROW_IF_BACKEND_INSTANCE_ERROR(
@@ -57,21 +58,21 @@ struct BackendConfiguration {
     return *reinterpret_cast<BackendConfiguration*>(state);
   }
 
-  static const BackendConfiguration& RetriveFrom(TRITONBACKEND_Model* model)
+  static const BackendConfiguration& RetrieveFrom(TRITONBACKEND_Model* model)
   {
     TRITONBACKEND_Backend* backend = nullptr;
     THROW_IF_BACKEND_INSTANCE_ERROR(
         TRITONBACKEND_ModelBackend(model, &backend));
-    return RetriveFrom(backend);
+    return RetrieveFrom(backend);
   }
 
-  static const BackendConfiguration& RetriveFrom(
+  static const BackendConfiguration& RetrieveFrom(
       TRITONBACKEND_ModelInstance* instance)
   {
     TRITONBACKEND_Model* model = nullptr;
     THROW_IF_BACKEND_INSTANCE_ERROR(
         TRITONBACKEND_ModelInstanceModel(instance, &model));
-    return RetriveFrom(model);
+    return RetrieveFrom(model);
   }
 
   bool enable_memory_tracker_{false};
