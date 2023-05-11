@@ -196,6 +196,10 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
+  if (BackendConfiguration::RetrieveFrom(backend).enable_memory_tracker_) {
+    DeviceMemoryTracker::Fini();
+  }
+
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
   delete reinterpret_cast<BackendConfiguration*>(vstate);
