@@ -26,16 +26,16 @@
 
 #pragma once
 
+#include <NvInfer.h>
+
 #include <future>
 #include <map>
+
 #include "model_state.h"
 #include "semaphore.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
-
-
-#include <NvInfer.h>
 
 namespace triton { namespace backend { namespace tensorrt {
 

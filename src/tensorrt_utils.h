@@ -27,6 +27,7 @@
 #pragma once
 
 #include <NvInfer.h>
+
 #include <string>
 #include <vector>
 
@@ -104,8 +105,8 @@ const std::string DimsDebugString(const nvinfer1::Dims& dims);
 
 const std::string DimsJsonToString(common::TritonJson::Value& dims);
 
-TRITONSERVER_Error*
-SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support);
+TRITONSERVER_Error* SupportsIntegratedZeroCopy(
+    const int gpu_id, bool* zero_copy_support);
 
 //
 // Templates
@@ -139,8 +140,8 @@ ValidateDimension(
           (std::string("model expected the shape of dimension ") +
            std::to_string(i + nonbatch_start_idx) + " to be between " +
            std::to_string(min_dims.d[i]) + " and " +
-           std::to_string(max_dims.d[i]) +
-           " but received " + std::to_string(this_dims[i + nonbatch_start_idx]))
+           std::to_string(max_dims.d[i]) + " but received " +
+           std::to_string(this_dims[i + nonbatch_start_idx]))
               .c_str());
     }
   }

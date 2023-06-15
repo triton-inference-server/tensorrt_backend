@@ -26,9 +26,11 @@
 #pragma once
 
 #include <NvInfer.h>
+
 #include <memory>
 #include <string>
 #include <vector>
+
 #include "logging.h"
 #include "triton/core/tritonserver.h"
 

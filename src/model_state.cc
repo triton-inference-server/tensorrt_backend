@@ -25,24 +25,25 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "model_state.h"
+
 #include "instance_state.h"
-#include "tensorrt_utils.h"
 #include "loader.h"
+#include "tensorrt_utils.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
 class DeviceBlockingArbitrator : public ExecutionArbitrator {
  public:
   DeviceBlockingArbitrator() {}
-  void RegisterInstance(const int device_id, ModelInstanceState* instance) override {
+  void RegisterInstance(
+      const int device_id, ModelInstanceState* instance) override
+  {
     // instance may be created in parallel
     std::lock_guard<std::mutex> lk(mtx_);
     auto it = device_instances_.find(device_id);
     if (it == device_instances_.end()) {
-      it = device_instances_
-              .emplace(
-                  std::make_pair(device_id, InstanceList()))
-              .first;
+      it = device_instances_.emplace(std::make_pair(device_id, InstanceList()))
+               .first;
       // The first instance of the device should have 1-less items because
       // it is naturally ready for next execution. See
       // TRITONBACKEND_ModelInstanceExecute for the implication of acquisition.
@@ -51,7 +52,9 @@ class DeviceBlockingArbitrator : public ExecutionArbitrator {
     it->second.instances_.emplace_back(instance);
   }
 
-  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
+  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(
+      const int device_id, ModelInstanceState* instance) override
+  {
     std::lock_guard<std::mutex> lk(mtx_);
     auto& il = device_instances_[device_id];
     auto current_instance = il.instances_[il.idx_];
@@ -83,12 +86,18 @@ class DeviceBlockingArbitrator : public ExecutionArbitrator {
 class InstanceBlockingArbitrator : public ExecutionArbitrator {
  public:
   InstanceBlockingArbitrator() {}
-  void RegisterInstance(const int device_id, ModelInstanceState* instance) override {
-    // all instances are naturally ready for next execution after initialization.
+  void RegisterInstance(
+      const int device_id, ModelInstanceState* instance) override
+  {
+    // all instances are naturally ready for next execution after
+    // initialization.
     instance->SemaphorePtr()->Acquire();
   }
-  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(const int device_id, ModelInstanceState* instance) override {
-    // In BLOCKING, the TRITONBACKEND_ModelInstance and executing instance are coupled
+  std::pair<ModelInstanceState*, Semaphore*> ExecutionState(
+      const int device_id, ModelInstanceState* instance) override
+  {
+    // In BLOCKING, the TRITONBACKEND_ModelInstance and executing instance are
+    // coupled
     return {instance, instance->SemaphorePtr()};
   }
 };
@@ -142,25 +151,24 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
   TRITONBACKEND_ExecutionPolicy policy;
   THROW_IF_BACKEND_MODEL_ERROR(
       TRITONBACKEND_BackendExecutionPolicy(backend, &policy));
-  switch (policy)
-  {
-  case TRITONBACKEND_EXECUTION_BLOCKING:
-    execution_arbitrator_.reset(new InstanceBlockingArbitrator());
-    break;
-  case TRITONBACKEND_EXECUTION_DEVICE_BLOCKING: {
-    // [FIXME] ad-hoc way to resolve the issue that in sequence batching,
-    // Triton instance must tie to the actual execution instance so that the
-    // model state is properly maintained.
-    triton::common::TritonJson::Value value;
-    bool found_sequence_batching =
-        ModelConfig().Find("sequence_batching", &value);
-    if (found_sequence_batching) {
+  switch (policy) {
+    case TRITONBACKEND_EXECUTION_BLOCKING:
       execution_arbitrator_.reset(new InstanceBlockingArbitrator());
-    } else {
-      execution_arbitrator_.reset(new DeviceBlockingArbitrator());
+      break;
+    case TRITONBACKEND_EXECUTION_DEVICE_BLOCKING: {
+      // [FIXME] ad-hoc way to resolve the issue that in sequence batching,
+      // Triton instance must tie to the actual execution instance so that the
+      // model state is properly maintained.
+      triton::common::TritonJson::Value value;
+      bool found_sequence_batching =
+          ModelConfig().Find("sequence_batching", &value);
+      if (found_sequence_batching) {
+        execution_arbitrator_.reset(new InstanceBlockingArbitrator());
+      } else {
+        execution_arbitrator_.reset(new DeviceBlockingArbitrator());
+      }
+      break;
     }
-    break;
-  }
   }
 }
 
