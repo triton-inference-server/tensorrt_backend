@@ -25,6 +25,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "shared_library.h"
+
 #include "filesystem.h"
 #include "logging.h"
 #include "mutex"

@@ -25,10 +25,10 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
+#include <set>
+
 #include "tensorrt_model.h"
 #include "triton/backend/backend_model_instance.h"
-
-#include <set>
 
 namespace triton { namespace backend { namespace tensorrt {
 

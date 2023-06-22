@@ -25,6 +25,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string>
+
 #include "triton/backend/backend_common.h"
 
 /// FIXME: Duplication of core/src/shared_library.h

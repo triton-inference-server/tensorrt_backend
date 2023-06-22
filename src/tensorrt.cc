@@ -24,24 +24,24 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <future>
-#include "logging.h"
-
-#include "instance_state.h"
-#include "model_state.h"
-#include "shared_library.h"
-#include "triton/backend/backend_common.h"
-#include "triton/backend/device_memory_tracker.h"
-
 #include <NvInferPlugin.h>
 #include <cuda_runtime_api.h>
+
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <map>
 #include <memory>
 #include <set>
 #include <thread>
 #include <unordered_map>
+
+#include "instance_state.h"
+#include "logging.h"
+#include "model_state.h"
+#include "shared_library.h"
+#include "triton/backend/backend_common.h"
+#include "triton/backend/device_memory_tracker.h"
 
 //
 // TensorRT Backend that implements the TRITONBACKEND API.

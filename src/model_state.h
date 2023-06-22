@@ -26,12 +26,12 @@
 
 #pragma once
 
+#include <NvInfer.h>
+
 #include "logging.h"
+#include "semaphore.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
-
-#include <NvInfer.h>
-#include "semaphore.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 

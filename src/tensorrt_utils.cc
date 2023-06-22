@@ -25,7 +25,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tensorrt_utils.h"
+
 #include <NvInferPlugin.h>
+
 #include "triton/backend/backend_common.h"
 
 namespace triton { namespace backend { namespace tensorrt {
@@ -312,23 +314,21 @@ ValidateDimension(
   if ((this_dims.nbDims) != max_dims.nbDims) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
-        (std::string("model expected ") +
-         std::to_string(max_dims.nbDims) +
+        (std::string("model expected ") + std::to_string(max_dims.nbDims) +
          " dimensions but received " + std::to_string(this_dims.nbDims) +
          " dimensions")
             .c_str());
   }
 
   for (int i = 0; i < this_dims.nbDims; i++) {
-    if (this_dims.d[i] < min_dims.d[i] ||
-        this_dims.d[i] > max_dims.d[i]) {
+    if (this_dims.d[i] < min_dims.d[i] || this_dims.d[i] > max_dims.d[i]) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("model expected the shape of dimension ") +
            std::to_string(i) + " to be between " +
            std::to_string(min_dims.d[i]) + " and " +
-           std::to_string(max_dims.d[i]) +
-           " but received " + std::to_string(this_dims.d[i]))
+           std::to_string(max_dims.d[i]) + " but received " +
+           std::to_string(this_dims.d[i]))
               .c_str());
     }
   }
