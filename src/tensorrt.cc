@@ -93,7 +93,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // The backend configuration may contain information needed by the
-  // backend, such a command-line arguments.
+  // backend, such as command-line arguments.
   TRITONSERVER_Message* backend_config_message;
   RETURN_IF_ERROR(
       TRITONBACKEND_BackendConfig(backend, &backend_config_message));
