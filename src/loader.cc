@@ -27,8 +27,10 @@
 #include "loader.h"
 
 #include <NvInferPlugin.h>
+
 #include <memory>
 #include <mutex>
+
 #include "triton/backend/backend_common.h"
 
 namespace triton { namespace backend { namespace tensorrt {
