@@ -30,35 +30,34 @@ namespace triton { namespace backend { namespace tensorrt {
 
 void*
 OutputAllocator::reallocateOutput(
-        char const* tensor_name, void* current_memory,
-        uint64_t size, uint64_t alignment) noexcept
-    {
-        if (size > output_size_)
-        {
-            // Need to reallocate
-            cudaFree(output_ptr_);
-            output_ptr_ = nullptr;
-            output_size_ = 0;
-            if (cudaMalloc(&output_ptr_, size) == cudaSuccess)
-            {
-                output_size_ = size;
-            }
-        }
-        // If the cudaMalloc fails, output_ptr_=nullptr, and engine
-        // gracefully fails.
-        return output_ptr_;
+    char const* tensor_name, void* current_memory, uint64_t size,
+    uint64_t alignment) noexcept
+{
+  if (size > output_size_) {
+    // Need to reallocate
+    cudaFree(output_ptr_);
+    output_ptr_ = nullptr;
+    output_size_ = 0;
+    if (cudaMalloc(&output_ptr_, size) == cudaSuccess) {
+      output_size_ = size;
     }
+  }
+  // If the cudaMalloc fails, output_ptr_=nullptr, and engine
+  // gracefully fails.
+  return output_ptr_;
+}
 
 void
-OutputAllocator::notifyShape(char const* tensor_name, nvinfer1::Dims const& dims) noexcept
-    {
-        // Remember output dimensions for later use.
-        output_dims_ = dims;
-    }
+OutputAllocator::notifyShape(
+    char const* tensor_name, nvinfer1::Dims const& dims) noexcept
+{
+  // Remember output dimensions for later use.
+  output_dims_ = dims;
+}
 
 OutputAllocator::~OutputAllocator()
-    {
-        cudaFree(output_ptr_);
-    }
+{
+  cudaFree(output_ptr_);
+}
 
 }}}  // namespace triton::backend::tensorrt

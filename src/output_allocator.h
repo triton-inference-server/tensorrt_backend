@@ -30,28 +30,28 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : nvinfer1::IOutputAllocator
-{
-public:
-    // Allocates output dimensions
-    void* reallocateOutput(
-        char const* tensor_name, void* current_memory,
-        uint64_t size, uint64_t alignment) noexcept override;
+class OutputAllocator : nvinfer1::IOutputAllocator {
+ public:
+  // Allocates output dimensions
+  void* reallocateOutput(
+      char const* tensor_name, void* current_memory, uint64_t size,
+      uint64_t alignment) noexcept override;
 
-    // Updates output dimensions
-    void notifyShape(char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
+  // Updates output dimensions
+  void notifyShape(
+      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
 
-    ~OutputAllocator() override;
-    
-private:
-    // Saved dimensions of the output tensor
-    nvinfer1::Dims output_dims_{};
+  ~OutputAllocator() override;
 
-    // Pointer to output, nullptr if memory could not be allocated
-    void* output_ptr_{nullptr};
+ private:
+  // Saved dimensions of the output tensor
+  nvinfer1::Dims output_dims_{};
 
-    // Size of allocation pointed to by output
-    uint64_t output_size_{0};
+  // Pointer to output, nullptr if memory could not be allocated
+  void* output_ptr_{nullptr};
+
+  // Size of allocation pointed to by output
+  uint64_t output_size_{0};
 };
 
 }}}  // namespace triton::backend::tensorrt
