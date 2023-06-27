@@ -34,7 +34,6 @@ OutputAllocator::reallocateOutput(
     uint64_t alignment) noexcept
 {
   if (size > output_size_) {
-    // Need to reallocate
     cudaFree(output_ptr_);
     output_ptr_ = nullptr;
     output_size_ = 0;
@@ -42,7 +41,7 @@ OutputAllocator::reallocateOutput(
       output_size_ = size;
     }
   }
-  // If the cudaMalloc fails, output_ptr_=nullptr, and engine
+  // If the cudaMalloc fails, output_ptr_=nullptr and engine
   // gracefully fails.
   return output_ptr_;
 }
@@ -51,7 +50,6 @@ void
 OutputAllocator::notifyShape(
     char const* tensor_name, nvinfer1::Dims const& dims) noexcept
 {
-  // Remember output dimensions for later use.
   output_dims_ = dims;
 }
 
