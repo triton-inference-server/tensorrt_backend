@@ -28,48 +28,37 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : nvinfer1::IOutputAllocator
-{
-public:
-    void reallocateOutput(
-        char const* tensorName, void* currentMemory,
-        uint64_t size, uint64_t alignment) override
+void*
+OutputAllocator::reallocateOutput(
+        char const* tensor_name, void* current_memory,
+        uint64_t size, uint64_t alignment) noexcept
     {
-        if (size > outputSize)
+        if (size > output_size_)
         {
             // Need to reallocate
-            cudaFree(outputPtr);
-            outputPtr = nullptr;
-            outputSize = 0;
-            if (cudaMalloc(&outputPtr, size) == cudaSuccess)
+            cudaFree(output_ptr_);
+            output_ptr_ = nullptr;
+            output_size_ = 0;
+            if (cudaMalloc(&output_ptr_, size) == cudaSuccess)
             {
-                outputSize = size;
+                output_size_ = size;
             }
         }
-        // If the cudaMalloc fails, outputPtr=nullptr, and engine
+        // If the cudaMalloc fails, output_ptr_=nullptr, and engine
         // gracefully fails.
-        return outputPtr;
+        return output_ptr_;
     }
 
-    void notifyShape(char const* tensorName, Dims const& dims)
+void
+OutputAllocator::notifyShape(char const* tensor_name, nvinfer1::Dims const& dims) noexcept
     {
         // Remember output dimensions for later use.
-        outputDims = dims;
+        output_dims_ = dims;
     }
 
-    // Saved dimensions of the output tensor
-    Dims outputDims{};
-
-    // nullptr if memory could not be allocated
-    void* outputPtr{nullptr};
-
-    // Size of allocation pointed to by output
-    uint64_t outputSize{0};
-
-    ~OutputAllocator() override
+OutputAllocator::~OutputAllocator()
     {
-        cudaFree(outputPtr);
+        cudaFree(output_ptr_);
     }
-};
 
 }}}  // namespace triton::backend::tensorrt

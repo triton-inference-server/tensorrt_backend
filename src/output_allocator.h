@@ -34,18 +34,18 @@ class OutputAllocator : nvinfer1::IOutputAllocator
 {
 public:
     // Allocates output dimensions
-    void reallocateOutput(
-        char const* tensorName, void* currentMemory,
-        uint64_t size, uint64_t alignment) override;
+    void* reallocateOutput(
+        char const* tensor_name, void* current_memory,
+        uint64_t size, uint64_t alignment) noexcept override;
 
     // Updates output dimensions
-    void notifyShape(char const* tensorName, Dims const& dims);
+    void notifyShape(char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
 
     ~OutputAllocator() override;
     
 private:
     // Saved dimensions of the output tensor
-    Dims output_dims_{};
+    nvinfer1::Dims output_dims_{};
 
     // Pointer to output, nullptr if memory could not be allocated
     void* output_ptr_{nullptr};
