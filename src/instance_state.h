@@ -32,6 +32,7 @@
 #include <map>
 
 #include "model_state.h"
+#include "output_allocator.h"
 #include "semaphore.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"

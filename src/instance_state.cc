@@ -39,7 +39,7 @@ CreateCudaEvent(
 {
   // Not adding 'cudaEventBlockingSync' to reduce gaps between the
   // time of event record and the time of signaling blocking thread.
-  // The busy waiting only happens when there is inflight request.
+  // The busy waiting only happens when there is an inflight request.
   auto cuerr = cudaEventCreateWithFlags(event, event_flags);
   if (cuerr != cudaSuccess) {
     return TRITONSERVER_ErrorNew(
@@ -377,8 +377,8 @@ ModelInstanceState::ProcessRequests(
   // completion thread as the completion thread will wait on CUDA
   // events unconditionally, which can be ignored on error.
   if (run_failed) {
-    // On inference error, place the slot back to the queue
-    // immediately as all works for the slot should be ignored.
+    // On inference error, place the slot back in the queue
+    // immediately, as all work for the slot should be ignored.
     semaphore_->Release();
   } else {
     auto event_set_idx = next_set_;
@@ -394,7 +394,7 @@ ModelInstanceState::ProcessRequests(
     next_buffer_binding_set_ =
         (next_buffer_binding_set_ + 1) % num_copy_streams_;
 
-    // Wait till the states are updated. Barrier is only
+    // Wait until the states are updated. Barrier is only
     // engaged when model has an implicit state.
     if (barrier_.get() != nullptr) {
       barrier_->get_future().wait();
@@ -414,14 +414,14 @@ ModelInstanceState::Run(
 
   NVTX_RANGE(nvtx_, "Run " + Name());
 
-  // Should set a barrier so that instance execution can be blocked till
+  // Should set a barrier so that instance execution can be blocked until
   // the state update is completed.
   if (uses_implicit_state_) {
     barrier_.reset(new std::promise<void>());
   }
 
-  // Need to move the TRITONBACKEND_Request objects as the lifetime
-  // must be extended till ProcessResponse completes.
+  // Need to move the TRITONBACKEND_Request objects, as the lifetime
+  // must be extended until ProcessResponse completes.
   payload_.reset(new Payload(next_set_, requests, request_count));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
