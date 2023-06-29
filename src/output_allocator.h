@@ -52,6 +52,9 @@ class OutputAllocator : nvinfer1::IOutputAllocator {
 
   // Size of allocation pointed to by output
   uint64_t output_size_{0};
+
+  // Boolean flag indicating if the output is on GPU
+  bool is_gpu_{false};
 };
 
 }}}  // namespace triton::backend::tensorrt
