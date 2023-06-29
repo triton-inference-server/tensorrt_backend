@@ -2513,6 +2513,13 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             num_expected_bindings_ * trt_context.first + io_index;
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
+        // TODO: Switch to using allocator for all cases? Preallocate in known case?
+        if (ContainsWildcard(engine_->getBindingDimensions(binding_index))) {
+          auto allocator = std::make_unique<OutputAllocator>();
+          allocator->setIsGpu(
+              io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
+          allocator_map_.emplace(io_name, std::move(allocator));
+        }
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
         // something like 'trt_enqueue_buffer'
@@ -2887,6 +2894,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
+    // TODO: Wonder if can use TRTv1 version for all, then assign it to this
+    // With output allocator.
     int64_t byte_size = interface_->GetFullByteSize(
         context.context_.get(), output_name, binding_index);
     if (byte_size == -1) {

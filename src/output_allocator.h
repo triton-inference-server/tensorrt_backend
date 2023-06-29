@@ -41,6 +41,8 @@ class OutputAllocator : nvinfer1::IOutputAllocator {
   void notifyShape(
       char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
 
+   void setIsGpu(bool is_gpu) noexcept { is_gpu_ = is_gpu; };
+
   ~OutputAllocator() override;
 
  private:

@@ -597,6 +597,10 @@ class ModelInstanceState : public TensorRTModelInstance {
   // ahead to prepare further executions. Use semaphore to prevent going too
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_;
+
+  // Holder of OutputAllocators used by this instance state.
+  // This is used to keep them in-scope while instance state exists.
+  std::unordered_map<std::string, MyOutputAllocator> allocator_map_;
 };
 
 }}}  // namespace triton::backend::tensorrt
