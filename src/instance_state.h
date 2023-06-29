@@ -30,6 +30,7 @@
 
 #include <future>
 #include <map>
+#include <unordered_map>
 
 #include "model_state.h"
 #include "output_allocator.h"
@@ -600,7 +601,8 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   // Holder of OutputAllocators used by this instance state.
   // This is used to keep them in-scope while instance state exists.
-  std::unordered_map<std::string, MyOutputAllocator> allocator_map_;
+  std::unordered_map<std::string, std::unique_ptr<OutputAllocator>>
+      allocator_map_;
 };
 
 }}}  // namespace triton::backend::tensorrt

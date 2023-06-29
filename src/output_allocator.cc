@@ -33,26 +33,28 @@ OutputAllocator::reallocateOutput(
     char const* tensor_name, void* current_memory, uint64_t size,
     uint64_t alignment) noexcept
 {
+  // TODO: Does this work with CPU memory? Based on their example, we would need
+  // to allocate the old-fashioned way.
   if (size > output_size_) {
-    if(is_gpu_){
+    if (is_gpu_) {
       cudaFree(output_ptr_);
     } else {
       free(output_ptr_);
     }
     output_ptr_ = nullptr;
     output_size_ = 0;
-    if(is_gpu_){
+    if (is_gpu_) {
       cudaMalloc(&output_ptr_, size);
     } else {
       output_ptr_ = malloc(size);
     }
     // If the memory allocation fails, output_ptr_=nullptr and engine
     // gracefully fails.
-    if(output_ptr_ != nullptr){
+    if (output_ptr_ != nullptr) {
       output_size_ = size;
     }
-    return output_ptr;
   }
+  return output_ptr_;
 }
 
 void
@@ -64,7 +66,7 @@ OutputAllocator::notifyShape(
 
 OutputAllocator::~OutputAllocator()
 {
-  if(is_gpu_){
+  if (is_gpu_) {
     cudaFree(output_ptr_);
   } else {
     free(output_ptr_);

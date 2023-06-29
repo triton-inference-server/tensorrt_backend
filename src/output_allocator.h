@@ -27,11 +27,13 @@
 #pragma once
 
 #include <NvInfer.h>
+#include <malloc.h>
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : nvinfer1::IOutputAllocator {
+class OutputAllocator : public nvinfer1::IOutputAllocator {
  public:
+  OutputAllocator(bool is_gpu) : is_gpu_(is_gpu) {}
   // Allocates output dimensions
   void* reallocateOutput(
       char const* tensor_name, void* current_memory, uint64_t size,
@@ -40,8 +42,6 @@ class OutputAllocator : nvinfer1::IOutputAllocator {
   // Updates output dimensions
   void notifyShape(
       char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
-
-   void setIsGpu(bool is_gpu) noexcept { is_gpu_ = is_gpu; };
 
   ~OutputAllocator() override;
 

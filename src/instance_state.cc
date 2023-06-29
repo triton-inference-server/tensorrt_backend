@@ -2513,11 +2513,14 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             num_expected_bindings_ * trt_context.first + io_index;
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
-        // TODO: Switch to using allocator for all cases? Preallocate in known case?
-        if (ContainsWildcard(engine_->getBindingDimensions(binding_index))) {
-          auto allocator = std::make_unique<OutputAllocator>();
-          allocator->setIsGpu(
-              io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
+        // TODO: Switch to using allocator for all cases? Preallocate in known
+        // case?
+        if (trt_context.second.is_dynamic_per_binding_[io_index]) {
+          bool is_gpu =
+              (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
+          auto allocator = std::make_unique<OutputAllocator>(is_gpu);
+          trt_context.second.context_->setOutputAllocator(
+              io_name.c_str(), allocator.get());
           allocator_map_.emplace(io_name, std::move(allocator));
         }
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
