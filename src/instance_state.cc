@@ -1100,7 +1100,7 @@ ModelInstanceState::Run(
       }
 
       if (io_binding_info.byte_size_ <
-          (batch1_byte_size * payload_->total_batch_size_)) {
+          (batch1_byte_size * payload_->total_batch_size_) && citr->second.context_->getOutputAllocator(name.c_str()) == nullptr) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             TRITONSERVER_ErrorNew(
@@ -1118,9 +1118,15 @@ ModelInstanceState::Run(
         // Process the output tensors with pinned memory address if zero-copy is
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
+        void* buffer = nullptr;
+        if(auto entry = allocator_map_.find(name); entry != allocator_map_.end()){
+          buffer = entry->second->getOutputBuffer();
+        } else {
+          buffer = io_binding_info.buffer_;
+        }
         payload_->responder_->ProcessTensor(
             name, dt, batchn_shape,
-            static_cast<const char*>(io_binding_info.buffer_),
+            static_cast<const char*>(buffer),
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
       }
 
@@ -2477,7 +2483,17 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       max_byte_size = std::max(max_byte_size, byte_size);
     }
 
-    if (max_byte_size != 0) {
+    if (max_byte_size == 0) {
+      // TODO: Why is mem being set to pinned mem in else statement? Set to false to be consistent.
+      // Looks like because shape tensor, think if needed in shape tensor... if so, switch to pinned
+      // May want to test shape as well as non-shape. CPU, pinned, GPU.
+      for (auto& trt_context : trt_contexts_) {
+        auto allocator = std::make_unique<OutputAllocator>(false);
+        trt_context.second.context_->setOutputAllocator(
+            io_name.c_str(), allocator.get());
+        allocator_map_.emplace(io_name, std::move(allocator));
+      }
+    } else {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. We rely on buffer_bindings_ being non-nullptr to
@@ -2513,16 +2529,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             num_expected_bindings_ * trt_context.first + io_index;
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
-        // TODO: Switch to using allocator for all cases? Preallocate in known
-        // case?
-        if (trt_context.second.is_dynamic_per_binding_[io_index]) {
-          bool is_gpu =
-              (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
-          auto allocator = std::make_unique<OutputAllocator>(is_gpu);
-          trt_context.second.context_->setOutputAllocator(
-              io_name.c_str(), allocator.get());
-          allocator_map_.emplace(io_name, std::move(allocator));
-        }
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
         // something like 'trt_enqueue_buffer'
@@ -2901,6 +2907,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     // With output allocator.
     int64_t byte_size = interface_->GetFullByteSize(
         context.context_.get(), output_name, binding_index);
+    // TODO: Remove this, if able? Or is this only error message?
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -2967,15 +2974,24 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // Set buffer bindings of all optimization profile since buffer is
   // allocated
   for (auto& trt_context : trt_contexts_) {
-    auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
-    buffer_bindings_[next_buffer_binding_set_][binding_index] =
-        io_binding_info.device_buffer_;
-    RETURN_ERROR_IF_FALSE(
-        trt_context.second.context_->setTensorAddress(
-            output_name.c_str(), io_binding_info.device_buffer_),
-        TRITONSERVER_ERROR_INVALID_ARG,
-        (std::string("'") + output_name +
-         "' does not map to an input or output tensor"));
+    if(max_byte_size == 0){
+      bool is_gpu =
+        (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
+      auto allocator = std::make_unique<OutputAllocator>(is_gpu);
+      trt_context.second.context_->setOutputAllocator(
+          output_name.c_str(), allocator.get());
+      allocator_map_.emplace(output_name, std::move(allocator));
+    } else {
+      auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
+      buffer_bindings_[next_buffer_binding_set_][binding_index] =
+          io_binding_info.device_buffer_;
+      RETURN_ERROR_IF_FALSE(
+          trt_context.second.context_->setTensorAddress(
+              output_name.c_str(), io_binding_info.device_buffer_),
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("'") + output_name +
+          "' does not map to an input or output tensor"));
+    }
   }
 
   return nullptr;
