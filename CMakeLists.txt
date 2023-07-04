@@ -51,7 +51,7 @@ set(TRITON_TENSORRT_BACKEND_INSTALLDIR ${CMAKE_INSTALL_PREFIX}/backends/tensorrt
 #
 # Dependencies
 #
-# FetchContent's composibility isn't very good. We must include the
+# FetchContent's composability isn't very good. We must include the
 # transitive closure of all repos so that we can override the tag.
 #
 include(FetchContent)

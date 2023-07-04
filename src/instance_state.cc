@@ -1071,7 +1071,7 @@ ModelInstanceState::Run(
       io_binding_info.batch_output_ = model_state_->FindBatchOutput(name);
 
       // Process the output tensors with pinned memory address if zero-copy is
-      // supported, otherwise use device memory. Peform memory copies
+      // supported, otherwise use device memory. Perform memory copies
       // asynchronously and wait for model execution.
       payload_->responder_->ProcessBatchOutput(
           name, *(io_binding_info.batch_output_),
@@ -1116,7 +1116,7 @@ ModelInstanceState::Run(
 
       if (io_binding_info.is_requested_output_tensor_) {
         // Process the output tensors with pinned memory address if zero-copy is
-        // supported, otherwise use device memory. Peform memory copies
+        // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
         payload_->responder_->ProcessTensor(
             name, dt, batchn_shape,
@@ -2244,7 +2244,7 @@ ModelInstanceState::InitializeBatchInputBindings(
         }
       } else {
         // For most type 'dims' will be empty as the full shape
-        // of the batch input is [-1] which will be coverred by
+        // of the batch input is [-1] which will be covered by
         // batch dimension.
         switch (batch_input.BatchInputKind()) {
           case BatchInput::Kind::BATCH_ELEMENT_COUNT:
@@ -2481,7 +2481,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. We rely on buffer_bindings_ being non-nullptr to
-      // indicate that the buffer has been correctly initalized so
+      // indicate that the buffer has been correctly initialized so
       // even for zero-sized tensors always allocate something.
       void* buffer = nullptr;
       cudaError_t err = cudaSuccess;
@@ -2727,7 +2727,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
   // We rely on buffer_bindings_ being non-nullptr to indicate that
-  // the buffer has been correctly initalized so even for zero-sized
+  // the buffer has been correctly initialized so even for zero-sized
   // tensors always allocate something.
   void* buffer = nullptr;
   cudaError_t err = cudaSuccess;
@@ -2901,7 +2901,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
   // We rely on buffer_bindings_ being non-nullptr to indicate that
-  // the buffer has been correctly initalized so even for zero-sized
+  // the buffer has been correctly initialized so even for zero-sized
   // tensors always allocate something.
   void* buffer = nullptr;
   cudaError_t err = cudaSuccess;
@@ -3111,7 +3111,7 @@ ModelInstanceState::InitializeShapeInputBinding(
   if (max_byte_size != 0) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
     // We rely on buffer_bindings_ being non-nullptr to indicate that
-    // the buffer has been correctly initalized so even for zero-sized
+    // the buffer has been correctly initialized so even for zero-sized
     // tensors always allocate something.
     void* buffer = nullptr;
     cudaError_t err = cudaSuccess;
@@ -4131,7 +4131,7 @@ TRTv3Interface::SetBindingDimensions(
   }
 
   if (!trt_context.is_dynamic_per_binding_[io_index]) {
-    // No need to set dimension for the binding that does not inlcude
+    // No need to set dimension for the binding that does not include
     // dynamic shape.
     return nullptr;
   }

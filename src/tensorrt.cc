@@ -111,7 +111,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
     RETURN_IF_ERROR(backend_config.Parse(buffer, byte_size));
   }
 
-  // Default execution policy, may be overriden by backend config
+  // Default execution policy, may be overridden by backend config
   auto execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
 
   std::unique_ptr<BackendConfiguration> lconfig(new BackendConfiguration());
