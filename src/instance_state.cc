@@ -977,7 +977,7 @@ ModelInstanceState::Run(
   const auto output_stream =
       model_state_->SeparateOutputStream() ? output_copy_stream_ : stream_;
 
-  // For each requested output verify that the output can accept the
+  // For each requested output, verify that the output can accept the
   // actual model output and then copy that output from the GPU
   payload_->responder_.reset(new BackendOutputResponder(
       payload_->requests_, payload_->request_count_, &payload_->responses_,
@@ -1100,7 +1100,8 @@ ModelInstanceState::Run(
       }
 
       if (io_binding_info.byte_size_ <
-          (batch1_byte_size * payload_->total_batch_size_) && citr->second.context_->getOutputAllocator(name.c_str()) == nullptr) {
+              (batch1_byte_size * payload_->total_batch_size_) &&
+          citr->second.context_->getOutputAllocator(name.c_str()) == nullptr) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             TRITONSERVER_ErrorNew(
@@ -1119,14 +1120,14 @@ ModelInstanceState::Run(
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
         void* buffer = nullptr;
-        if(auto entry = allocator_map_.find(name); entry != allocator_map_.end()){
+        if (auto entry = allocator_map_.find(name);
+            entry != allocator_map_.end()) {
           buffer = entry->second->getOutputBuffer();
         } else {
           buffer = io_binding_info.buffer_;
         }
         payload_->responder_->ProcessTensor(
-            name, dt, batchn_shape,
-            static_cast<const char*>(buffer),
+            name, dt, batchn_shape, static_cast<const char*>(buffer),
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
       }
 
@@ -2483,17 +2484,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       max_byte_size = std::max(max_byte_size, byte_size);
     }
 
-    if (max_byte_size == 0) {
-      // TODO: Why is mem being set to pinned mem in else statement? Set to false to be consistent.
-      // Looks like because shape tensor, think if needed in shape tensor... if so, switch to pinned
-      // May want to test shape as well as non-shape. CPU, pinned, GPU.
-      for (auto& trt_context : trt_contexts_) {
-        auto allocator = std::make_unique<OutputAllocator>(false);
-        trt_context.second.context_->setOutputAllocator(
-            io_name.c_str(), allocator.get());
-        allocator_map_.emplace(io_name, std::move(allocator));
-      }
-    } else {
+    if (max_byte_size != 0) {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. We rely on buffer_bindings_ being non-nullptr to
@@ -2903,11 +2894,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    // TODO: Wonder if can use TRTv1 version for all, then assign it to this
-    // With output allocator.
     int64_t byte_size = interface_->GetFullByteSize(
         context.context_.get(), output_name, binding_index);
-    // TODO: Remove this, if able? Or is this only error message?
+    // TODO: Remove below? Doesn't fail for wildcard in v3, but might in v1...
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -2916,6 +2905,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
     max_byte_size = std::max(max_byte_size, byte_size);
+
   }
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
@@ -2924,11 +2914,13 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // tensors always allocate something.
   void* buffer = nullptr;
   cudaError_t err = cudaSuccess;
-  if (zero_copy_support_) {
-    err = cudaHostAlloc(
-        &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
-  } else {
-    err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
+  if (max_byte_size > 0) {
+    if (zero_copy_support_) {
+      err = cudaHostAlloc(
+          &buffer, std::max((int64_t)1, max_byte_size), cudaHostAllocMapped);
+    } else {
+      err = cudaMalloc(&buffer, std::max((int64_t)1, max_byte_size));
+    }
   }
   if (err != cudaSuccess) {
     return TRITONSERVER_ErrorNew(
@@ -2938,6 +2930,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
             .c_str());
   }
 
+  // TODO: How do I make different buffer depending on context?
+  // So I can send buffer and device_buffer == buffer for context to allow zero-copy.
+  // Do we need to change data structure?
   io_binding_info.byte_size_ = max_byte_size;
   io_binding_info.buffer_ = buffer;
   io_binding_info.device_buffer_ = buffer;
@@ -2957,14 +2952,17 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   if (zero_copy_support_) {
     io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
     io_binding_info.memory_type_id_ = 0;
-    err = cudaHostGetDevicePointer(
-        &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
-    if (err != cudaSuccess) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unable to get mapped device address for output '") +
-           output_name + " for " + Name() + ": " + cudaGetErrorString(err))
-              .c_str());
+    // TODO: Remove later when put support into allocator
+    if (max_byte_size > 0) {
+      err = cudaHostGetDevicePointer(
+          &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
+      if (err != cudaSuccess) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("unable to get mapped device address for output '") +
+             output_name + " for " + Name() + ": " + cudaGetErrorString(err))
+                .c_str());
+      }
     }
   } else {
     io_binding_info.memory_type_ = TRITONSERVER_MEMORY_GPU;
@@ -2974,15 +2972,26 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // Set buffer bindings of all optimization profile since buffer is
   // allocated
   for (auto& trt_context : trt_contexts_) {
-    if(max_byte_size == 0){
-      bool is_gpu =
-        (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
-      auto allocator = std::make_unique<OutputAllocator>(is_gpu);
+    auto binding_index =
+          num_expected_bindings_ * trt_context.first + io_index;
+    if (max_byte_size <= 0) {
+      bool is_gpu = (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
+      // TODO: This is problematic, because it'll override the allocator due to multiple contexts.
+      // Could add context to key pair for allocator_map_, but issue seems to go deeper
+      // since current setup has the same buffer regardless of context.
+      auto allocator =
+          std::make_unique<OutputAllocator>(is_gpu, zero_copy_support_);
       trt_context.second.context_->setOutputAllocator(
           output_name.c_str(), allocator.get());
+      buffer_bindings_[next_buffer_binding_set_][binding_index] = allocator.get();
+
+      // TODO: Remove below when figure out how to best set buffer and device_buffer (or not need to set)
+      // Temp fix to let this load
+      io_binding_info.buffer_ = allocator.get();
+      io_binding_info.device_buffer_ = allocator.get();
+
       allocator_map_.emplace(output_name, std::move(allocator));
     } else {
-      auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.device_buffer_;
       RETURN_ERROR_IF_FALSE(
@@ -2990,7 +2999,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               output_name.c_str(), io_binding_info.device_buffer_),
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("'") + output_name +
-          "' does not map to an input or output tensor"));
+           "' does not map to an input or output tensor"));
     }
   }
 

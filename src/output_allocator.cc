@@ -44,7 +44,20 @@ OutputAllocator::reallocateOutput(
     output_ptr_ = nullptr;
     output_size_ = 0;
     if (is_gpu_) {
-      cudaMalloc(&output_ptr_, size);
+      if (zero_copy_support_) {
+        cudaHostAlloc(&output_ptr_, size, cudaHostAllocMapped);
+      } else {
+        cudaMalloc(&output_ptr_, size);
+      }
+      // TODO: How to make it go on device? Below?
+      if (zero_copy_support_) {
+        void* device_buffer;
+        auto err = cudaHostGetDevicePointer(
+          &device_buffer, &output_ptr_, 0);
+        if(err == cudaSuccess){
+          output_ptr_ = device_buffer;
+        }
+      }
     } else {
       output_ptr_ = malloc(size);
     }

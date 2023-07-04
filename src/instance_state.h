@@ -348,6 +348,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config);
   TRITONSERVER_Error* InitializeBatchOutputBindings(
       common::TritonJson::Value& config);
+// This function sets the output bindings for shape tensors.
   TRITONSERVER_Error* InitializeConfigShapeOutputBindings(
       common::TritonJson::Value& config_output);
   TRITONSERVER_Error* InitializeConfigExecuteOutputBindings(
@@ -599,8 +600,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_;
 
-  // Holder of OutputAllocators used by this instance state.
-  // This is used to keep them in-scope while instance state exists.
+  // Map of output names to OutputAllocators used by this instance state.
   std::unordered_map<std::string, std::unique_ptr<OutputAllocator>>
       allocator_map_;
 };
