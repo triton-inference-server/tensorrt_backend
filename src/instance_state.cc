@@ -2975,12 +2975,11 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto binding_index =
           num_expected_bindings_ * trt_context.first + io_index;
     if (max_byte_size <= 0) {
-      bool is_gpu = (io_binding_info.memory_type_ != TRITONSERVER_MEMORY_CPU);
       // TODO: This is problematic, because it'll override the allocator due to multiple contexts.
       // Could add context to key pair for allocator_map_, but issue seems to go deeper
       // since current setup has the same buffer regardless of context.
       auto allocator =
-          std::make_unique<OutputAllocator>(is_gpu, zero_copy_support_);
+          std::make_unique<OutputAllocator>(zero_copy_support_);
       trt_context.second.context_->setOutputAllocator(
           output_name.c_str(), allocator.get());
       buffer_bindings_[next_buffer_binding_set_][binding_index] = allocator.get();

@@ -33,33 +33,23 @@ OutputAllocator::reallocateOutput(
     char const* tensor_name, void* current_memory, uint64_t size,
     uint64_t alignment) noexcept
 {
-  // TODO: Does this work with CPU memory? Based on their example, we would need
-  // to allocate the old-fashioned way.
   if (size > output_size_) {
-    if (is_gpu_) {
-      cudaFree(output_ptr_);
-    } else {
-      free(output_ptr_);
-    }
+    cudaFree(output_ptr_);
     output_ptr_ = nullptr;
     output_size_ = 0;
-    if (is_gpu_) {
-      if (zero_copy_support_) {
-        cudaHostAlloc(&output_ptr_, size, cudaHostAllocMapped);
-      } else {
-        cudaMalloc(&output_ptr_, size);
-      }
-      // TODO: How to make it go on device? Below?
-      if (zero_copy_support_) {
-        void* device_buffer;
-        auto err = cudaHostGetDevicePointer(
-          &device_buffer, &output_ptr_, 0);
-        if(err == cudaSuccess){
-          output_ptr_ = device_buffer;
-        }
-      }
+    if (zero_copy_support_) {
+      cudaHostAlloc(&output_ptr_, size, cudaHostAllocMapped);
     } else {
-      output_ptr_ = malloc(size);
+      cudaMalloc(&output_ptr_, size);
+    }
+    // If zero copy support, need to set the buffer to the device pointer.
+    if (zero_copy_support_) {
+      void* device_buffer;
+      auto err = cudaHostGetDevicePointer(
+        &device_buffer, &output_ptr_, 0);
+      if(err == cudaSuccess){
+        output_ptr_ = device_buffer;
+      }
     }
     // If the memory allocation fails, output_ptr_=nullptr and engine
     // gracefully fails.
@@ -79,11 +69,7 @@ OutputAllocator::notifyShape(
 
 OutputAllocator::~OutputAllocator()
 {
-  if (is_gpu_) {
-    cudaFree(output_ptr_);
-  } else {
-    free(output_ptr_);
-  }
+  cudaFree(output_ptr_);
 }
 
 }}}  // namespace triton::backend::tensorrt

@@ -33,8 +33,8 @@ namespace triton { namespace backend { namespace tensorrt {
 
 class OutputAllocator : public nvinfer1::IOutputAllocator {
  public:
-  OutputAllocator(bool is_gpu, bool zero_copy_support)
-      : is_gpu_(is_gpu), zero_copy_support_(zero_copy_support)
+  OutputAllocator(bool zero_copy_support)
+      : zero_copy_support_(zero_copy_support)
   {
   }
   // Allocates output dimensions
@@ -59,9 +59,6 @@ class OutputAllocator : public nvinfer1::IOutputAllocator {
 
   // Size of allocation pointed to by output
   uint64_t output_size_{0};
-
-  // Boolean flag indicating if the output is on GPU
-  bool is_gpu_{false};
 
   // Boolean flag indicating if zero copy support is enabled
   bool zero_copy_support_{false};
