@@ -1073,12 +1073,14 @@ ModelInstanceState::Run(
       // Process the output tensors with pinned memory address if zero-copy is
       // supported, otherwise use device memory. Perform memory copies
       // asynchronously and wait for model execution.
-      // TODO: Review this... buffer_ used here, so ragged wouldn't work (may
-      // want to add ragged tests)
+      void* buffer =
+          io_binding_info.is_dynamic_
+              ? citr->second.context_->getOutputAllocator(name.c_str())
+              : io_binding_info.buffer_;
       payload_->responder_->ProcessBatchOutput(
           name, *(io_binding_info.batch_output_),
-          static_cast<const char*>(io_binding_info.buffer_),
-          io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+          static_cast<const char*>(buffer), io_binding_info.memory_type_,
+          io_binding_info.memory_type_id_);
     } else {
       std::vector<int64_t> batchn_shape;
 
@@ -1124,14 +1126,10 @@ ModelInstanceState::Run(
         // Process the output tensors with pinned memory address if zero-copy is
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
-        void* buffer = nullptr;
-        if (auto entry = allocator_map_.find(
-                std::make_pair(citr->second.profile_idx_, name));
-            entry != allocator_map_.end()) {
-          buffer = entry->second->getBuffer();
-        } else {
-          buffer = io_binding_info.buffer_;
-        }
+        void* buffer =
+            io_binding_info.is_dynamic_
+                ? citr->second.context_->getOutputAllocator(name.c_str())
+                : io_binding_info.buffer_;
         payload_->responder_->ProcessTensor(
             name, dt, batchn_shape, static_cast<const char*>(buffer),
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
@@ -2532,7 +2530,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
         trt_context.second.context_->setOutputAllocator(
             io_name.c_str(), allocator.get());
-        // TODO: See if this is necessary
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             allocator.get()->getBuffer();
         allocator_map_.emplace(
@@ -2933,7 +2930,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     max_byte_size = std::max(max_byte_size, byte_size);
   }
 
-  // TODO: How to tell difference between 0-byte tensor and dynamic tensor?
   if (max_byte_size <= 0) {
     io_binding_info.is_dynamic_ = true;
   }
@@ -3005,7 +3001,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
       trt_context.second.context_->setOutputAllocator(
           output_name.c_str(), allocator.get());
-      // TODO: See if this is necessary
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           allocator.get()->getBuffer();
       allocator_map_.emplace(
@@ -4194,5 +4189,4 @@ TRTv3Interface::SetBindingDimensions(
 }
 }}}  // namespace triton::backend::tensorrt
 
-// TODO: Review if byte used anywhere.
-// Create tests. Ragged tests too?
+// TODO: Create tests. Ragged tests too?
