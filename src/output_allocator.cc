@@ -42,12 +42,12 @@ OutputAllocator::reallocateOutput(
     } else {
       cudaMalloc(&output_ptr_, size);
     }
-    // If zero copy support is enabled, need to set the buffer to the device pointer.
+    // If zero copy support is enabled, need to set the buffer to the device
+    // pointer.
     if (zero_copy_support_) {
       void* device_buffer;
-      auto err = cudaHostGetDevicePointer(
-        &device_buffer, &output_ptr_, 0);
-      if(err == cudaSuccess){
+      auto err = cudaHostGetDevicePointer(&device_buffer, &output_ptr_, 0);
+      if (err == cudaSuccess) {
         output_ptr_ = device_buffer;
       }
     }

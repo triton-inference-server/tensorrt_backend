@@ -1073,7 +1073,8 @@ ModelInstanceState::Run(
       // Process the output tensors with pinned memory address if zero-copy is
       // supported, otherwise use device memory. Perform memory copies
       // asynchronously and wait for model execution.
-      //TODO: Review this... buffer_ used here, so ragged wouldn't work (may want to add ragged tests)
+      // TODO: Review this... buffer_ used here, so ragged wouldn't work (may
+      // want to add ragged tests)
       payload_->responder_->ProcessBatchOutput(
           name, *(io_binding_info.batch_output_),
           static_cast<const char*>(io_binding_info.buffer_),
@@ -1117,13 +1118,15 @@ ModelInstanceState::Run(
       }
 
       if (io_binding_info.is_requested_output_tensor_) {
-        // TODO: Could split input tensor processing and ouptut tensor processing into separate functions during refactor
+        // TODO: Could split input tensor processing and output tensor
+        // processing into separate functions during refactor
 
         // Process the output tensors with pinned memory address if zero-copy is
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
         void* buffer = nullptr;
-        if (auto entry = allocator_map_.find(std::make_pair(citr->second.profile_idx_, name));
+        if (auto entry = allocator_map_.find(
+                std::make_pair(citr->second.profile_idx_, name));
             entry != allocator_map_.end()) {
           buffer = entry->second->getBuffer();
         } else {
@@ -1135,8 +1138,7 @@ ModelInstanceState::Run(
 
         if (io_binding_info.is_state_output_) {
           auto updated_states = payload_->responder_->ProcessStateTensor(
-              name, dt, batchn_shape,
-              static_cast<const char*>(buffer),
+              name, dt, batchn_shape, static_cast<const char*>(buffer),
               io_binding_info.memory_type_, io_binding_info.memory_type_id_);
           payload_->seq_states_.insert(
               payload_->seq_states_.end(), updated_states.begin(),
@@ -1990,7 +1992,8 @@ ModelInstanceState::InitIOBindingBuffers()
   // is initialized.
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < num_expected_bindings_; ++i) {
-      if (io_binding_infos_[s][i].buffer_ == nullptr && !io_binding_infos_[s][i].is_dynamic_ &&
+      if (io_binding_infos_[s][i].buffer_ == nullptr &&
+          !io_binding_infos_[s][i].is_dynamic_ &&
           engine_->isExecutionBinding(i)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
@@ -2487,14 +2490,14 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       max_byte_size = std::max(max_byte_size, byte_size);
     }
 
-    if(max_byte_size <= 0) {
-      io_binding_info.is_dynamic_= true;
+    if (max_byte_size <= 0) {
+      io_binding_info.is_dynamic_ = true;
     } else {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. For static output tensors, we rely on
       // buffer_bindings_ being non-nullptr to indicate that the
-      // buffer has been correctly initalized so even for zero-sized 
+      // buffer has been correctly initialized so even for zero-sized
       // tensors always allocate something.
       void* buffer = nullptr;
       cudaError_t err = cudaSuccess;
@@ -2507,7 +2510,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
             (std::string("unable to allocate memory for output '") + io_name +
-              "' for " + Name() + ": " + cudaGetErrorString(err))
+             "' for " + Name() + ": " + cudaGetErrorString(err))
                 .c_str());
       }
 
@@ -2525,14 +2528,16 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     for (auto& trt_context : trt_contexts_) {
       auto binding_index =
           num_expected_bindings_ * trt_context.first + io_index;
-      if(io_binding_info.is_dynamic_){
-        auto allocator =
-          std::make_unique<OutputAllocator>(zero_copy_support_);
-          trt_context.second.context_->setOutputAllocator(
-              io_name.c_str(), allocator.get());
-          // TODO: See if this is necessary
-          buffer_bindings_[next_buffer_binding_set_][binding_index] = allocator.get()->getBuffer();
-          allocator_map_.emplace(std::make_pair(trt_context.second.profile_idx_, io_name), std::move(allocator));
+      if (io_binding_info.is_dynamic_) {
+        auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
+        trt_context.second.context_->setOutputAllocator(
+            io_name.c_str(), allocator.get());
+        // TODO: See if this is necessary
+        buffer_bindings_[next_buffer_binding_set_][binding_index] =
+            allocator.get()->getBuffer();
+        allocator_map_.emplace(
+            std::make_pair(trt_context.second.profile_idx_, io_name),
+            std::move(allocator));
       } else {
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
@@ -2544,7 +2549,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 io_name.c_str(), io_binding_info.device_buffer_),
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("'") + io_name +
-              "' does not map to an input or output tensor"));
+             "' does not map to an input or output tensor"));
       }
     }
   }
@@ -2853,7 +2858,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto& context = trt_context.second;
     int binding_index = num_expected_bindings_ * profile_index + io_index;
 
-    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);    
+    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -2926,20 +2931,19 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
     max_byte_size = std::max(max_byte_size, byte_size);
-
   }
 
   // TODO: How to tell difference between 0-byte tensor and dynamic tensor?
-  if(max_byte_size <= 0){
+  if (max_byte_size <= 0) {
     io_binding_info.is_dynamic_ = true;
   }
 
   cudaError_t err = cudaSuccess;
-  
+
   if (!io_binding_info.is_dynamic_) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
     // For static output tensors, we rely on buffer_bindings_ being
-    // non-nullptr to indicate that the buffer has been correctly initalized
+    // non-nullptr to indicate that the buffer has been correctly initialized
     // so even for zero-sized tensors always allocate something.
     void* buffer = nullptr;
     if (zero_copy_support_) {
@@ -2953,7 +2957,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("unable to allocate memory for output '") + output_name +
-          "' for " + Name() + ": " + cudaGetErrorString(err))
+           "' for " + Name() + ": " + cudaGetErrorString(err))
               .c_str());
     }
     io_binding_info.byte_size_ = max_byte_size;
@@ -2996,16 +3000,17 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // Set buffer bindings of all optimization profile since buffer is
   // allocated
   for (auto& trt_context : trt_contexts_) {
-    auto binding_index =
-          num_expected_bindings_ * trt_context.first + io_index;
+    auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
     if (io_binding_info.is_dynamic_) {
-      auto allocator =
-          std::make_unique<OutputAllocator>(zero_copy_support_);
+      auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
       trt_context.second.context_->setOutputAllocator(
           output_name.c_str(), allocator.get());
       // TODO: See if this is necessary
-      buffer_bindings_[next_buffer_binding_set_][binding_index] = allocator.get()->getBuffer();
-      allocator_map_.emplace(std::make_pair(trt_context.second.profile_idx_, output_name), std::move(allocator));
+      buffer_bindings_[next_buffer_binding_set_][binding_index] =
+          allocator.get()->getBuffer();
+      allocator_map_.emplace(
+          std::make_pair(trt_context.second.profile_idx_, output_name),
+          std::move(allocator));
     } else {
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.device_buffer_;

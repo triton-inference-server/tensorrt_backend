@@ -28,11 +28,11 @@
 
 #include <NvInfer.h>
 
+#include <boost/functional/hash.hpp>
 #include <future>
 #include <map>
 #include <unordered_map>
 
-#include <boost/functional/hash.hpp>
 #include "model_state.h"
 #include "output_allocator.h"
 #include "semaphore.h"
@@ -349,7 +349,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config);
   TRITONSERVER_Error* InitializeBatchOutputBindings(
       common::TritonJson::Value& config);
-// This function sets the output bindings for shape tensors.
+  // This function sets the output bindings for shape tensors.
   TRITONSERVER_Error* InitializeConfigShapeOutputBindings(
       common::TritonJson::Value& config_output);
   TRITONSERVER_Error* InitializeConfigExecuteOutputBindings(
@@ -557,7 +557,7 @@ class ModelInstanceState : public TensorRTModelInstance {
     bool is_requested_output_tensor_;
 
     // Whether this is an output using OutputAllocator for
-    // dyanmic resizing.
+    // dynamic resizing.
     bool is_dynamic_;
   };
 
@@ -605,8 +605,11 @@ class ModelInstanceState : public TensorRTModelInstance {
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_;
 
-  // Map of (context ID, output_name) to OutputAllocators used by this instance state.
-  std::unordered_map<std::pair<int, std::string>, std::unique_ptr<OutputAllocator>, boost::hash<std::pair<int, std::string>>>
+  // Map of (context ID, output_name) to OutputAllocators used by this instance
+  // state.
+  std::unordered_map<
+      std::pair<int, std::string>, std::unique_ptr<OutputAllocator>,
+      boost::hash<std::pair<int, std::string>>>
       allocator_map_;
 };
 
