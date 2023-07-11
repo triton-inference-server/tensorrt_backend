@@ -2532,9 +2532,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             io_name.c_str(), allocator.get());
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             allocator.get()->getBuffer();
-        allocator_map_.emplace(
-            std::make_pair(trt_context.second.profile_idx_, io_name),
-            std::move(allocator));
+        allocators_.push_back(std::move(allocator));
       } else {
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.device_buffer_;
@@ -3003,9 +3001,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
           output_name.c_str(), allocator.get());
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           allocator.get()->getBuffer();
-      allocator_map_.emplace(
-          std::make_pair(trt_context.second.profile_idx_, output_name),
-          std::move(allocator));
+      allocators_.push_back(std::move(allocator));
     } else {
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.device_buffer_;

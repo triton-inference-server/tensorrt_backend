@@ -28,7 +28,6 @@
 
 #include <NvInfer.h>
 
-#include <boost/functional/hash.hpp>
 #include <future>
 #include <map>
 #include <unordered_map>
@@ -605,12 +604,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_;
 
-  // Map of (context ID, output_name) to OutputAllocators used by this instance
-  // state.
-  std::unordered_map<
-      std::pair<int, std::string>, std::unique_ptr<OutputAllocator>,
-      boost::hash<std::pair<int, std::string>>>
-      allocator_map_;
+  // Vector of OutputAllocators to hold pointers to prevent deallocation.
+  std::vector<std::unique_ptr<OutputAllocator>> allocators_;
 };
 
 }}}  // namespace triton::backend::tensorrt
