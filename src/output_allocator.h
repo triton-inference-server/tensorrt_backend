@@ -46,7 +46,7 @@ class OutputAllocator : public nvinfer1::IOutputAllocator {
   void notifyShape(
       char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
 
-  void* getOutputBuffer() { return output_ptr_; };
+  void* getBuffer() { return output_ptr_; };
 
   ~OutputAllocator() override;
 

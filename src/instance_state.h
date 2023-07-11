@@ -32,6 +32,7 @@
 #include <map>
 #include <unordered_map>
 
+#include <boost/functional/hash.hpp>
 #include "model_state.h"
 #include "output_allocator.h"
 #include "semaphore.h"
@@ -554,6 +555,10 @@ class ModelInstanceState : public TensorRTModelInstance {
 
     // Indicates whether the output is a output tensor.
     bool is_requested_output_tensor_;
+
+    // Whether this is an output using OutputAllocator for
+    // dyanmic resizing.
+    bool is_dynamic_;
   };
 
   // There will be two sets of input/output buffers when
@@ -600,8 +605,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_;
 
-  // Map of output names to OutputAllocators used by this instance state.
-  std::unordered_map<std::string, std::unique_ptr<OutputAllocator>>
+  // Map of (context ID, output_name) to OutputAllocators used by this instance state.
+  std::unordered_map<std::pair<int, std::string>, std::unique_ptr<OutputAllocator>, boost::hash<std::pair<int, std::string>>>
       allocator_map_;
 };
 
