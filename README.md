@@ -1,5 +1,5 @@
 <!--
-# Copyright 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
 
 # TensorRT Backend
 
-The Triton backend for [TensorRT](https://github.com/NVIDIA/TensorRT). 
+The Triton backend for [TensorRT](https://github.com/NVIDIA/TensorRT).
 You can learn more about Triton backends in the [backend
 repo](https://github.com/triton-inference-server/backend). Ask
 questions or report problems on the [issues

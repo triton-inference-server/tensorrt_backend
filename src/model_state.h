@@ -75,7 +75,7 @@ class ModelState : public TensorRTModel {
 
   // Query the execution arbitrator to return the instance for the execution and
   // the semaphore to check whether the next execution should be initiated.
-  // 'device_id', 'instance' are the metadata assoicated with the
+  // 'device_id', 'instance' are the metadata associated with the
   // TRITONBACKEND_ModelInstance.
   std::pair<ModelInstanceState*, Semaphore*> ExecutionState(
       const int device_id, ModelInstanceState* instance)

@@ -1,4 +1,4 @@
-// Copyright 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -111,7 +111,7 @@ struct TensorRTContext {
 
   // The key is packed input dimensions prepended by batch size, so
   // that uniqueness is guaranteed and the CUDA graphs are sorted to
-  // provide convinence to find the closest CUDA graph in the
+  // provide convenience to find the closest CUDA graph in the
   // future.
   //
   // vector is used to map index of event sets to corresponding
@@ -181,7 +181,7 @@ class TRTInterface {
   virtual bool Enqueue(nvinfer1::IExecutionContext* context) = 0;
 
   // This function will be called to specify the runtime shape of the input and
-  // adding metadata into exisiting 'cuda_graph_key' for graph lookup.
+  // adding metadata into existing 'cuda_graph_key' for graph lookup.
   virtual TRITONSERVER_Error* SetBindingDimensions(
       const std::string& input_name, const std::vector<int64_t>& shape,
       const TensorRTContext& trt_context, const size_t io_index,

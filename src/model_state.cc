@@ -240,7 +240,7 @@ ModelState::CreateEngine(
             .c_str());
 
     if (IsEngineSharingEnabled()) {
-      // This logic runs atleast once to validate whether the engine
+      // This logic runs at least once to validate whether the engine
       // can be shared.
       bool is_dynamic = false;
       for (int idx = 0; idx < eit->second.second->getNbBindings(); idx++) {
