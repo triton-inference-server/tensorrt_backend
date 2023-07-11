@@ -557,7 +557,7 @@ class ModelInstanceState : public TensorRTModelInstance {
 
     // Whether this is an output using OutputAllocator for
     // dynamic resizing.
-    bool is_dynamic_;
+    bool is_dynamic_{false};
   };
 
   // There will be two sets of input/output buffers when
