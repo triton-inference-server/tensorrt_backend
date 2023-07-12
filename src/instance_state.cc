@@ -660,6 +660,7 @@ ModelInstanceState::Run(
            BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE) &&
           (io_binding_info.memory_type_ == TRITONSERVER_MEMORY_GPU)) {
         bool cuda_used = false;
+
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             CopyBuffer(
@@ -1075,7 +1076,9 @@ ModelInstanceState::Run(
       // asynchronously and wait for model execution.
       void* buffer =
           io_binding_info.is_dynamic_
-              ? citr->second.context_->getOutputAllocator(name.c_str())
+              ? static_cast<OutputAllocator*>(
+                    citr->second.context_->getOutputAllocator(name.c_str()))
+                    ->getBuffer()
               : io_binding_info.buffer_;
       payload_->responder_->ProcessBatchOutput(
           name, *(io_binding_info.batch_output_),
@@ -1119,6 +1122,13 @@ ModelInstanceState::Run(
             "failed to run TRT response");
       }
 
+      void* buffer =
+          io_binding_info.is_dynamic_
+              ? static_cast<OutputAllocator*>(
+                    citr->second.context_->getOutputAllocator(name.c_str()))
+                    ->getBuffer()
+              : io_binding_info.buffer_;
+
       if (io_binding_info.is_requested_output_tensor_) {
         // TODO: Could split input tensor processing and output tensor
         // processing into separate functions during refactor
@@ -1126,22 +1136,18 @@ ModelInstanceState::Run(
         // Process the output tensors with pinned memory address if zero-copy is
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
-        void* buffer =
-            io_binding_info.is_dynamic_
-                ? citr->second.context_->getOutputAllocator(name.c_str())
-                : io_binding_info.buffer_;
         payload_->responder_->ProcessTensor(
             name, dt, batchn_shape, static_cast<const char*>(buffer),
             io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+      }
 
-        if (io_binding_info.is_state_output_) {
-          auto updated_states = payload_->responder_->ProcessStateTensor(
-              name, dt, batchn_shape, static_cast<const char*>(buffer),
-              io_binding_info.memory_type_, io_binding_info.memory_type_id_);
-          payload_->seq_states_.insert(
-              payload_->seq_states_.end(), updated_states.begin(),
-              updated_states.end());
-        }
+      if (io_binding_info.is_state_output_) {
+        auto updated_states = payload_->responder_->ProcessStateTensor(
+            name, dt, batchn_shape, static_cast<const char*>(buffer),
+            io_binding_info.memory_type_, io_binding_info.memory_type_id_);
+        payload_->seq_states_.insert(
+            payload_->seq_states_.end(), updated_states.begin(),
+            updated_states.end());
       }
     }
   }
