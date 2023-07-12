@@ -2494,14 +2494,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     }
 
     if (max_byte_size <= 0) {
-      if (support_batching_) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_TRITONSERVER_ERROR_UNSUPPORTED,
-            (std::string(
-                 "batching is not supported with data-dependent output ('" +
-                 io_name + "')"))
-                .c_str());
-      }
       io_binding_info.is_dynamic_ = true;
     } else {
       // [DLIS-4283] review below comment
@@ -2941,14 +2933,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   }
 
   if (max_byte_size <= 0) {
-    if (support_batching_) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_TRITONSERVER_ERROR_UNSUPPORTED,
-          (std::string(
-               "batching is not supported with data-dependent output ('" +
-               io_name + "')"))
-              .c_str());
-    }
     io_binding_info.is_dynamic_ = true;
   }
 
