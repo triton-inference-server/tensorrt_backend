@@ -1130,7 +1130,6 @@ ModelInstanceState::Run(
               : io_binding_info.buffer_;
 
       if (io_binding_info.is_requested_output_tensor_) {
-        // TODO: Could split input tensor processing and output tensor
         // processing into separate functions during refactor
 
         // Process the output tensors with pinned memory address if zero-copy is
@@ -2495,6 +2494,14 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     }
 
     if (max_byte_size <= 0) {
+      if (support_batching_) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_TRITONSERVER_ERROR_UNSUPPORTED,
+            (std::string(
+                 "batching is not supported with data-dependent output ('" +
+                 io_name + "')"))
+                .c_str());
+      }
       io_binding_info.is_dynamic_ = true;
     } else {
       // [DLIS-4283] review below comment
@@ -2923,7 +2930,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
     int64_t byte_size = interface_->GetFullByteSize(
         context.context_.get(), output_name, binding_index);
-    // TODO: Remove below? Doesn't fail for wildcard in v3, but might in v1...
     if (byte_size == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -2935,6 +2941,14 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   }
 
   if (max_byte_size <= 0) {
+    if (support_batching_) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_TRITONSERVER_ERROR_UNSUPPORTED,
+          (std::string(
+               "batching is not supported with data-dependent output ('" +
+               io_name + "')"))
+              .c_str());
+    }
     io_binding_info.is_dynamic_ = true;
   }
 
@@ -4190,5 +4204,3 @@ TRTv3Interface::SetBindingDimensions(
   return nullptr;
 }
 }}}  // namespace triton::backend::tensorrt
-
-// TODO: Create tests. Ragged tests too?
