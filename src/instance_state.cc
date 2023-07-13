@@ -1130,8 +1130,6 @@ ModelInstanceState::Run(
               : io_binding_info.buffer_;
 
       if (io_binding_info.is_requested_output_tensor_) {
-        // processing into separate functions during refactor
-
         // Process the output tensors with pinned memory address if zero-copy is
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
