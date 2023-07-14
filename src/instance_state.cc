@@ -2418,7 +2418,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      if (io_binding_info.buffer_ != nullptr || io_binding_info.is_dynamic_) {
+      if (io_binding_info.buffer_ != nullptr ||
+          context.is_dynamic_per_binding_[io_index]) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("output '") + io_name +
@@ -2476,24 +2477,24 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
       if (ContainsWildcard(engine_dims)) {
         context.is_dynamic_per_binding_[io_index] = true;
+        io_binding_info.is_dynamic_ = true;
       }
 
       RETURN_IF_ERROR(CompareShapeDimsSupported(
           Name(), io_name, engine_dims, model_config_dims, support_batching_));
 
+      if (!io_binding_info.is_dynamic_) {
+        const nvinfer1::Dims output_dim =
+            context.context_->getBindingDimensions(binding_index);
+        std::vector<int64_t> dim_vec;
+        DimsToDimVec(output_dim, &dim_vec);
+        int64_t byte_size = GetByteSize(dt, dim_vec);
 
-      const nvinfer1::Dims output_dim =
-          context.context_->getBindingDimensions(binding_index);
-      std::vector<int64_t> dim_vec;
-      DimsToDimVec(output_dim, &dim_vec);
-      int64_t byte_size = GetByteSize(dt, dim_vec);
-
-      max_byte_size = std::max(max_byte_size, byte_size);
+        max_byte_size = std::max(max_byte_size, byte_size);
+      }
     }
 
-    if (max_byte_size <= 0) {
-      io_binding_info.is_dynamic_ = true;
-    } else {
+    if (!io_binding_info.is_dynamic_) {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. For static output tensors, we rely on
@@ -2626,7 +2627,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
       return nullptr;
     }
 
-    if (io_binding_info.buffer_ != nullptr || io_binding_info.is_dynamic_) {
+    if (io_binding_info.buffer_ != nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
@@ -2851,15 +2852,19 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     return nullptr;
   }
 
+  // Check whether the output shape is data-dependent.
+  for (auto& trt_context : trt_contexts_) {
+    if (ContainsWildcard(
+            trt_context.second.context_->getTensorShape(output_name.c_str()))) {
+      io_binding_info.is_dynamic_ = true;
+      break;
+    }
+  }
+
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
     int binding_index = num_expected_bindings_ * profile_index + io_index;
-
-    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
-    if (ContainsWildcard(engine_dims)) {
-      context.is_dynamic_per_binding_[io_index] = true;
-    }
 
     if (binding_index < 0) {
       return TRITONSERVER_ErrorNew(
@@ -2876,12 +2881,18 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    if (io_binding_info.buffer_ != nullptr || io_binding_info.is_dynamic_) {
+    if (io_binding_info.buffer_ != nullptr ||
+        context.is_dynamic_per_binding_[io_index]) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("output '") + output_name +
            "'  has already appeared as an input or output for " + Name())
               .c_str());
+    }
+
+    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+    if (ContainsWildcard(engine_dims)) {
+      context.is_dynamic_per_binding_[io_index] = true;
     }
 
     TRITONSERVER_DataType dt =
@@ -2917,21 +2928,18 @@ ModelInstanceState::InitializeExecuteOutputBinding(
            output_name + "' for " + Name())
               .c_str());
     }
-
-    int64_t byte_size = interface_->GetFullByteSize(
-        context.context_.get(), output_name, binding_index);
-    if (byte_size == -1) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unable to allocate memory for output '") + output_name +
-           "' for " + Name())
-              .c_str());
+    if (!io_binding_info.is_dynamic_) {
+      int64_t byte_size = interface_->GetFullByteSize(
+          context.context_.get(), output_name, binding_index);
+      if (byte_size == -1) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("unable to allocate memory for output '") +
+             output_name + "' for " + Name())
+                .c_str());
+      }
+      max_byte_size = std::max(max_byte_size, byte_size);
     }
-    max_byte_size = std::max(max_byte_size, byte_size);
-  }
-
-  if (max_byte_size <= 0) {
-    io_binding_info.is_dynamic_ = true;
   }
 
   cudaError_t err = cudaSuccess;
@@ -3041,7 +3049,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    if (io_binding_info.buffer_ != nullptr || io_binding_info.is_dynamic_) {
+    if (io_binding_info.buffer_ != nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
