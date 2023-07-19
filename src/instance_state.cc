@@ -2531,7 +2531,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       auto binding_index =
           num_expected_bindings_ * trt_context.first + io_index;
       if (io_binding_info.is_dynamic_shape_output_) {
-        auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
+        auto allocator = std::make_unique<OutputAllocator>(false);
         trt_context.second.context_->setOutputAllocator(
             io_name.c_str(), allocator.get());
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
