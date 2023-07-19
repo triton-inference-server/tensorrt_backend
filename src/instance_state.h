@@ -90,16 +90,15 @@ struct TensorRTContext {
       const std::string& profile_name, const int profile_idx,
       const int binding_cnts, const int event_set_cnts)
       : profile_name_(profile_name), profile_idx_(profile_idx),
-        context_(nullptr), cuda_graph_execs_(event_set_cnts),
-        min_dims_(binding_cnts), max_dims_(binding_cnts),
-        opt_dims_(binding_cnts), min_shapes_(binding_cnts),
-        max_shapes_(binding_cnts), opt_shapes_(binding_cnts),
-        is_dynamic_per_binding_(binding_cnts)
+        cuda_graph_execs_(event_set_cnts), min_dims_(binding_cnts),
+        max_dims_(binding_cnts), opt_dims_(binding_cnts),
+        min_shapes_(binding_cnts), max_shapes_(binding_cnts),
+        opt_shapes_(binding_cnts), is_dynamic_per_binding_(binding_cnts)
   {
   }
   std::string profile_name_;
   int profile_idx_;
-  std::shared_ptr<nvinfer1::IExecutionContext> context_;
+  std::shared_ptr<nvinfer1::IExecutionContext> context_{nullptr};
 
   // Struct that holds cudaGraphExec_t and the dimensions of the
   // inputs used to capture the graph
@@ -128,47 +127,42 @@ struct TensorRTContext {
   std::vector<std::map<std::vector<int64_t>, CudaGraph>> cuda_graph_execs_;
 
   // Min Dimensions per bindings
-  std::vector<nvinfer1::Dims> min_dims_;
+  std::vector<nvinfer1::Dims> min_dims_{};
 
   // Max Dimensions per bindings
-  std::vector<nvinfer1::Dims> max_dims_;
+  std::vector<nvinfer1::Dims> max_dims_{};
 
   // Optimized Dimensions per bindings
-  std::vector<nvinfer1::Dims> opt_dims_;
+  std::vector<nvinfer1::Dims> opt_dims_{};
 
   // Min shape values per bindings
-  std::vector<const int32_t*> min_shapes_;
+  std::vector<const int32_t*> min_shapes_{};
 
   // Max shape values per bindings
-  std::vector<const int32_t*> max_shapes_;
+  std::vector<const int32_t*> max_shapes_{};
 
   // Optimized shape values per bindings
-  std::vector<const int32_t*> opt_shapes_;
+  std::vector<const int32_t*> opt_shapes_{};
 
   // The number of shape values
-  size_t nb_shape_values_;
+  size_t nb_shape_values_{0};
 
   // Whether or not the binding contains a dynamic shape
-  std::vector<bool> is_dynamic_per_binding_;
+  std::vector<bool> is_dynamic_per_binding_{};
 };
 
 struct GraphSpec {
-  GraphSpec() : batch_size_(0), lower_bound_batch_size_(0), captured_(false) {}
-  int64_t batch_size_;
-  std::map<std::string, std::vector<int64_t>> shapes_;
-  int64_t lower_bound_batch_size_;
-  std::map<std::string, std::vector<int64_t>> lower_bound_shapes_;
-  bool captured_;
+  int64_t batch_size_{0};
+  std::map<std::string, std::vector<int64_t>> shapes_{};
+  int64_t lower_bound_batch_size_{0};
+  std::map<std::string, std::vector<int64_t>> lower_bound_shapes_{};
+  bool captured_{false};
 };
 
 struct TensorFormat {
-  TensorFormat()
-      : is_linear_format_(true), vectorized_dim_(-1), components_per_element_(1)
-  {
-  }
-  bool is_linear_format_;
-  int vectorized_dim_;
-  int components_per_element_;
+  bool is_linear_format_{true};
+  int vectorized_dim_{-1};
+  int components_per_element_{1};
 };
 
 // [DLIS-4283] temporary workaround to separate TRT v1 and TRT v3 usage
@@ -409,64 +403,64 @@ class ModelInstanceState : public TensorRTModelInstance {
   // the engine is shared across all contexts and it must not be
   // destroyed by the instance. In the future version of TensorRT, the
   // engine may be shared even in the dynamic shape case.
-  std::shared_ptr<nvinfer1::ICudaEngine> engine_;
+  std::shared_ptr<nvinfer1::ICudaEngine> engine_{nullptr};
 
   // Map from profile index to the corresponding TensorRT context. Use
   // map to ensure each profile index is mapped to exactly one
   // TensorRT context.
-  std::map<int, TensorRTContext> trt_contexts_;
+  std::map<int, TensorRTContext> trt_contexts_{};
 
   // Is set true if the configuration supports batching
-  bool support_batching_;
+  bool support_batching_{false};
 
   // Whether inexact match is allowed for finding CUDA graph
-  bool allow_inexact_match_;
+  bool allow_inexact_match_{false};
 
   // The total number of bindings
-  int total_bindings_;
+  int total_bindings_{0};
 
   // The number of expected bindings to the model. In case of dynamic
   // shapes, it is the number of expected bindings to the configured
   // optimization profile.
-  int num_expected_bindings_;
+  int num_expected_bindings_{0};
 
-  int cuda_stream_priority_;
+  int cuda_stream_priority_{0};
 
   // Additional CUDA streams to overlap copy and execution.
-  cudaStream_t input_copy_stream_;
-  cudaStream_t output_copy_stream_;
-  int num_copy_streams_;
+  cudaStream_t input_copy_stream_{};
+  cudaStream_t output_copy_stream_{};
+  int num_copy_streams_{0};
 
   // CUDA stream use to track execution status
-  cudaStream_t signal_stream_;
+  cudaStream_t signal_stream_{};
 
   // A group of CUDA events that signals different stages of the
   // request. One group should be used for one request at any given
   // moment.
   struct CUDAEventSet {
     // CUDA event to signal input buffer availability.
-    cudaEvent_t ready_for_input_;
-    cudaEvent_t input_ready_;
+    cudaEvent_t ready_for_input_{};
+    cudaEvent_t input_ready_{};
 
     // CUDA event for capturing correct timestamp.
-    cudaEvent_t ready_for_output_;
-    cudaEvent_t output_ready_;
+    cudaEvent_t ready_for_output_{};
+    cudaEvent_t output_ready_{};
 
     // CUDA event for synchronizing the order of timestamp capture.
-    cudaEvent_t compute_output_start_;
-    cudaEvent_t compute_input_end_;
-    cudaEvent_t compute_input_start_;
+    cudaEvent_t compute_output_start_{};
+    cudaEvent_t compute_input_end_{};
+    cudaEvent_t compute_input_start_{};
   };
 
   // Use two sets of events each for current request and next request.
-  CUDAEventSet events_[EVENT_SET_COUNT];
-  size_t next_set_;
+  CUDAEventSet events_[EVENT_SET_COUNT]{};
+  size_t next_set_{0};
 
   // Completion thread for handling items in the corresponding
   // completion queue. One thread per instance so that the thread
   // logic is simple as this avoids busy-looping on different model
   // executions' event states.
-  std::thread completion_thread_;
+  std::thread completion_thread_{};
 
   // The details needed by the completion thread to finalize the
   // response for a model execution.
@@ -474,100 +468,91 @@ class ModelInstanceState : public TensorRTModelInstance {
     explicit Payload(
         size_t event_set_idx, TRITONBACKEND_Request** requests,
         uint32_t request_count)
-        : event_set_idx_(event_set_idx), total_batch_size_(0),
-          compute_start_ns_(0), compute_input_end_ns_(0),
-          compute_output_start_ns_(0), requests_(requests),
+        : event_set_idx_(event_set_idx), requests_(requests),
           request_count_(request_count)
     {
     }
 
     // The index to the event set handling the request
-    size_t event_set_idx_;
+    size_t event_set_idx_{0};
 
     // The total batch size for the request
-    size_t total_batch_size_;
+    size_t total_batch_size_{0};
 
     // The timestamps for reporting stats
-    uint64_t compute_start_ns_;
-    uint64_t compute_input_end_ns_;
-    uint64_t compute_output_start_ns_;
+    uint64_t compute_start_ns_{0};
+    uint64_t compute_input_end_ns_{0};
+    uint64_t compute_output_start_ns_{0};
 
     // All the composing InferenceRequest objects
-    std::vector<TRITONBACKEND_Request*> requests_list_;
-    TRITONBACKEND_Request** requests_;
-    uint32_t request_count_;
+    std::vector<TRITONBACKEND_Request*> requests_list_{};
+    TRITONBACKEND_Request** requests_{};
+    uint32_t request_count_{0};
 
     // All the generated InferenceResponse objects
-    std::vector<TRITONBACKEND_Response*> responses_;
+    std::vector<TRITONBACKEND_Response*> responses_{};
 
     // The State objects for the inference requests
-    std::vector<TRITONBACKEND_State*> seq_states_;
+    std::vector<TRITONBACKEND_State*> seq_states_{};
 
     // The collector and responder of the payload, need to extend
     // their lifetime to match the payload to ensure content is intact
     // until the end of execution.
-    std::unique_ptr<BackendInputCollector> collector_;
-    std::unique_ptr<BackendOutputResponder> responder_;
+    std::unique_ptr<BackendInputCollector> collector_{nullptr};
+    std::unique_ptr<BackendOutputResponder> responder_{nullptr};
 
-    std::vector<std::pair<void*, size_t>> buffer_input_binding_pairs_;
+    std::vector<std::pair<void*, size_t>> buffer_input_binding_pairs_{};
   };
 
   // Assume that the lifetime of composing completion data to extend
   // till the responses are returned.
-  triton::common::SyncQueue<std::unique_ptr<Payload>> completion_queue_;
+  triton::common::SyncQueue<std::unique_ptr<Payload>> completion_queue_{};
 
   // The maximum possible size of the TensorRT tensor and the
   // corresponding allocated GPU buffer across all optimization
   // profile.
   using BatchInputData = std::pair<BatchInput, std::unique_ptr<BackendMemory>>;
   struct IOBindingInfo {
-    IOBindingInfo()
-        : byte_size_(0), buffer_(nullptr), device_buffer_(nullptr),
-          memory_type_(TRITONSERVER_MEMORY_GPU), memory_type_id_(0),
-          buffer_is_ragged_(false), format_(), is_state_output_(false),
-          is_requested_output_tensor_(false)
-    {
-    }
     std::string name_;
     uint64_t byte_size_;
     // [DLIS-4283] Make it clear that 'buffer_' is what we operate on,
     // 'device_buffer_' is just extra wrapper used only on TRT enqueue,
     // i.e. WAR for Jetson "zero-copy" where 'buffer_' is actually on host
     // while TRT expect device pointer.
-    void* buffer_;
-    void* device_buffer_;
-    TRITONSERVER_MemoryType memory_type_;
-    int64_t memory_type_id_;
-    bool buffer_is_ragged_;
+    void* buffer_{nullptr};
+    void* device_buffer_{nullptr};
+    TRITONSERVER_MemoryType memory_type_{TRITONSERVER_MEMORY_GPU};
+    int64_t memory_type_id_{0};
+    bool buffer_is_ragged_{false};
     // Meta data for reformat-free I/O
-    TensorFormat format_;
-    const BatchOutput* batch_output_;
+    TensorFormat format_{};
+    const BatchOutput* batch_output_{nullptr};
     // Instructions on constructing the batch input and the CPU buffer
     // for storing mutable data
-    std::shared_ptr<BatchInputData> batch_input_;
+    std::shared_ptr<BatchInputData> batch_input_{nullptr};
     // Store the pair of input name to look up and output shape
     // for output scattering
-    std::pair<std::string, std::vector<int64_t>> io_shape_mapping_;
+    std::pair<std::string, std::vector<int64_t>> io_shape_mapping_{};
 
     // Indicates whether the output is a state output.
-    bool is_state_output_;
+    bool is_state_output_{false};
 
     // Indicates whether the output is a output tensor.
-    bool is_requested_output_tensor_;
+    bool is_requested_output_tensor_{false};
 
     // Whether this is an output using OutputAllocator for
     // dynamic resizing.
-    bool is_dynamic_{false};
+    bool is_dynamic_shape_output_{false};
   };
 
   // There will be two sets of input/output buffers when
   // separate_output_stream is selected to overlap copy and execution
   // safely.
-  int next_buffer_binding_set_;
+  int next_buffer_binding_set_{0};
 
   // There are Context::num_expected_bindings_ number of IOBindingInfo
   // elements for copy stream.
-  std::vector<std::vector<IOBindingInfo>> io_binding_infos_;
+  std::vector<std::vector<IOBindingInfo>> io_binding_infos_{};
 
   // [DLIS-4283] no longer needed for v3, but v1 still needs it. Should
   // encapsulate to v1 specific handling and gradually remove it from regular
@@ -577,35 +562,35 @@ class ModelInstanceState : public TensorRTModelInstance {
   // execution declaration while minimizing memory allocation. The
   // array size is equal to Context::total_bindings_ One of for each
   // copy stream
-  std::vector<std::vector<void*>> buffer_bindings_;
+  std::vector<std::vector<void*>> buffer_bindings_{};
 
   // The request details of the ongoing model execution
-  std::unique_ptr<Payload> payload_;
+  std::unique_ptr<Payload> payload_{nullptr};
 
   // Whether zero copy is supported on this device
-  bool zero_copy_support_;
+  bool zero_copy_support_{false};
 
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible
-  bool coalesce_request_input_;
+  bool coalesce_request_input_{false};
 
   // Whether or not the model uses implicit state.
-  bool uses_implicit_state_;
+  bool uses_implicit_state_{false};
 
   // Holds up the execution on issue thread unless promise is fulfilled.
-  std::unique_ptr<std::promise<void>> barrier_;
+  std::unique_ptr<std::promise<void>> barrier_{nullptr};
 
-  ModelState* model_state_;
+  ModelState* model_state_{nullptr};
 
-  std::unique_ptr<TRTInterface> interface_;
+  std::unique_ptr<TRTInterface> interface_{nullptr};
 
   // TRT model instance performs execution asynchorously and thus may go
   // ahead to prepare further executions. Use semaphore to prevent going too
   // far ahead and overwriting resources that are still in use.
-  std::unique_ptr<Semaphore> semaphore_;
+  std::unique_ptr<Semaphore> semaphore_{nullptr};
 
   // Vector of OutputAllocators to hold pointers to prevent deallocation.
-  std::vector<std::unique_ptr<OutputAllocator>> allocators_;
+  std::vector<std::unique_ptr<OutputAllocator>> allocators_{};
 };
 
 }}}  // namespace triton::backend::tensorrt

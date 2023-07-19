@@ -1075,7 +1075,7 @@ ModelInstanceState::Run(
       // supported, otherwise use device memory. Perform memory copies
       // asynchronously and wait for model execution.
       void* buffer =
-          io_binding_info.is_dynamic_
+          io_binding_info.is_dynamic_shape_output_
               ? static_cast<OutputAllocator*>(
                     citr->second.context_->getOutputAllocator(name.c_str()))
                     ->getBuffer()
@@ -1123,7 +1123,7 @@ ModelInstanceState::Run(
       }
 
       void* buffer =
-          io_binding_info.is_dynamic_
+          io_binding_info.is_dynamic_shape_output_
               ? static_cast<OutputAllocator*>(
                     citr->second.context_->getOutputAllocator(name.c_str()))
                     ->getBuffer()
@@ -1994,7 +1994,7 @@ ModelInstanceState::InitIOBindingBuffers()
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < num_expected_bindings_; ++i) {
       if (io_binding_infos_[s][i].buffer_ == nullptr &&
-          !io_binding_infos_[s][i].is_dynamic_ &&
+          !io_binding_infos_[s][i].is_dynamic_shape_output_ &&
           engine_->isExecutionBinding(i)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
@@ -2477,13 +2477,13 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
       if (ContainsWildcard(engine_dims)) {
         context.is_dynamic_per_binding_[io_index] = true;
-        io_binding_info.is_dynamic_ = true;
+        io_binding_info.is_dynamic_shape_output_ = true;
       }
 
       RETURN_IF_ERROR(CompareShapeDimsSupported(
           Name(), io_name, engine_dims, model_config_dims, support_batching_));
 
-      if (!io_binding_info.is_dynamic_) {
+      if (!io_binding_info.is_dynamic_shape_output_) {
         const nvinfer1::Dims output_dim =
             context.context_->getBindingDimensions(binding_index);
         std::vector<int64_t> dim_vec;
@@ -2494,7 +2494,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       }
     }
 
-    if (!io_binding_info.is_dynamic_) {
+    if (!io_binding_info.is_dynamic_shape_output_) {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
       // supported. For static output tensors, we rely on
@@ -2530,7 +2530,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     for (auto& trt_context : trt_contexts_) {
       auto binding_index =
           num_expected_bindings_ * trt_context.first + io_index;
-      if (io_binding_info.is_dynamic_) {
+      if (io_binding_info.is_dynamic_shape_output_) {
         auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
         trt_context.second.context_->setOutputAllocator(
             io_name.c_str(), allocator.get());
@@ -2856,7 +2856,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   for (auto& trt_context : trt_contexts_) {
     if (ContainsWildcard(
             trt_context.second.context_->getTensorShape(output_name.c_str()))) {
-      io_binding_info.is_dynamic_ = true;
+      io_binding_info.is_dynamic_shape_output_ = true;
       break;
     }
   }
@@ -2928,7 +2928,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
            output_name + "' for " + Name())
               .c_str());
     }
-    if (!io_binding_info.is_dynamic_) {
+    if (!io_binding_info.is_dynamic_shape_output_) {
       int64_t byte_size = interface_->GetFullByteSize(
           context.context_.get(), output_name, binding_index);
       if (byte_size == -1) {
@@ -2944,7 +2944,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   cudaError_t err = cudaSuccess;
 
-  if (!io_binding_info.is_dynamic_) {
+  if (!io_binding_info.is_dynamic_shape_output_) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
     // For static output tensors, we rely on buffer_bindings_ being
     // non-nullptr to indicate that the buffer has been correctly initialized
@@ -2985,7 +2985,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   if (zero_copy_support_) {
     io_binding_info.memory_type_ = TRITONSERVER_MEMORY_CPU_PINNED;
     io_binding_info.memory_type_id_ = 0;
-    if (!io_binding_info.is_dynamic_) {
+    if (!io_binding_info.is_dynamic_shape_output_) {
       err = cudaHostGetDevicePointer(
           &io_binding_info.device_buffer_, io_binding_info.buffer_, 0);
       if (err != cudaSuccess) {
@@ -3005,7 +3005,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // allocated
   for (auto& trt_context : trt_contexts_) {
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
-    if (io_binding_info.is_dynamic_) {
+    if (io_binding_info.is_dynamic_shape_output_) {
       auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
       trt_context.second.context_->setOutputAllocator(
           output_name.c_str(), allocator.get());

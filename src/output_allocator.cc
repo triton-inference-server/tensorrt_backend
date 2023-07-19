@@ -33,24 +33,26 @@ OutputAllocator::reallocateOutput(
     char const* tensor_name, void* current_memory, uint64_t size,
     uint64_t alignment) noexcept
 {
+  // When the requested output size is larger than the current size,
+  // free the allocated memory and attempt to allocate the larger size
+  // for the underlying output buffer.
   if (size > output_size_) {
     cudaFree(output_ptr_);
     output_ptr_ = nullptr;
     output_size_ = 0;
     if (zero_copy_support_) {
       cudaHostAlloc(&output_ptr_, size, cudaHostAllocMapped);
-    } else {
-      cudaMalloc(&output_ptr_, size);
-    }
-    // If zero copy support is enabled, need to set the buffer to the device
-    // pointer.
-    if (zero_copy_support_) {
+      // If zero copy support is enabled, need to set the buffer to the device
+      // pointer.
       void* device_buffer;
       auto err = cudaHostGetDevicePointer(&device_buffer, &output_ptr_, 0);
       if (err == cudaSuccess) {
         output_ptr_ = device_buffer;
       }
+    } else {
+      cudaMalloc(&output_ptr_, size);
     }
+
     // If the memory allocation fails, output_ptr_=nullptr and engine
     // gracefully fails.
     if (output_ptr_ != nullptr) {
