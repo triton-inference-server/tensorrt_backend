@@ -2531,7 +2531,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       auto binding_index =
           num_expected_bindings_ * trt_context.first + io_index;
       if (io_binding_info.is_dynamic_shape_output_) {
-        auto allocator = std::make_unique<OutputAllocator>(false);
+        auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
         trt_context.second.context_->setOutputAllocator(
             io_name.c_str(), allocator.get());
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
@@ -3128,6 +3128,18 @@ ModelInstanceState::InitializeShapeInputBinding(
     // pre-allocation.
     if (!context.context_->setInputTensorAddress(
             input_name.c_str(), context.max_shapes_[io_index])) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("trt failed to set the input shape binding for '") +
+           input_name + "' for " + Name())
+              .c_str());
+    }
+    // [FIXME] setInputShapeBinding() is deprecated and
+    // setInputTensorAddress() above alone should be sufficient. There is bug
+    // in TRT that getMaxOutputSize() won't work without
+    // setInputShapeBinding() for shape tensor, ETA fix in 8.5.2
+    if (!context.context_->setInputShapeBinding(
+            binding_index, context.max_shapes_[io_index])) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("trt failed to set the input shape binding for '") +
