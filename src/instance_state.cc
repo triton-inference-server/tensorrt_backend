@@ -610,10 +610,6 @@ ModelInstanceState::Run(
             sizeof(int32_t) * it->second.size());
         citr->second.context_->setInputTensorAddress(
             name.c_str(), io_binding_info.buffer_);
-        // [FIXME] should be replaced by above, see another use of
-        // setInputShapeBinding for detail
-        citr->second.context_->setInputShapeBinding(
-            binding_index, reinterpret_cast<int32_t*>(io_binding_info.buffer_));
       }
     }
 
@@ -911,15 +907,6 @@ ModelInstanceState::Run(
               TRITONSERVER_ERROR_INTERNAL,
               "failed to specify the dimensions of all input "
               "bindings"),
-          "failed to run TRT inference");
-    }
-    if (!citr->second.context_->allInputShapesSpecified()) {
-      FAIL_ALL_AND_RETURN_IF_ERROR(
-          payload_->requests_, payload_->request_count_, payload_->responses_,
-          TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INTERNAL,
-              "failed to specify the values for all input shape "
-              "tensors"),
           "failed to run TRT inference");
     }
 
@@ -1945,11 +1932,6 @@ ModelInstanceState::InitIOBindingBuffers()
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           "failed to specify the dimensions of all input bindings");
-    }
-    if (!trt_context.second.context_->allInputShapesSpecified()) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          "failed to specify the values of all input shape tensors");
     }
   }
 
@@ -3070,18 +3052,6 @@ ModelInstanceState::InitializeShapeInputBinding(
     // pre-allocation.
     if (!context.context_->setInputTensorAddress(
             input_name.c_str(), context.max_shapes_[io_index])) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("trt failed to set the input shape binding for '") +
-           input_name + "' for " + Name())
-              .c_str());
-    }
-    // [FIXME] setInputShapeBinding() is deprecated and
-    // setInputTensorAddress() above alone should be sufficient. There is bug
-    // in TRT that getMaxOutputSize() won't work without
-    // setInputShapeBinding() for shape tensor, ETA fix in 8.5.2
-    if (!context.context_->setInputShapeBinding(
-            binding_index, context.max_shapes_[io_index])) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("trt failed to set the input shape binding for '") +
