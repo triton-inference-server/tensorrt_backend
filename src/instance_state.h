@@ -32,6 +32,7 @@
 #include <map>
 #include <unordered_map>
 
+#include "io_binding_info.h"
 #include "model_state.h"
 #include "output_allocator.h"
 #include "semaphore.h"
@@ -157,12 +158,6 @@ struct GraphSpec {
   int64_t lower_bound_batch_size_{0};
   std::map<std::string, std::vector<int64_t>> lower_bound_shapes_{};
   bool captured_{false};
-};
-
-struct TensorFormat {
-  bool is_linear_format_{true};
-  int vectorized_dim_{-1};
-  int components_per_element_{1};
 };
 
 // [DLIS-4283] temporary workaround to separate TRT v1 and TRT v3 usage
@@ -507,43 +502,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Assume that the lifetime of composing completion data to extend
   // till the responses are returned.
   triton::common::SyncQueue<std::unique_ptr<Payload>> completion_queue_{};
-
-  // The maximum possible size of the TensorRT tensor and the
-  // corresponding allocated GPU buffer across all optimization
-  // profile.
-  using BatchInputData = std::pair<BatchInput, std::unique_ptr<BackendMemory>>;
-  struct IOBindingInfo {
-    std::string name_;
-    uint64_t byte_size_;
-    // [DLIS-4283] Make it clear that 'buffer_' is what we operate on,
-    // 'device_buffer_' is just extra wrapper used only on TRT enqueue,
-    // i.e. WAR for Jetson "zero-copy" where 'buffer_' is actually on host
-    // while TRT expect device pointer.
-    void* buffer_{nullptr};
-    void* device_buffer_{nullptr};
-    TRITONSERVER_MemoryType memory_type_{TRITONSERVER_MEMORY_GPU};
-    int64_t memory_type_id_{0};
-    bool buffer_is_ragged_{false};
-    // Meta data for reformat-free I/O
-    TensorFormat format_{};
-    const BatchOutput* batch_output_{nullptr};
-    // Instructions on constructing the batch input and the CPU buffer
-    // for storing mutable data
-    std::shared_ptr<BatchInputData> batch_input_{nullptr};
-    // Store the pair of input name to look up and output shape
-    // for output scattering
-    std::pair<std::string, std::vector<int64_t>> io_shape_mapping_{};
-
-    // Indicates whether the output is a state output.
-    bool is_state_output_{false};
-
-    // Indicates whether the output is a output tensor.
-    bool is_requested_output_tensor_{false};
-
-    // Whether this is an output using OutputAllocator for
-    // dynamic resizing.
-    bool is_dynamic_shape_output_{false};
-  };
 
   // There will be two sets of input/output buffers when
   // separate_output_stream is selected to overlap copy and execution
