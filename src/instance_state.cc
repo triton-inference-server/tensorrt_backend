@@ -613,7 +613,8 @@ ModelInstanceState::Run(
         // [FIXME] should be replaced by above, see another use of
         // setInputShapeBinding for detail
         citr->second.context_->setInputShapeBinding(
-            binding_index, reinterpret_cast<int32_t*>(io_binding_info.GetBuffer()));
+            binding_index,
+            reinterpret_cast<int32_t*>(io_binding_info.GetBuffer()));
       }
     }
 
@@ -665,8 +666,9 @@ ModelInstanceState::Run(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             CopyBuffer(
                 name, mem_type, mem_type_id, io_binding_info.GetMemoryType(),
-                io_binding_info.GetMemoryTypeId(), total_byte_size, input_buffer,
-                io_binding_info.GetBuffer(), input_copy_stream_, &cuda_used),
+                io_binding_info.GetMemoryTypeId(), total_byte_size,
+                input_buffer, io_binding_info.GetBuffer(), input_copy_stream_,
+                &cuda_used),
             "error copying the batch input buffer");
         if (cuda_used) {
           cudaEventRecord(events_[next_set_].input_ready_, input_copy_stream_);
@@ -840,9 +842,10 @@ ModelInstanceState::Run(
               payload_->responses_,
               CopyBuffer(
                   "CUDA graph batch input", mem_type, mem_type_id,
-                  io_binding_info.GetMemoryType(), io_binding_info.GetMemoryTypeId(),
-                  total_byte_size, input_buffer, io_binding_info.GetBuffer(),
-                  input_copy_stream_, &cuda_used),
+                  io_binding_info.GetMemoryType(),
+                  io_binding_info.GetMemoryTypeId(), total_byte_size,
+                  input_buffer, io_binding_info.GetBuffer(), input_copy_stream_,
+                  &cuda_used),
               "error copying the batch input buffer");
           if (cuda_used) {
             cudaEventRecord(
@@ -1076,8 +1079,8 @@ ModelInstanceState::Run(
       // asynchronously and wait for model execution.
       payload_->responder_->ProcessBatchOutput(
           name, *(io_binding_info.GetBatchOutput()),
-          static_cast<const char*>(io_binding_info.GetBuffer()), io_binding_info.GetMemoryType(),
-          io_binding_info.GetMemoryTypeId());
+          static_cast<const char*>(io_binding_info.GetBuffer()),
+          io_binding_info.GetMemoryType(), io_binding_info.GetMemoryTypeId());
     } else {
       std::vector<int64_t> batchn_shape;
 
@@ -1108,7 +1111,8 @@ ModelInstanceState::Run(
             TRITONSERVER_ErrorNew(
                 TRITONSERVER_ERROR_INTERNAL,
                 (std::string("unexpected size for output '") + name +
-                 "', byte-size " + std::to_string(io_binding_info.GetByteSize()) +
+                 "', byte-size " +
+                 std::to_string(io_binding_info.GetByteSize()) +
                  " is less than " +
                  std::to_string(payload_->total_batch_size_) + " * " +
                  std::to_string(batch1_byte_size))
@@ -1121,13 +1125,15 @@ ModelInstanceState::Run(
         // supported, otherwise use device memory. Perform memory copies
         // asynchronously and wait for model execution.
         payload_->responder_->ProcessTensor(
-            name, dt, batchn_shape, static_cast<const char*>(io_binding_info.GetBuffer()),
+            name, dt, batchn_shape,
+            static_cast<const char*>(io_binding_info.GetBuffer()),
             io_binding_info.GetMemoryType(), io_binding_info.GetMemoryTypeId());
       }
 
       if (io_binding_info.IsStateOutput()) {
         auto updated_states = payload_->responder_->ProcessStateTensor(
-            name, dt, batchn_shape, static_cast<const char*>(io_binding_info.GetBuffer()),
+            name, dt, batchn_shape,
+            static_cast<const char*>(io_binding_info.GetBuffer()),
             io_binding_info.GetMemoryType(), io_binding_info.GetMemoryTypeId());
         payload_->seq_states_.insert(
             payload_->seq_states_.end(), updated_states.begin(),
@@ -2360,7 +2366,8 @@ ModelInstanceState::InitializeBatchOutputBindings(
       }
       // Set hints to for InitializeBatchOutputBindings()
       io_binding_info.SetIsBufferRagged(true);
-      io_binding_info.SetIoShapeMapping(std::make_pair(io.SourceInputs()[0], std::vector<int64_t>()));
+      io_binding_info.SetIoShapeMapping(
+          std::make_pair(io.SourceInputs()[0], std::vector<int64_t>()));
     }
   }
 
@@ -2966,14 +2973,15 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       RETURN_IF_ERROR(output_dims.IndexAsInt(i, &dim));
       output_shape.push_back(dim);
     }
-    io_binding_info.GetIoShapeMapping().second =output_shape;
+    io_binding_info.GetIoShapeMapping().second = output_shape;
   }
   if (zero_copy_support_) {
     io_binding_info.SetMemoryType(TRITONSERVER_MEMORY_CPU_PINNED);
     io_binding_info.SetMemoryTypeId(0);
     if (!io_binding_info.IsDynamicShapeOutput()) {
       err = cudaHostGetDevicePointer(
-          io_binding_info.GetDeviceBufferAddr(), io_binding_info.GetBuffer(), 0);
+          io_binding_info.GetDeviceBufferAddr(), io_binding_info.GetBuffer(),
+          0);
       if (err != cudaSuccess) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -4008,7 +4016,8 @@ TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
   const auto& io_binding_info =
       instance_->io_binding_infos_[instance_->next_buffer_binding_set_];
   for (const auto& info : io_binding_info) {
-    if (!context->setTensorAddress(info.GetName().c_str(), info.GetDeviceBuffer())) {
+    if (!context->setTensorAddress(
+            info.GetName().c_str(), info.GetDeviceBuffer())) {
       return false;
     }
   }
