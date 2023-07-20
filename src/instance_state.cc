@@ -2643,8 +2643,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
     if (!(is_control && context.is_dynamic_per_binding_[io_index])) {
       if (!is_ragged) {
         RETURN_IF_ERROR(CompareDimsSupported(
-            name_, input_name, engine_dims, input_dims, support_batching_,
-            (!engine_->hasImplicitBatchDimension()),
+            StateForModel()->Name(), input_name, engine_dims, input_dims,
+            support_batching_, (!engine_->hasImplicitBatchDimension()),
             false /* compare_exact */));
       } else {
         // For ragged input, the input will be concatenated and
@@ -2874,8 +2874,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     // model dims
     if (!io_binding_info.buffer_is_ragged_) {
       RETURN_IF_ERROR(CompareDimsSupported(
-          name_, output_name, engine_dims, output_dims, support_batching_,
-          (!engine_->hasImplicitBatchDimension()), false /* compare_exact */));
+          StateForModel()->Name(), output_name, engine_dims, output_dims,
+          support_batching_, (!engine_->hasImplicitBatchDimension()),
+          false /* compare_exact */));
     }
 
     if (io_binding_info.buffer_is_ragged_ &&
