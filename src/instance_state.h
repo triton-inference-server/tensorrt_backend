@@ -34,7 +34,6 @@
 
 #include "io_binding_info.h"
 #include "model_state.h"
-#include "output_allocator.h"
 #include "semaphore.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"
@@ -546,9 +545,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   // ahead to prepare further executions. Use semaphore to prevent going too
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_{nullptr};
-
-  // Vector of OutputAllocators to hold pointers to prevent deallocation.
-  std::vector<std::unique_ptr<OutputAllocator>> allocators_{};
 };
 
 }}}  // namespace triton::backend::tensorrt

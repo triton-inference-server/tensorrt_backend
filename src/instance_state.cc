@@ -262,7 +262,8 @@ ModelInstanceState::~ModelInstanceState()
   cudaSetDevice(DeviceId());
   for (auto& io_binding_infos : io_binding_infos_) {
     for (auto& io_binding_info : io_binding_infos) {
-      if (io_binding_info.GetBuffer() != nullptr) {
+      if (io_binding_info.GetBuffer() != nullptr &&
+          !io_binding_info.IsDynamicShapeOutput()) {
         cudaError_t err = cudaSuccess;
         if (io_binding_info.GetMemoryType() == TRITONSERVER_MEMORY_GPU) {
           err = cudaFree(io_binding_info.GetBuffer());
@@ -1987,7 +1988,6 @@ ModelInstanceState::InitIOBindingBuffers()
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < num_expected_bindings_; ++i) {
       if (io_binding_infos_[s][i].GetBuffer() == nullptr &&
-          !io_binding_infos_[s][i].IsDynamicShapeOutput() &&
           engine_->isExecutionBinding(i)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
@@ -2410,8 +2410,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      if (io_binding_info.GetBuffer() != nullptr ||
-          context.is_dynamic_per_binding_[io_index]) {
+      if (io_binding_info.GetBuffer() != nullptr) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("output '") + io_name +
@@ -2526,10 +2525,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
         trt_context.second.context_->setOutputAllocator(
             io_name.c_str(), allocator.get());
+        io_binding_info.SetBuffer(std::move(allocator));
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
-            allocator.get()->getBuffer();
-        io_binding_info.SetBuffer(allocator.get()->getBuffer());
-        allocators_.push_back(std::move(allocator));
+            io_binding_info.GetBuffer();
       } else {
         buffer_bindings_[next_buffer_binding_set_][binding_index] =
             io_binding_info.GetDeviceBuffer();
@@ -2874,8 +2872,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    if (io_binding_info.GetBuffer() != nullptr ||
-        context.is_dynamic_per_binding_[io_index]) {
+    if (io_binding_info.GetBuffer() != nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("output '") + output_name +
@@ -3003,10 +3000,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
       trt_context.second.context_->setOutputAllocator(
           output_name.c_str(), allocator.get());
+      io_binding_info.SetBuffer(std::move(allocator));
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
-          allocator.get()->getBuffer();
-      io_binding_info.SetBuffer(allocator.get()->getBuffer());
-      allocators_.push_back(std::move(allocator));
+          io_binding_info.GetBuffer();
     } else {
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.GetDeviceBuffer();
@@ -4029,12 +4025,6 @@ TRTv3Interface::GetFullByteSize(
     nvinfer1::IExecutionContext* context, const std::string& tensor_name,
     int32_t binding_index)
 {
-  // [FIXME] getMaxOutputSize() may give over-estimated value, if the
-  // allocation size is a concern, should experiment with output allocator
-  // approach. Note that allocator must be well-designed to avoid runtime
-  // allocation as much as possible.
-  // i.e. nonzero model that has input with shape [4], the output size
-  // should be <= 4 * sizeof(data type) while getMaxOutputSize() returns 528
   return context->getMaxOutputSize(tensor_name.c_str());
 }
 

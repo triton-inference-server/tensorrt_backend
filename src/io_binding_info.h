@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "output_allocator.h"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
@@ -63,7 +64,11 @@ class IOBindingInfo {
   std::pair<std::string, std::vector<int64_t>> io_shape_mapping_{};
   bool is_state_output_{false};
   bool is_requested_output_tensor_{false};
+  // Indicates if this is an output with a data-dependent shape.
   bool is_dynamic_shape_output_{false};
+  // Associated output allocator holding the buffer, if applicable.
+  std::unique_ptr<OutputAllocator> allocator_{nullptr};
+
 
  public:
   // Setters and Getters
@@ -74,6 +79,12 @@ class IOBindingInfo {
   uint64_t GetByteSize() const { return byte_size_; }
 
   void SetBuffer(void* buffer) { buffer_ = buffer; }
+  void SetBuffer(std::unique_ptr<OutputAllocator> allocator)
+  {
+    allocator_ = std::move(allocator);
+    buffer_ = allocator_->getBuffer();
+    device_buffer_ = allocator_->getBuffer();
+  }
   void* GetBuffer() const { return buffer_; }
 
   void SetDeviceBuffer(void* device_buffer) { device_buffer_ = device_buffer; }
