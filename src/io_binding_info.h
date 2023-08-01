@@ -82,14 +82,34 @@ class IOBindingInfo {
   void SetBuffer(std::unique_ptr<OutputAllocator> allocator)
   {
     allocator_ = std::move(allocator);
-    buffer_ = allocator_->getBuffer();
-    device_buffer_ = allocator_->getBuffer();
+    is_dynamic_shape_output_ = true;
   }
-  void* GetBuffer() const { return buffer_; }
+  void* GetBuffer() const
+  {
+    if (is_dynamic_shape_output_) {
+      return allocator_->getBuffer();
+    } else {
+      return buffer_;
+    }
+  }
 
   void SetDeviceBuffer(void* device_buffer) { device_buffer_ = device_buffer; }
-  void* GetDeviceBuffer() const { return device_buffer_; }
-  void** GetDeviceBufferAddr() { return &device_buffer_; }
+  void* GetDeviceBuffer() const
+  {
+    if (is_dynamic_shape_output_) {
+      return allocator_->getBuffer();
+    } else {
+      return device_buffer_;
+    }
+  }
+  void** GetDeviceBufferAddr()
+  {
+    if (is_dynamic_shape_output_) {
+      return allocator_->getBufferAddr();
+    } else {
+      return &device_buffer_;
+    }
+  }
 
   void SetMemoryType(TRITONSERVER_MemoryType memory_type)
   {
