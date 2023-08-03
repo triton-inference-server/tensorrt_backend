@@ -86,9 +86,6 @@ class IOBindingInfo {
   }
   void* GetBuffer() const
   {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Call to GetBuffer() for ") + name_ + " tensor.").c_str());
     if (is_dynamic_shape_output_) {
       if (allocator_ == nullptr) {
         return nullptr;
@@ -103,10 +100,6 @@ class IOBindingInfo {
   void SetDeviceBuffer(void* device_buffer) { device_buffer_ = device_buffer; }
   void* GetDeviceBuffer() const
   {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Call to GetDeviceBuffer() for ") + name_ + " tensor.")
-            .c_str());
     if (is_dynamic_shape_output_) {
       if (allocator_ == nullptr) {
         return nullptr;
@@ -186,11 +179,6 @@ class IOBindingInfo {
 
   void SetIsDynamicShapeOutput(bool is_dynamic_shape_output)
   {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Call to SetIsDyanmicShapeOutputBuffer() for ") + name_ +
-         " tensor.")
-            .c_str());
     is_dynamic_shape_output_ = is_dynamic_shape_output;
   }
   bool IsDynamicShapeOutput() const { return is_dynamic_shape_output_; }

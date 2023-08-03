@@ -1987,7 +1987,8 @@ ModelInstanceState::InitIOBindingBuffers()
   // is initialized.
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < num_expected_bindings_; ++i) {
-      if (io_binding_infos_[s][i].GetBuffer() == nullptr &&
+      if (!io_binding_infos_[s][i].IsDynamicShapeOutput() &&
+          io_binding_infos_[s][i].GetBuffer() == nullptr &&
           engine_->isExecutionBinding(i)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
