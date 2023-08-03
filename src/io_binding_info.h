@@ -44,9 +44,6 @@ struct TensorFormat {
   int components_per_element_{1};
 };
 
-// The maximum possible size of the TensorRT tensor and the
-// corresponding allocated GPU buffer across all optimization
-// profile.
 using BatchInputData = std::pair<BatchInput, std::unique_ptr<BackendMemory>>;
 
 class IOBindingInfo {
@@ -64,124 +61,54 @@ class IOBindingInfo {
   std::pair<std::string, std::vector<int64_t>> io_shape_mapping_{};
   bool is_state_output_{false};
   bool is_requested_output_tensor_{false};
-  // Indicates if this is an output with a data-dependent shape.
   bool is_dynamic_shape_output_{false};
-  // Associated output allocator holding the buffer, if applicable.
   std::unique_ptr<OutputAllocator> allocator_{nullptr};
 
-
  public:
-  // Setters and Getters
-  void SetName(const std::string& name) { name_ = name; }
-  const std::string& GetName() const { return name_; }
+  void SetName(const std::string& name);
+  const std::string& GetName() const;
 
-  void SetByteSize(uint64_t byte_size) { byte_size_ = byte_size; }
-  uint64_t GetByteSize() const { return byte_size_; }
+  void SetByteSize(uint64_t byte_size);
+  uint64_t GetByteSize() const;
 
-  void SetBuffer(void* buffer) { buffer_ = buffer; }
-  void SetBuffer(std::unique_ptr<OutputAllocator> allocator)
-  {
-    allocator_ = std::move(allocator);
-    is_dynamic_shape_output_ = true;
-  }
-  void* GetBuffer() const
-  {
-    if (is_dynamic_shape_output_) {
-      if (allocator_ == nullptr) {
-        return nullptr;
-      } else {
-        return allocator_->getBuffer();
-      }
-    } else {
-      return buffer_;
-    }
-  }
+  void SetBuffer(void* buffer);
+  void SetBuffer(std::unique_ptr<OutputAllocator> allocator);
+  void* GetBuffer() const;
 
-  void SetDeviceBuffer(void* device_buffer) { device_buffer_ = device_buffer; }
-  void* GetDeviceBuffer() const
-  {
-    if (is_dynamic_shape_output_) {
-      if (allocator_ == nullptr) {
-        return nullptr;
-      } else {
-        return allocator_->getBuffer();
-      }
-    } else {
-      return device_buffer_;
-    }
-  }
-  void** GetDeviceBufferAddr()
-  {
-    if (is_dynamic_shape_output_) {
-      return allocator_->getBufferAddr();
-    } else {
-      return &device_buffer_;
-    }
-  }
+  void SetDeviceBuffer(void* device_buffer);
+  void* GetDeviceBuffer() const;
+  void** GetDeviceBufferAddr();
 
-  void SetMemoryType(TRITONSERVER_MemoryType memory_type)
-  {
-    memory_type_ = memory_type;
-  }
-  TRITONSERVER_MemoryType GetMemoryType() const { return memory_type_; }
+  void SetMemoryType(TRITONSERVER_MemoryType memory_type);
+  TRITONSERVER_MemoryType GetMemoryType() const;
 
-  void SetMemoryTypeId(int64_t memory_type_id)
-  {
-    memory_type_id_ = memory_type_id;
-  }
-  int64_t GetMemoryTypeId() const { return memory_type_id_; }
+  void SetMemoryTypeId(int64_t memory_type_id);
+  int64_t GetMemoryTypeId() const;
 
-  void SetIsBufferRagged(bool is_buffer_ragged)
-  {
-    is_buffer_ragged_ = is_buffer_ragged;
-  }
-  bool IsBufferRagged() const { return is_buffer_ragged_; }
+  void SetIsBufferRagged(bool is_buffer_ragged);
+  bool IsBufferRagged() const;
 
-  void SetFormat(const TensorFormat& format) { format_ = format; }
-  TensorFormat& GetFormat() { return format_; }
+  void SetFormat(const TensorFormat& format);
+  TensorFormat& GetFormat();
 
-  void SetBatchOutput(const BatchOutput* batch_output)
-  {
-    batch_output_ = batch_output;
-  }
-  const BatchOutput* GetBatchOutput() const { return batch_output_; }
+  void SetBatchOutput(const BatchOutput* batch_output);
+  const BatchOutput* GetBatchOutput() const;
 
-  void SetBatchInput(const BatchInput& batch_input)
-  {
-    batch_input_.reset(new BatchInputData(batch_input, nullptr));
-  }
-  const std::shared_ptr<BatchInputData>& GetBatchInput() const
-  {
-    return batch_input_;
-  }
+  void SetBatchInput(const BatchInput& batch_input);
+  const std::shared_ptr<BatchInputData>& GetBatchInput() const;
 
   void SetIoShapeMapping(
-      const std::pair<std::string, std::vector<int64_t>>& io_shape_mapping)
-  {
-    io_shape_mapping_ = io_shape_mapping;
-  }
-  std::pair<std::string, std::vector<int64_t>>& GetIoShapeMapping()
-  {
-    return io_shape_mapping_;
-  }
+      const std::pair<std::string, std::vector<int64_t>>& io_shape_mapping);
+  std::pair<std::string, std::vector<int64_t>>& GetIoShapeMapping();
 
-  void SetIsStateOutput(bool is_state_output)
-  {
-    is_state_output_ = is_state_output;
-  }
-  bool IsStateOutput() const { return is_state_output_; }
+  void SetIsStateOutput(bool is_state_output);
+  bool IsStateOutput() const;
 
-  void SetIsRequestedOutputTensor(bool is_requested_output_tensor)
-  {
-    is_requested_output_tensor_ = is_requested_output_tensor;
-  }
-  bool IsRequestedOutputTensor() const { return is_requested_output_tensor_; }
+  void SetIsRequestedOutputTensor(bool is_requested_output_tensor);
+  bool IsRequestedOutputTensor() const;
 
-  void SetIsDynamicShapeOutput(bool is_dynamic_shape_output)
-  {
-    is_dynamic_shape_output_ = is_dynamic_shape_output;
-  }
-  bool IsDynamicShapeOutput() const { return is_dynamic_shape_output_; }
+  void SetIsDynamicShapeOutput(bool is_dynamic_shape_output);
+  bool IsDynamicShapeOutput() const;
 };
 
 }}}  // namespace triton::backend::tensorrt

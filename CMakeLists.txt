@@ -121,6 +121,7 @@ add_library(
   src/logging.h
   src/output_allocator.cc
   src/output_allocator.h
+  src/io_binding_info.cc
   src/io_binding_info.h
 )
 
