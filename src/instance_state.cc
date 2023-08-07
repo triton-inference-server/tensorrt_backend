@@ -262,8 +262,7 @@ ModelInstanceState::~ModelInstanceState()
   cudaSetDevice(DeviceId());
   for (auto& io_binding_infos : io_binding_infos_) {
     for (auto& io_binding_info : io_binding_infos) {
-      if (io_binding_info.GetBuffer() != nullptr &&
-          !io_binding_info.IsDynamicShapeOutput()) {
+      if (io_binding_info.IsBufferAllocated()) {
         cudaError_t err = cudaSuccess;
         if (io_binding_info.GetMemoryType() == TRITONSERVER_MEMORY_GPU) {
           err = cudaFree(io_binding_info.GetBuffer());
@@ -2411,7 +2410,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      if (io_binding_info.GetBuffer() != nullptr) {
+      if (io_binding_info.IsBufferAllocated()) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("output '") + io_name +
@@ -2597,7 +2596,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
 
-  if ((io_binding_info.GetBuffer() != nullptr) && is_state) {
+  if (io_binding_info.IsBufferAllocated() && is_state) {
     // The input bindings for the given state input is already allocated,
     // hence, no need to proceed further.
     return nullptr;
@@ -2619,7 +2618,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
       return nullptr;
     }
 
-    if (io_binding_info.GetBuffer() != nullptr) {
+    if (io_binding_info.IsBufferAllocated()) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
@@ -2838,7 +2837,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     io_binding_info.SetIsRequestedOutputTensor(true);
   }
 
-  if ((io_binding_info.GetBuffer() != nullptr) && is_state) {
+  if (io_binding_info.IsBufferAllocated() && is_state) {
     // The input bindings for the given state input is already allocated,
     // hence, no need to proceed further.
     return nullptr;
@@ -2873,7 +2872,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    if (io_binding_info.GetBuffer() != nullptr) {
+    if (io_binding_info.IsBufferAllocated()) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("output '") + output_name +
@@ -3042,7 +3041,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    if (io_binding_info.GetBuffer() != nullptr) {
+    if (io_binding_info.IsBufferAllocated()) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +

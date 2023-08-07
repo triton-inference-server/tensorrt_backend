@@ -109,6 +109,8 @@ class IOBindingInfo {
 
   void SetIsDynamicShapeOutput(bool is_dynamic_shape_output);
   bool IsDynamicShapeOutput() const;
+
+  bool IsBufferAllocated() const;
 };
 
 }}}  // namespace triton::backend::tensorrt

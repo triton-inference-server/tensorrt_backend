@@ -230,4 +230,10 @@ IOBindingInfo::IsDynamicShapeOutput() const
   return is_dynamic_shape_output_;
 }
 
+bool
+IOBindingInfo::IsBufferAllocated() const
+{
+  return (buffer_ != nullptr) || (allocator_ != nullptr);
+}
+
 }}}  // namespace triton::backend::tensorrt
