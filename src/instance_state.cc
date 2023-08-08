@@ -262,7 +262,8 @@ ModelInstanceState::~ModelInstanceState()
   cudaSetDevice(DeviceId());
   for (auto& io_binding_infos : io_binding_infos_) {
     for (auto& io_binding_info : io_binding_infos) {
-      if (io_binding_info.IsBufferAllocated()) {
+      if (!io_binding_info.IsDynamicShapeOutput() &&
+          io_binding_info.GetBuffer() != nullptr) {
         cudaError_t err = cudaSuccess;
         if (io_binding_info.GetMemoryType() == TRITONSERVER_MEMORY_GPU) {
           err = cudaFree(io_binding_info.GetBuffer());
@@ -1986,7 +1987,7 @@ ModelInstanceState::InitIOBindingBuffers()
   // is initialized.
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < num_expected_bindings_; ++i) {
-      if (!io_binding_info.IsBufferAllocated() &&
+      if (!io_binding_infos_[s][i].IsBufferAllocated() &&
           engine_->isExecutionBinding(i)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
@@ -2509,6 +2510,13 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       io_binding_info.SetByteSize(max_byte_size);
       io_binding_info.SetBuffer(buffer);
       io_binding_info.SetDeviceBuffer(buffer);
+    } else {
+      auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
+      for (auto& trt_context : trt_contexts_) {
+        trt_context.second.context_->setOutputAllocator(
+            io_name.c_str(), allocator.get());
+      }
+      io_binding_info.SetBuffer(std::move(allocator));
     }
     io_binding_info.SetMemoryType(TRITONSERVER_MEMORY_CPU_PINNED);
     io_binding_info.SetMemoryTypeId(0);
@@ -2520,16 +2528,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     for (auto& trt_context : trt_contexts_) {
       auto binding_index =
           num_expected_bindings_ * trt_context.first + io_index;
-      if (io_binding_info.IsDynamicShapeOutput()) {
-        auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
-        trt_context.second.context_->setOutputAllocator(
-            io_name.c_str(), allocator.get());
-        io_binding_info.SetBuffer(std::move(allocator));
-        buffer_bindings_[next_buffer_binding_set_][binding_index] =
-            io_binding_info.GetBuffer();
-      } else {
-        buffer_bindings_[next_buffer_binding_set_][binding_index] =
-            io_binding_info.GetDeviceBuffer();
+      buffer_bindings_[next_buffer_binding_set_][binding_index] =
+          io_binding_info.GetDeviceBuffer();
+      if (!io_binding_info.IsDynamicShapeOutput()) {
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
         // something like 'trt_enqueue_buffer'
@@ -2957,6 +2958,13 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     io_binding_info.SetByteSize(max_byte_size);
     io_binding_info.SetBuffer(buffer);
     io_binding_info.SetDeviceBuffer(buffer);
+  } else {
+    auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
+    for (auto& trt_context : trt_contexts_) {
+      trt_context.second.context_->setOutputAllocator(
+          output_name.c_str(), allocator.get());
+    }
+    io_binding_info.SetBuffer(std::move(allocator));
   }
 
   // Whether the output needs to be scattered based on input
@@ -2996,16 +3004,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // allocated
   for (auto& trt_context : trt_contexts_) {
     auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
-    if (io_binding_info.IsDynamicShapeOutput()) {
-      auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
-      trt_context.second.context_->setOutputAllocator(
-          output_name.c_str(), allocator.get());
-      io_binding_info.SetBuffer(std::move(allocator));
-      buffer_bindings_[next_buffer_binding_set_][binding_index] =
-          io_binding_info.GetBuffer();
-    } else {
-      buffer_bindings_[next_buffer_binding_set_][binding_index] =
-          io_binding_info.GetDeviceBuffer();
+    buffer_bindings_[next_buffer_binding_set_][binding_index] =
+        io_binding_info.GetDeviceBuffer();
+    if (!io_binding_info.IsDynamicShapeOutput()) {
       RETURN_ERROR_IF_FALSE(
           trt_context.second.context_->setTensorAddress(
               output_name.c_str(), io_binding_info.GetDeviceBuffer()),
