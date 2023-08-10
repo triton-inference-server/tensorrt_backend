@@ -32,9 +32,9 @@
 namespace triton { namespace backend { namespace tensorrt {
 
 class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all
-  // of its functions use camel case.
+  // This class extends nvinfer1::IOutputAllocator and its functions
+  // reallocateOutput and notifyShape. For consistency, all of its
+  // functions use camel case.
  public:
   OutputAllocator(bool zero_copy_support)
       : zero_copy_support_(zero_copy_support)
