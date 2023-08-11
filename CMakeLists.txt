@@ -119,6 +119,10 @@ add_library(
   src/loader.h
   src/logging.cc
   src/logging.h
+  src/output_allocator.cc
+  src/output_allocator.h
+  src/io_binding_info.cc
+  src/io_binding_info.h
 )
 
 add_library(
