@@ -62,7 +62,8 @@ class ModelState : public TensorRTModel {
 
   TRITONSERVER_Error* CreateEngine(
       int gpu_device, const int64_t dla_core_id, const std::string& model_path,
-      std::shared_ptr<nvinfer1::ICudaEngine>* engine);
+      std::shared_ptr<nvinfer1::ICudaEngine>* engine,
+      const bool is_version_compatible);
 
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }

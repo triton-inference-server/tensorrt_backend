@@ -157,7 +157,7 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
-      (*state)->EnginePtr()));
+      (*state)->EnginePtr(), ModelInstanceState::is_version_compatible_));
 
   // Create TRT API interface once able to obtain implicit batch info,
   // all TRT operations must be done after the interface is instantiated.
@@ -213,8 +213,10 @@ ModelInstanceState::ModelInstanceState(
     void* state;
     THROW_IF_BACKEND_INSTANCE_ERROR(
         TRITONBACKEND_BackendState(backend, &state));
-    coalesce_request_input_ =
-        reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
+    const auto backend_config = reinterpret_cast<BackendConfiguration*>(state);
+    coalesce_request_input_ = backend_config->coalesce_request_input_;
+    ModelInstanceState::is_version_compatible_ =
+        backend_config->is_version_compatible_;
   }
 
   if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {

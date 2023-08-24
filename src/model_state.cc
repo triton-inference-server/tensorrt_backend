@@ -191,7 +191,8 @@ ModelState::~ModelState()
 TRITONSERVER_Error*
 ModelState::CreateEngine(
     int gpu_device, const int64_t dla_core_id, const std::string& model_path,
-    std::shared_ptr<nvinfer1::ICudaEngine>* engine)
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine,
+    const bool is_version_compatible)
 {
   // TensorRT engine creation is not thread-safe, so multiple creations
   // are serialized with a global lock.
@@ -231,6 +232,16 @@ ModelState::CreateEngine(
            std::to_string(gpu_device) + ", NVDLA core " +
            std::to_string(dla_core_id) + " for " + Name())
               .c_str());
+      if (is_version_compatible) {
+        eit->second.first->setEngineHostCodeAllowed(true);
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_VERBOSE,
+            (std::string(
+                 "Version compatibility enabled for runtime on GPU device ") +
+             std::to_string(gpu_device) + ", NVDLA core " +
+             std::to_string(dla_core_id) + " for " + Name())
+                .c_str());
+      }
     }
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
@@ -258,7 +269,7 @@ ModelState::CreateEngine(
     }
 
     if (!IsEngineSharingEnabled()) {
-      // Set to engine to 'nullptr' as hint, but keeping runtime as it
+      // Set engine to 'nullptr' as hint, but keeping runtime as it
       // can be used repeatedly
       if (eit->second.second != nullptr) {
         eit->second.second.reset();

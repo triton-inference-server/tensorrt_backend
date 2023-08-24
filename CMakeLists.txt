@@ -106,6 +106,7 @@ add_library(
   src/tensorrt_model.cc
   src/tensorrt_model.h
   src/instance_state.cc
+  src/instance_state.h
   src/tensorrt_model_instance.cc
   src/tensorrt_model_instance.h
   src/tensorrt_utils.cc
