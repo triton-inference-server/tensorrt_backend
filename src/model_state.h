@@ -67,7 +67,7 @@ class ModelState : public TensorRTModel {
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
 
-  static void EnableVersionCompatible() { is_version_compatible_ = true; }
+  static void EnableVersionCompatibility() { is_version_compatible_ = true; }
   static bool isVersionCompatible() { return is_version_compatible_; }
 
   // Register the instance and its associated device ID to execution arbitrator.

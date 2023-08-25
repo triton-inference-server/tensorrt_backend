@@ -213,8 +213,8 @@ ModelInstanceState::ModelInstanceState(
     void* state;
     THROW_IF_BACKEND_INSTANCE_ERROR(
         TRITONBACKEND_BackendState(backend, &state));
-    const auto backend_config = reinterpret_cast<BackendConfiguration*>(state);
-    coalesce_request_input_ = backend_config->coalesce_request_input_;
+    coalesce_request_input_ =
+        reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
   }
 
   if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {

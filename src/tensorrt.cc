@@ -170,8 +170,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(ParseBoolValue(value_str, &is_version_compatible));
       if (is_version_compatible) {
-        LOG_INFO
-        ModelState::EnableVersionCompatible();
+        ModelState::EnableVersionCompatibility();
       }
     }
   }
