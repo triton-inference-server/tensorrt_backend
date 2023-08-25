@@ -193,7 +193,6 @@ ModelState::CreateEngine(
     int gpu_device, const int64_t dla_core_id, const std::string& model_path,
     std::shared_ptr<nvinfer1::ICudaEngine>* engine)
 {
-  LOG_MESSAGE(TRITONSERVER_LOG_INFO, (std::string("CREATEENGINE")).c_str());
   // TensorRT engine creation is not thread-safe, so multiple creations
   // are serialized with a global lock.
   static std::mutex global_context_mu;
@@ -233,7 +232,6 @@ ModelState::CreateEngine(
            std::to_string(dla_core_id) + " for " + Name())
               .c_str());
     }
-
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
         (std::string("Created new engine on GPU device ") +
@@ -260,7 +258,7 @@ ModelState::CreateEngine(
     }
 
     if (!IsEngineSharingEnabled()) {
-      // Set engine to 'nullptr' as hint, but keeping runtime as it
+      // Set engine to 'nullptr' as hint, but keep runtime as it
       // can be used repeatedly
       if (eit->second.second != nullptr) {
         eit->second.second.reset();

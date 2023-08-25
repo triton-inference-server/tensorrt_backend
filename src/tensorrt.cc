@@ -93,7 +93,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // The backend configuration may contain information needed by the
-  // backend, such a command-line arguments.
+  // backend, such as command-line arguments.
   TRITONSERVER_Message* backend_config_message;
   RETURN_IF_ERROR(
       TRITONBACKEND_BackendConfig(backend, &backend_config_message));
@@ -166,9 +166,13 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
     }
 
     if (cmdline.Find("version-compatible", &value)) {
+      bool is_version_compatible{false};
       RETURN_IF_ERROR(value.AsString(&value_str));
-      RETURN_IF_ERROR(
-          ParseBoolValue(value_str, &ModelState::is_version_compatible_));
+      RETURN_IF_ERROR(ParseBoolValue(value_str, &is_version_compatible));
+      if (is_version_compatible) {
+        LOG_INFO
+        ModelState::EnableVersionCompatible();
+      }
     }
   }
 

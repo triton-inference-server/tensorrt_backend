@@ -26,7 +26,6 @@
 #pragma once
 
 #include <NvInfer.h>
-#include <NvInferRuntime.h>
 
 #include <memory>
 #include <string>

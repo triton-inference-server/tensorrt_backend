@@ -123,9 +123,6 @@ ModelInstanceState::Create(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance,
     ModelInstanceState** state)
 {
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("HERE: ModelInstanceState::Create")).c_str());
   try {
     *state = new ModelInstanceState(model_state, triton_model_instance);
   }
