@@ -26,12 +26,14 @@
 #pragma once
 
 #include <NvInfer.h>
+#include <NvInferRuntime.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "logging.h"
+#include "model_state.h"
 #include "triton/core/tritonserver.h"
 
 namespace triton { namespace backend { namespace tensorrt {

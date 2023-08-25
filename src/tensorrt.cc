@@ -168,7 +168,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
     if (cmdline.Find("version-compatible", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(
-          ParseBoolValue(value_str, &lconfig->is_version_compatible_));
+          ParseBoolValue(value_str, &ModelState::is_version_compatible_));
     }
   }
 

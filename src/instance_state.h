@@ -79,7 +79,6 @@ struct BackendConfiguration {
 
   bool coalesce_request_input_{false};
   bool enable_memory_tracker_{false};
-  bool is_version_compatible_{false};
 };
 
 class ModelInstanceState;
@@ -531,9 +530,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether the input collector will coalesce request inputs as if they form
   // one contiguous buffer when possible
   bool coalesce_request_input_{false};
-
-  // Whether the backend should support version-compatible TensorRT models.
-  inline static bool is_version_compatible_{false};
 
   // Whether or not the model uses implicit state.
   bool uses_implicit_state_{false};
