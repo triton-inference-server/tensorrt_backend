@@ -72,9 +72,12 @@ for detail). Currently the following values are accepted:
 * The `plugins` flag provides a way to load any custom TensorRT plugins that your models rely on. If you have
 multiple plugins to load, use a semicolon as the delimiter.
 
-* The `version-compatible` flag enables the loading of version-compatible TensorRT models. You must trust the
-models loaded in this mode, as version-compatible models include a lean runtime which gets deserialized and executed
-by Triton. The default value is false.
+* The `version-compatible` flag enables the loading of version-compatible TensorRT models where the version of
+TensorRT used for building does not matching the engine version used by Triton. You must trust the models
+loaded in this mode, as version-compatible models include a lean runtime which gets deserialized and executed
+by Triton. You can find more information in the TensorRT documentation
+[here](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#version-compat).
+The default value is false.
 
 
 
