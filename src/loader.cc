@@ -52,6 +52,14 @@ LoadPlan(
            tensorrt_logger->LastErrorMsg())
               .c_str());
     }
+
+    if (ModelState::isVersionCompatible() &&
+        !runtime->get()->getEngineHostCodeAllowed()) {
+      runtime->get()->setEngineHostCodeAllowed(true);
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_VERBOSE,
+          (std::string("Version compatibility enabled for runtime")).c_str());
+    }
   }
 
   // Report error if 'dla_core_id' >= number of DLA cores

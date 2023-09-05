@@ -53,17 +53,14 @@ backend that are then applied to all models that use the backend.
 Below is an example of how to specify the backend config and the full list of
 options.
 
-##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins="/path/plugin1.so;/path2/plugin2.so"
+##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins="/path/plugin1.so;/path2/plugin2.so,version-compatible=true"
 
-* `coalesce-request-input` flag instructs TensorRT to consider the requests' inputs with the same name as
+* The `coalesce-request-input` flag instructs TensorRT to consider the requests' inputs with the same name as
 one contiguous buffer if their memory addresses align with each other.
 This option should only be enabled if all requests' input tensors are allocated
-from the same memory region. Default value is false.
+from the same memory region. The default value is false.
 
-* `plugins` flag provides a way to load any custom TensorRT plugins that your models rely on. If you have
-multiple plugins to load, use a semicolon as the delimiter.
-
-* `execution-policy` flag instructs TensorRT backend to execute the model with
+* The `execution-policy` flag instructs TensorRT backend to execute the model with
 different Triton execution policies (see `TRITONBACKEND_ExecutionPolicy`
 for detail). Currently the following values are accepted:
   * `DEVICE_BLOCKING`: corresponds to `TRITONBACKEND_EXECUTION_DEVICE_BLOCKING`,
@@ -71,6 +68,16 @@ for detail). Currently the following values are accepted:
   many kernels from multiple threads.
   * `BLOCKING`: corresponds to `TRITONBACKEND_EXECUTION_BLOCKING`, this option
   can be set to overlap the host thread workload between model instances.
+
+* The `plugins` flag provides a way to load any custom TensorRT plugins that your models rely on. If you have
+multiple plugins to load, use a semicolon as the delimiter.
+
+* The `version-compatible` flag enables the loading of version-compatible TensorRT models where the version of
+TensorRT used for building does not matching the engine version used by Triton. You must trust the models
+loaded in this mode, as version-compatible models include a lean runtime which gets deserialized and executed
+by Triton. You can find more information in the TensorRT documentation
+[here](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#version-compat).
+The default value is false.
 
 
 

@@ -67,6 +67,9 @@ class ModelState : public TensorRTModel {
   void DisableEngineSharing() { engine_sharing_ = false; }
   bool IsEngineSharingEnabled() { return engine_sharing_; }
 
+  static void EnableVersionCompatibility() { is_version_compatible_ = true; }
+  static bool isVersionCompatible() { return is_version_compatible_; }
+
   // Register the instance and its associated device ID to execution arbitrator.
   void RegisterInstance(const int device_id, ModelInstanceState* instance)
   {
@@ -134,6 +137,9 @@ class ModelState : public TensorRTModel {
   bool engine_sharing_;
 
   std::unique_ptr<ExecutionArbitrator> execution_arbitrator_;
+
+  // Whether the backend should support version-compatible TensorRT models.
+  static inline bool is_version_compatible_{false};
 };
 
 

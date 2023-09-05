@@ -258,7 +258,7 @@ ModelState::CreateEngine(
     }
 
     if (!IsEngineSharingEnabled()) {
-      // Set to engine to 'nullptr' as hint, but keeping runtime as it
+      // Set engine to 'nullptr' as hint, but keep runtime as it
       // can be used repeatedly
       if (eit->second.second != nullptr) {
         eit->second.second.reset();

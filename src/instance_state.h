@@ -77,8 +77,8 @@ struct BackendConfiguration {
     return RetrieveFrom(model);
   }
 
-  bool enable_memory_tracker_{false};
   bool coalesce_request_input_{false};
+  bool enable_memory_tracker_{false};
 };
 
 class ModelInstanceState;
