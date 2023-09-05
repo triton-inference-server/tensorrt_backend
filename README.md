@@ -53,7 +53,7 @@ backend that are then applied to all models that use the backend.
 Below is an example of how to specify the backend config and the full list of
 options.
 
-##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins="/path/plugin1.so;/path2/plugin2.so"
+##### --backend-config=tensorrt,coalesce-request-input=\<boolean\>,plugins="/path/plugin1.so;/path2/plugin2.so,version-compatible=true"
 
 * The `coalesce-request-input` flag instructs TensorRT to consider the requests' inputs with the same name as
 one contiguous buffer if their memory addresses align with each other.
