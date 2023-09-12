@@ -79,7 +79,11 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 if(${TRITON_ENABLE_GPU})
   find_package(CUDAToolkit REQUIRED)
   message(STATUS "Using CUDA ${CUDA_VERSION}")
-  set(CUDA_NVCC_FLAGS -std=c++11)
+  if (WIN32)
+    set(CUDA_NVCC_FLAGS -std=c++17)
+  else ()
+    set(CUDA_NVCC_FLAGS -std=c++11)
+  endif ()
 
   if(CUDA_VERSION VERSION_GREATER "10.1" OR CUDA_VERSION VERSION_EQUAL "10.1")
     add_definitions(-DTRITON_ENABLE_CUDA_GRAPH=1)
@@ -139,7 +143,12 @@ target_include_directories(
     PRIVATE ${TRITON_TENSORRT_INCLUDE_PATHS}
   )
 
-target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_11)
+if (WIN32)
+  target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_17)
+else ()
+  target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_11)
+endif ()
+
 target_compile_options(
   triton-tensorrt-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
