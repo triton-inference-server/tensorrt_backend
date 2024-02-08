@@ -1,4 +1,4 @@
-// Copyright 2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -234,6 +234,16 @@ bool
 IOBindingInfo::IsBufferAllocated() const
 {
   return (buffer_ != nullptr) || (allocator_ != nullptr);
+}
+
+OutputAllocator*
+IOBindingInfo::GetAllocator()
+{
+  if (allocator_) {
+    return allocator_.get();
+  } else {
+    return nullptr;
+  }
 }
 
 }}}  // namespace triton::backend::tensorrt
