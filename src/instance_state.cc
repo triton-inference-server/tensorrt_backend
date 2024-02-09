@@ -1,4 +1,4 @@
-// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -573,6 +573,12 @@ ModelInstanceState::Run(
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     int binding_index = binding_offset + io_index;
+
+    if (io_binding_info.IsDynamicShapeOutput()) {
+      citr->second.context_->setOutputAllocator(
+          io_binding_info.GetName().c_str(), io_binding_info.GetAllocator());
+    }
+
     if (!engine_->bindingIsInput(binding_index)) {
       continue;
     }
@@ -2512,10 +2518,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       io_binding_info.SetDeviceBuffer(buffer);
     } else {
       auto allocator = std::make_unique<OutputAllocator>(zero_copy_support_);
-      for (auto& trt_context : trt_contexts_) {
-        trt_context.second.context_->setOutputAllocator(
-            io_name.c_str(), allocator.get());
-      }
       io_binding_info.SetBuffer(std::move(allocator));
     }
     io_binding_info.SetMemoryType(TRITONSERVER_MEMORY_CPU_PINNED);
