@@ -239,18 +239,32 @@ ModelState::CreateEngine(
          std::to_string(dla_core_id) + " for " + Name())
             .c_str());
 
+    std::cerr << "\n****************\n"
+              << "eit->second.second->getNbBindings(): "
+              << eit->second.second->getNbBindings()
+              << "eit->second.second->getNbIOTensors(): "
+              << eit->second.second->getNbIOTensors() << "\n****************"
+              << std::endl;
+    // TODO: replace getNbBindings() with getNbIOTensors
     if (IsEngineSharingEnabled()) {
       // This logic runs at least once to validate whether the engine
       // can be shared.
       bool is_dynamic = false;
+      std::cerr << "\n****************" << std::endl;
       for (int idx = 0; idx < eit->second.second->getNbBindings(); idx++) {
         auto dims = eit->second.second->getBindingDimensions(idx);
+
+        std::cerr << "\nidx: " << idx << "  --  getIOTensorName("
+                  << idx "): " << eit->second.second->getIOTensorName(idx)
+                  << std::endl;
+
         // Detect whether dynamic or not
         if (ContainsWildcard(dims)) {
           is_dynamic = true;
           break;
         }
       }
+      std::cerr << "\n****************" << std::endl;
       if (is_dynamic) {
         // Model with dynamic shapes can't share engine
         DisableEngineSharing();

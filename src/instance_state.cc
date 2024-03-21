@@ -1706,6 +1706,7 @@ ModelInstanceState::InitSemaphore()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
+  // TODO: replace getNbBindings() with getNbIOTensors
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
 
@@ -1780,6 +1781,7 @@ ModelInstanceState::InitOptimizationProfiles()
       cudaStreamSynchronize(CudaStream());
     }
 
+    // TODO: bindingIsInput(), 
     // Store the profile dimensions for later initializing the input bindings
     for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
       const auto binding_index =
@@ -3212,6 +3214,7 @@ TRITONSERVER_Error*
 ModelInstanceState::GetProfileDimensions(
     const int io_index, const int profile_index, TensorRTContext* context)
 {
+  // TODO: getProfileDimensions()
   int binding_index = (profile_index * num_expected_bindings_) + io_index;
   context->max_dims_[io_index] = engine_->getProfileDimensions(
       binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
