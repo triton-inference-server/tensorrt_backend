@@ -255,7 +255,7 @@ ModelState::CreateEngine(
         auto dims = eit->second.second->getBindingDimensions(idx);
 
         std::cerr << "\nidx: " << idx << "  --  getIOTensorName("
-                  << idx "): " << eit->second.second->getIOTensorName(idx)
+                  << idx << "): " << eit->second.second->getIOTensorName(idx)
                   << std::endl;
 
         // Detect whether dynamic or not
