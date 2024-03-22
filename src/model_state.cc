@@ -254,7 +254,8 @@ ModelState::CreateEngine(
     }
     std::cerr << "\n****************" << std::endl;
 
-    // TODO: replace getNbIOTensors() with getNbIOTensors and is_dynamic required ?
+    // TODO: replace getNbIOTensors() with getNbIOTensors and is_dynamic
+    // required ?
     if (IsEngineSharingEnabled()) {
       // This logic runs at least once to validate whether the engine
       // can be shared.
@@ -448,21 +449,19 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
       output_cnt = outputs.ArraySize();
     }
   }
-
-  int num_profile_bindings = 0;
-  int num_io_tensors = 0;
-  int num_profiles = 0;
-  num_profiles = engine->getNbOptimizationProfiles();
   // TODO: Use getNbIOTensors
-  num_profile_bindings = engine->getNbBindings() / num_profiles;
+
+  int num_profiles = 0;
+  int num_io_tensors = 0;
+  num_profiles = engine->getNbOptimizationProfiles();
   num_io_tensors = engine->getNbIOTensors();
 
   std::cerr << "\n****************"
             << "\nengine->getNbBindings(): " << engine->getNbBindings()
             << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
-            << "\nnum_profiles: " << num_profiles
-            << "\nnum_profile_bindings: " << num_profile_bindings
-            << "\n****************" << std::endl;
+            << "\nnum_profiles: " << num_profiles << "\nnum_profile_bindings: "
+            << (engine->getNbBindings() / num_profiles) << "\n****************"
+            << std::endl;
 
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
@@ -480,21 +479,21 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     std::map<std::string, std::set<std::string>> allowed_tensors;
 
     std::cerr << "\n****************" << std::endl;
-    // for (int i = 0; i < num_profile_bindings; ++i) {
     for (int i = 0; i < num_io_tensors; ++i) {
       std::cerr << "\nengine->getBindingName(i): " << engine->getBindingName(i)
                 << "\nengine->getIOTensorName(i): "
                 << engine->getIOTensorName(i) << "\n-----------------------"
                 << std::endl;
+    }
+    std::cerr << "\n****************" << std::endl;
+
+    for (int i = 0; i < num_io_tensors; ++i) {
       if (engine->bindingIsInput(i)) {
-        // allowed_tensors["input"].emplace(engine->getBindingName(i));
         allowed_tensors["input"].emplace(engine->getIOTensorName(i));
       } else {
-        // allowed_tensors["output"].emplace(engine->getBindingName(i));
         allowed_tensors["output"].emplace(engine->getIOTensorName(i));
       }
     }
-    std::cerr << "\n****************" << std::endl;
 
     bool io_allow_ragged_batch = false;
     for (const auto& io_type : io_types) {
@@ -541,7 +540,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
-  //TODO: getMaxBatchSize()
+  // TODO: getMaxBatchSize()
   int max_batch_size = 0;
   bool has_implicit_batch_dim = false;
   if (engine->hasImplicitBatchDimension()) {
