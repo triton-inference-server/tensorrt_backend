@@ -239,10 +239,10 @@ ModelState::CreateEngine(
          std::to_string(dla_core_id) + " for " + Name())
             .c_str());
 
-    std::cerr << "\n****************\n"
-              << "eit->second.second->getNbBindings(): "
+    std::cerr << "\n****************"
+              << "\neit->second.second->getNbBindings(): "
               << eit->second.second->getNbBindings()
-              << "eit->second.second->getNbIOTensors(): "
+              << "\neit->second.second->getNbIOTensors(): "
               << eit->second.second->getNbIOTensors() << "\n****************"
               << std::endl;
 
