@@ -161,6 +161,7 @@ ModelInstanceState::Create(
 
   // Create TRT API interface once able to obtain implicit batch info,
   // all TRT operations must be done after the interface is instantiated.
+  // TODO: Implicit batch not supported
   if (UseTensorRTv1API((*state)->Engine())) {
     (*state)->interface_.reset(new TRTv1Interface(*state));
   } else {
