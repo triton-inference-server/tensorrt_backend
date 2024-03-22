@@ -449,7 +449,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
-  // int num_profile_bindings = 0;
+  int num_profile_bindings = 0;
   int num_io_tensors = 0;
   int num_profiles = 0;
   num_profiles = engine->getNbOptimizationProfiles();
