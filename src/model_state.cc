@@ -454,7 +454,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   int num_profiles = 0;
   num_profiles = engine->getNbOptimizationProfiles();
   // TODO: Use getNbIOTensors
-  // num_profile_bindings = engine->getNbBindings() / num_profiles;
+  num_profile_bindings = engine->getNbBindings() / num_profiles;
   num_io_tensors = engine->getNbIOTensors();
 
   std::cerr << "\n****************"
