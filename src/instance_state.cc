@@ -1706,7 +1706,7 @@ ModelInstanceState::InitSemaphore()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
-  // TODO: replace getNbBindings() with getNbIOTensors
+  // TODO: replace getNbIOTensors() with getNbIOTensors
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
 

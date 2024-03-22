@@ -245,18 +245,22 @@ ModelState::CreateEngine(
               << "eit->second.second->getNbIOTensors(): "
               << eit->second.second->getNbIOTensors() << "\n****************"
               << std::endl;
-    // TODO: replace getNbBindings() with getNbIOTensors
+
+    std::cerr << "\n****************" << std::endl;
+    for (int idx = 0; idx < eit->second.second->getNbBindings(); idx++) {
+      std::cerr << "\nidx: " << idx << "  --  getIOTensorName(" << idx
+                << "): " << eit->second.second->getIOTensorName(idx)
+                << std::endl;
+    }
+    std::cerr << "\n****************" << std::endl;
+
+    // TODO: replace getNbIOTensors() with getNbIOTensors
     if (IsEngineSharingEnabled()) {
       // This logic runs at least once to validate whether the engine
       // can be shared.
       bool is_dynamic = false;
-      std::cerr << "\n****************" << std::endl;
       for (int idx = 0; idx < eit->second.second->getNbBindings(); idx++) {
         auto dims = eit->second.second->getBindingDimensions(idx);
-
-        std::cerr << "\nidx: " << idx << "  --  getIOTensorName("
-                  << idx << "): " << eit->second.second->getIOTensorName(idx)
-                  << std::endl;
 
         // Detect whether dynamic or not
         if (ContainsWildcard(dims)) {
@@ -264,7 +268,6 @@ ModelState::CreateEngine(
           break;
         }
       }
-      std::cerr << "\n****************" << std::endl;
       if (is_dynamic) {
         // Model with dynamic shapes can't share engine
         DisableEngineSharing();
@@ -449,7 +452,15 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   int num_profile_bindings = 0;
   int num_profiles = 0;
   num_profiles = engine->getNbOptimizationProfiles();
+  // TODO: Use getNbIOTensors
   num_profile_bindings = engine->getNbBindings() / num_profiles;
+
+  std::cerr << "\n****************"
+            << "\nengine->getNbBindings(): " << engine->getNbBindings()
+            << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
+            << "\nnum_profiles: " << num_profiles
+            << "\nnum_profile_bindings: " << num_profile_bindings
+            << "\n****************" << std::endl;
 
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
@@ -461,16 +472,22 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   // The number of IO Tensors with shape specification in config
   int tensors_with_config_shape_cnt = 0;
 
+  // TODO: Use getNbIOTensors and getTensorIOMode
   if ((input_cnt != 0) || (output_cnt != 0)) {
     std::vector<std::string> io_types{"input", "output"};
     std::map<std::string, std::set<std::string>> allowed_tensors;
+
+    std::cerr << "\n****************" << std::endl;
     for (int i = 0; i < num_profile_bindings; ++i) {
+      std::cerr << "\nengine->getBindingName(i): " << engine->getBindingName(i)
+                << std::endl;
       if (engine->bindingIsInput(i)) {
         allowed_tensors["input"].emplace(engine->getBindingName(i));
       } else {
         allowed_tensors["output"].emplace(engine->getBindingName(i));
       }
     }
+    std::cerr << "\n****************" << std::endl;
 
     bool io_allow_ragged_batch = false;
     for (const auto& io_type : io_types) {
@@ -679,6 +696,7 @@ ModelState::GetProfileMaxBatchSize(
   *max_batch_size = INT_MAX;
 
   int num_profiles = engine->getNbOptimizationProfiles();
+  // TODO: getNbBindings
   int num_profile_bindings = engine->getNbBindings() / num_profiles;
 
   // Visit all the bindings of the profile to capture the maximum and
@@ -716,6 +734,7 @@ ModelState::ExtractBatchHintFromIOConfig(
 {
   // look up corresponding io info from model
   int num_profiles = engine->getNbOptimizationProfiles();
+  // TODO: getNbBindings
   int num_profile_bindings = engine->getNbBindings() / num_profiles;
 
   for (int binding_index = 0; binding_index < num_profile_bindings;
@@ -779,6 +798,7 @@ ModelState::GetRefIO(
     triton::common::TritonJson::Value* ref_io)
 {
   int num_profiles = engine->getNbOptimizationProfiles();
+  // TODO: getNbBindings
   int num_profile_bindings = engine->getNbBindings() / num_profiles;
 
   for (int i = 0; i < num_profile_bindings; ++i) {
