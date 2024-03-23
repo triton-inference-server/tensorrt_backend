@@ -260,8 +260,9 @@ ModelState::CreateEngine(
       // This logic runs at least once to validate whether the engine
       // can be shared.
       bool is_dynamic = false;
-      for (int idx = 0; idx < eit->second.second->getNbBindings(); idx++) {
-        auto dims = eit->second.second->getBindingDimensions(idx);
+      for (int idx = 0; idx < eit->second.second->getNbIOTensors(); idx++) {
+        auto name = eit->second.second->getIOTensorName(idx);
+        auto dims = eit->second.second->getTensorShape(name);
 
         // Detect whether dynamic or not
         if (ContainsWildcard(dims)) {
