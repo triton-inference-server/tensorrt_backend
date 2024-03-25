@@ -3155,11 +3155,11 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context->max_dims_[io_index] = engine_->getProfileDimensions(
+    context.max_shapes_[io_index] = engine_->getProfileShapeValues(
         binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context->min_dims_[io_index] = engine_->getProfileDimensions(
+    context.min_shapes_[io_index] = engine_->getProfileShapeValues(
         binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context->opt_dims_[io_index] = engine_->getProfileDimensions(
+    context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
         binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
