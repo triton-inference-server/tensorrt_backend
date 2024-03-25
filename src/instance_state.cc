@@ -1828,26 +1828,27 @@ ModelInstanceState::ValidateIO()
   // Collect all the expected input and allowed output tensor names
   // and validate that the model configuration specifies only those.
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
-  for (int i = 0; i < num_expected_bindings_; ++i) {
-    if (engine_->bindingIsInput(i)) {
-      allowed_inputs.emplace(engine_->getBindingName(i));
+  for (int i = 0; i < total_io_tensors_; ++i) {
+    auto tensor_name = engine_->getIOTensorName(i);
+    if (engine_->getTensorIOMode(tensor_name) ==
+        nvinfer1::TensorIOMode::kINPUT) {
+      allowed_inputs.emplace(tensor_name);
     } else {
-      allowed_outputs.emplace(engine_->getBindingName(i));
+      allowed_outputs.emplace(tensor_name);
     }
+    // TODO isExecutionBinding
     if (engine_->isExecutionBinding(i)) {
       LOG_MESSAGE(
-          TRITONSERVER_LOG_VERBOSE,
-          (std::string("Detected ") + engine_->getBindingName(i) +
-           " as execution binding for " + Name())
-              .c_str());
+          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
+                                     " as execution binding for " + Name())
+                                        .c_str());
     }
-    if (engine_->isShapeBinding(i)) {
-      allowed_shape_tensors.emplace(engine_->getBindingName(i));
+    if (engine_->isShapeInferenceIO(tensor_name)) {
+      allowed_shape_tensors.emplace(tensor_name);
       LOG_MESSAGE(
-          TRITONSERVER_LOG_VERBOSE,
-          (std::string("Detected ") + engine_->getBindingName(i) +
-           " as shape binding for " + Name())
-              .c_str());
+          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
+                                     " as shape binding for " + Name())
+                                        .c_str());
     }
   }
 
@@ -1957,15 +1958,13 @@ ModelInstanceState::InitIOBindingBuffers()
   // Initialize the inputs and outputs. Make sure the model matches
   // what is in the configuration. Allocate memory for the maximum
   // possible batch size: min(engine maximum, config maximum)
-  io_binding_infos_.push_back(
-      std::vector<IOBindingInfo>(num_expected_bindings_));
+  io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
   buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
 
   // Use an additional set of buffers if a separate stream is used for
   // output
   if (model_state_->SeparateOutputStream()) {
-    io_binding_infos_.push_back(
-        std::vector<IOBindingInfo>(num_expected_bindings_));
+    io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
     buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
   }
 
@@ -3064,6 +3063,24 @@ ModelInstanceState::InitializeShapeInputBinding(
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
     int binding_index = num_expected_bindings_ * profile_index + io_index;
+
+    std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
+              << profile_index << ") * num_expected_bindings_("
+              << num_expected_bindings_ << ") + io_index(" << io_index << ")"
+              << "\n engine_->bindingIsInput(binding_index) = "
+              << engine_->bindingIsInput(binding_index)
+              << "\n input_name: " << input_name
+              << "\n engine_->isShapeBinding(binding_index): "
+              << engine_->isShapeBinding(binding_index)
+              << "\n isShapeInferenceIO(): "
+              << engine_->isShapeInferenceIO(input_name.c_str())
+              << "\n engine_->getBindingName(binding_index): "
+              << engine_->getBindingName(binding_index)
+              << "\n engine_->getBindingDataType(binding_index): "
+              << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
+                     engine_->getBindingDataType(binding_index)))
+              << std::endl;
+
     if (io_index < 0) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_NOT_FOUND,
@@ -3138,12 +3155,12 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context.max_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
+    context.max_shapes_[io_index] = engine_->getProfileShape(
+        tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context.min_shapes_[io_index] = engine_->getProfileShape(
+        tensor_name, profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context.opt_shapes_[io_index] = engine_->getProfileShape(
+        tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for

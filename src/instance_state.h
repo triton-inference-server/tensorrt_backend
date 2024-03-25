@@ -413,7 +413,6 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   // The total number of bindings
   int total_bindings_{0};
-
   int total_io_tensors_{0};
 
   // The number of expected bindings to the model. In case of dynamic
