@@ -488,11 +488,13 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
     std::cerr << "\n****************" << std::endl;
 
+    auto tensor_name = engine->getIOTensorName(i);
     for (int i = 0; i < num_io_tensors; ++i) {
-      if (engine->bindingIsInput(i)) {
-        allowed_tensors["input"].emplace(engine->getIOTensorName(i));
+      if (engine->getTensorIOMode(tensor_name) ==
+          nvinfer1::TensorIOMode::kINPUT) {
+        allowed_tensors["input"].emplace(tensor_name);
       } else {
-        allowed_tensors["output"].emplace(engine->getIOTensorName(i));
+        allowed_tensors["output"].emplace(tensor_name);
       }
     }
 
@@ -716,6 +718,8 @@ ModelState::GetProfileMaxBatchSize(
       << "\nnum_profile_bindings = engine->getNbBindings() / num_profiles -- "
       << num_profile_bindings << std::endl;
 
+  int num_io_tensors = engine->getNbIOTensors();
+
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
   for (int binding_index = 0; binding_index < num_profile_bindings;
@@ -739,7 +743,7 @@ ModelState::GetProfileMaxBatchSize(
             nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
-          std::cerr << "\n max_batch_size = " <<  max_shape.d[0] << std::endl;
+          std::cerr << "\n max_batch_size = " << max_shape.d[0] << std::endl;
         }
 
       } else {
@@ -749,7 +753,7 @@ ModelState::GetProfileMaxBatchSize(
         std::cerr << "\n max_shapes = " << max_shapes << std::endl;
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
-          std::cerr << "\n max_batch_size = " <<  *max_shapes << std::endl;
+          std::cerr << "\n max_batch_size = " << *max_shapes << std::endl;
         }
       }
     }

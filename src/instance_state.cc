@@ -1716,6 +1716,7 @@ ModelInstanceState::InitOptimizationProfiles()
             << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
             << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
             << total_profiles << std::endl;
+  total_io_tensors_ = engine_->getNbIOTensors();
 
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
@@ -1757,9 +1758,9 @@ ModelInstanceState::InitOptimizationProfiles()
     const auto& profile_name = name_index.first;
     const int profile_index = name_index.second;
     auto res = trt_contexts_.emplace(
-        profile_index, TensorRTContext(
-                           profile_name, profile_index, num_expected_bindings_,
-                           EVENT_SET_COUNT));
+        profile_index,
+        TensorRTContext(
+            profile_name, profile_index, total_io_tensors_, EVENT_SET_COUNT));
     if (!res.second) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
@@ -1797,7 +1798,7 @@ ModelInstanceState::InitOptimizationProfiles()
 
     // TODO: bindingIsInput(),
     // Store the profile dimensions for later initializing the input bindings
-    for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
+    for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
       const auto binding_index =
           profile_index * num_expected_bindings_ + io_index;
       std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
@@ -1805,9 +1806,12 @@ ModelInstanceState::InitOptimizationProfiles()
                 << num_expected_bindings_ << ") + io_index(" << io_index << ")"
                 << "\n engine_->bindingIsInput(binding_index) = "
                 << engine_->bindingIsInput(binding_index) << std::endl;
-      if (engine_->bindingIsInput(binding_index)) {
-        RETURN_IF_ERROR(
-            GetProfileDimensions(io_index, profile_index, &res.first->second));
+
+      auto tensor_name = engine_->getIOTensorName(io_index);
+      if (engine_->getTensorIOMode(tensor_name) ==
+          nvinfer1::TensorIOMode::kINPUT) {
+        RETURN_IF_ERROR(GetProfileDimensions(
+            tensor_name, profile_index, &res.first->second));
       }
       std::cerr << "\n --------- " << std::endl;
     }
@@ -3234,16 +3238,16 @@ ModelInstanceState::InitializeShapeInputBinding(
 
 TRITONSERVER_Error*
 ModelInstanceState::GetProfileDimensions(
-    const int io_index, const int profile_index, TensorRTContext* context)
+    const char* tensor_name, const int profile_index, TensorRTContext* context)
 {
   // TODO: getProfileDimensions()
   int binding_index = (profile_index * num_expected_bindings_) + io_index;
-  context->max_dims_[io_index] = engine_->getProfileDimensions(
-      binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-  context->min_dims_[io_index] = engine_->getProfileDimensions(
-      binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-  context->opt_dims_[io_index] = engine_->getProfileDimensions(
-      binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
+  context->max_dims_[io_index] = engine_->getProfileShape(
+      tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
+  context->min_dims_[io_index] = engine_->getProfileShape(
+      tensor_name, profile_index, nvinfer1::OptProfileSelector::kMIN);
+  context->opt_dims_[io_index] = engine_->getProfileShape(
+      tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT);
   return nullptr;
 }
 
