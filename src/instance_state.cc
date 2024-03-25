@@ -1712,8 +1712,8 @@ ModelInstanceState::InitOptimizationProfiles()
   // TODO: replace getNbIOTensors() with getNbIOTensors
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
-  std::cerr << "\nengine->getNbBindings(): " << engine->getNbBindings()
-            << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
+  std::cerr << "\nengine_->getNbBindings(): " << engine_->getNbBindings()
+            << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
             << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
             << total_profiles << std::endl;
 

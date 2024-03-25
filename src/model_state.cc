@@ -711,7 +711,7 @@ ModelState::GetProfileMaxBatchSize(
   std::cerr
       << "\nengine->getNbBindings(): " << engine->getNbBindings()
       << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
-      << "\num_profiles = engine_->getNbOptimizationProfiles(): "
+      << "\num_profiles = engine->getNbOptimizationProfiles(): "
       << engine->getNbOptimizationProfiles()
       << "\nnum_profile_bindings = engine->getNbBindings() / num_profiles -- "
       << num_profile_bindings << std::endl;
@@ -727,7 +727,7 @@ ModelState::GetProfileMaxBatchSize(
               << ") = profile_index(" << profile_index
               << ") * num_profile_bindings(" << num_profile_bindings
               << ") + binding_index(" << binding_index << ")"
-              << "\n engine_->bindingIsInput(binding_index) = "
+              << "\n engine->bindingIsInput(binding_index) = "
               << engine->bindingIsInput(effective_binding_index) << std::endl;
 
     if (engine->bindingIsInput(effective_binding_index)) {
