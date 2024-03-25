@@ -355,7 +355,8 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config);
 
   TRITONSERVER_Error* GetProfileDimensions(
-      const char* tensor_name, const int profile_index, TensorRTContext* context);
+      const int io_index, const char* tensor_name, const int profile_index,
+      TensorRTContext* context);
 
   TRITONSERVER_Error* GetRequestShapeValues(
       size_t total_batch_size, TRITONBACKEND_Request* request,

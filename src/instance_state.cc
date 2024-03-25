@@ -1811,7 +1811,7 @@ ModelInstanceState::InitOptimizationProfiles()
       if (engine_->getTensorIOMode(tensor_name) ==
           nvinfer1::TensorIOMode::kINPUT) {
         RETURN_IF_ERROR(GetProfileDimensions(
-            tensor_name, profile_index, &res.first->second));
+            io_index, tensor_name, profile_index, &res.first->second));
       }
       std::cerr << "\n --------- " << std::endl;
     }
@@ -3238,10 +3238,11 @@ ModelInstanceState::InitializeShapeInputBinding(
 
 TRITONSERVER_Error*
 ModelInstanceState::GetProfileDimensions(
-    const char* tensor_name, const int profile_index, TensorRTContext* context)
+    const int io_index, const char* tensor_name, const int profile_index,
+    TensorRTContext* context)
 {
   // TODO: getProfileDimensions()
-  int binding_index = (profile_index * num_expected_bindings_) + io_index;
+  // int binding_index = (profile_index * num_expected_bindings_) + io_index;
   context->max_dims_[io_index] = engine_->getProfileShape(
       tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
   context->min_dims_[io_index] = engine_->getProfileShape(

@@ -488,8 +488,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
     std::cerr << "\n****************" << std::endl;
 
-    auto tensor_name = engine->getIOTensorName(i);
     for (int i = 0; i < num_io_tensors; ++i) {
+      auto tensor_name = engine->getIOTensorName(i);
       if (engine->getTensorIOMode(tensor_name) ==
           nvinfer1::TensorIOMode::kINPUT) {
         allowed_tensors["input"].emplace(tensor_name);
@@ -718,7 +718,7 @@ ModelState::GetProfileMaxBatchSize(
       << "\nnum_profile_bindings = engine->getNbBindings() / num_profiles -- "
       << num_profile_bindings << std::endl;
 
-  int num_io_tensors = engine->getNbIOTensors();
+  //int num_io_tensors = engine->getNbIOTensors();
 
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
