@@ -3155,12 +3155,12 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context.max_shapes_[io_index] = engine_->getProfileShape(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileShape(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileShape(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
+    context->max_dims_[io_index] = engine_->getProfileDimensions(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context->min_dims_[io_index] = engine_->getProfileDimensions(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context->opt_dims_[io_index] = engine_->getProfileDimensions(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
@@ -3258,14 +3258,45 @@ ModelInstanceState::GetProfileDimensions(
     const int io_index, const char* tensor_name, const int profile_index,
     TensorRTContext* context)
 {
+  std::cerr << "\n *********************** -- GetProfileDimensions() is called!"
+            << std::endl;
   // TODO: getProfileDimensions()
-  // int binding_index = (profile_index * num_expected_bindings_) + io_index;
+  int binding_index = (profile_index * num_expected_bindings_) + io_index;
+  std::cerr
+      << "\n binding_index: " << binding_index
+      << "\n engine_->getProfileDimensions(kMAX): "
+      << DimsDebugString(engine_->getProfileDimensions(
+             binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX))
+      << "\n engine_->getProfileDimensions(kMIN): "
+      << DimsDebugString(engine_->getProfileDimensions(
+             binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN))
+      << "\n engine_->getProfileDimensions(kOPT): "
+      << DimsDebugString(engine_->getProfileDimensions(
+             binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT))
+      << std::endl;
+
+  std::cerr << "\n ---------------------- " << std::endl;
+
   context->max_dims_[io_index] = engine_->getProfileShape(
       tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
   context->min_dims_[io_index] = engine_->getProfileShape(
       tensor_name, profile_index, nvinfer1::OptProfileSelector::kMIN);
   context->opt_dims_[io_index] = engine_->getProfileShape(
       tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT);
+
+  std::cerr
+      << "\n binding_index: " << binding_index
+      << "\n engine_->getProfileShape(kMAX): "
+      << DimsDebugString(engine_->getProfileShape(
+             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX))
+      << "\n engine_->getProfileShape(kMIN): "
+      << DimsDebugString(engine_->getProfileShape(
+             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMIN))
+      << "\n engine_->getProfileShape(kOPT): "
+      << DimsDebugString(engine_->getProfileShape(
+             tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT))
+      << std::endl;
+
   return nullptr;
 }
 
