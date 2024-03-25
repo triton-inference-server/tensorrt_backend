@@ -718,12 +718,11 @@ ModelState::GetProfileMaxBatchSize(
       << "\nnum_profile_bindings = engine->getNbBindings() / num_profiles -- "
       << num_profile_bindings << std::endl;
 
-  //int num_io_tensors = engine->getNbIOTensors();
+  int num_io_tensors = engine->getNbIOTensors();
 
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
-  for (int binding_index = 0; binding_index < num_profile_bindings;
-       binding_index++) {
+  for (int binding_index = 0; binding_index < num_io_tensors; binding_index++) {
     int effective_binding_index =
         (profile_index * num_profile_bindings) + binding_index;
 
@@ -734,13 +733,17 @@ ModelState::GetProfileMaxBatchSize(
               << "\n engine->bindingIsInput(binding_index) = "
               << engine->bindingIsInput(effective_binding_index) << std::endl;
 
-    if (engine->bindingIsInput(effective_binding_index)) {
+    auto tensor_name = engine->getIOTensorName(binding_index);
+    if (engine->getTensorIOMode(tensor_name) ==
+        nvinfer1::TensorIOMode::kINPUT) {
       std::cerr << "\n engine->isShapeBinding() = "
-                << engine->isShapeBinding(effective_binding_index) << std::endl;
-      if (!engine->isShapeBinding(effective_binding_index)) {
-        nvinfer1::Dims max_shape = engine->getProfileDimensions(
-            effective_binding_index, profile_index,
-            nvinfer1::OptProfileSelector::kMAX);
+                << engine->isShapeBinding(effective_binding_index)
+                << "\n engine->isShapeInferenceIO(tensor_name) = "
+                << engine->isShapeInferenceIO(tensor_name) << std::endl;
+
+      if (!engine->isShapeInferenceIO(tensor_name)) {
+        nvinfer1::Dims max_shape = engine->getProfileShape(
+            tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
           std::cerr << "\n max_batch_size = " << max_shape.d[0] << std::endl;

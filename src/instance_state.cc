@@ -3296,6 +3296,7 @@ ModelInstanceState::GetProfileDimensions(
       << DimsDebugString(engine_->getProfileShape(
              tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT))
       << std::endl;
+  std::cerr << "\n ***********************"
 
   return nullptr;
 }
