@@ -701,11 +701,20 @@ TRITONSERVER_Error*
 ModelState::GetProfileMaxBatchSize(
     nvinfer1::ICudaEngine* engine, int profile_index, int* max_batch_size)
 {
+  std::cerr << "\n**************** -- GetProfileMaxBatchSize() is called !"
+            << std::endl;
   *max_batch_size = INT_MAX;
 
   int num_profiles = engine->getNbOptimizationProfiles();
   // TODO: getNbBindings
   int num_profile_bindings = engine->getNbBindings() / num_profiles;
+  std::cerr
+      << "\nengine->getNbBindings(): " << engine->getNbBindings()
+      << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
+      << "\num_profiles = engine_->getNbOptimizationProfiles(): "
+      << engine->getNbOptimizationProfiles()
+      << "\nnum_profile_bindings = engine->getNbBindings() / num_profiles -- "
+      << num_profile_bindings << std::endl;
 
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
@@ -713,11 +722,22 @@ ModelState::GetProfileMaxBatchSize(
        binding_index++) {
     int effective_binding_index =
         (profile_index * num_profile_bindings) + binding_index;
+
+    std::cerr << "\n effective_binding_index(" << effective_binding_index
+              << ") = profile_index(" << profile_index
+              << ") * num_profile_bindings(" << num_profile_bindings
+              << ") + binding_index(" << binding_index << ")"
+              << "\n engine_->bindingIsInput(binding_index) = "
+              << engine->bindingIsInput(effective_binding_index) << std::endl;
+
     if (engine->bindingIsInput(effective_binding_index)) {
+      std::cerr << "\n engine->isShapeBinding() = "
+                << engine->isShapeBinding(effective_binding_index) << std::endl;
       if (!engine->isShapeBinding(effective_binding_index)) {
         nvinfer1::Dims max_shape = engine->getProfileDimensions(
             effective_binding_index, profile_index,
             nvinfer1::OptProfileSelector::kMAX);
+        std::cerr << "\n max_shape = " << max_shape << std::endl;
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
         }
@@ -726,11 +746,13 @@ ModelState::GetProfileMaxBatchSize(
         const int32_t* max_shapes = engine->getProfileShapeValues(
             effective_binding_index, profile_index,
             nvinfer1::OptProfileSelector::kMAX);
+        std::cerr << "\n max_shapes = " << max_shapes << std::endl;
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
         }
       }
     }
+    std::cerr << "\n --------- " << max_shapes << std::endl;
   }
   return nullptr;
 }

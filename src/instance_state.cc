@@ -1707,9 +1707,15 @@ ModelInstanceState::InitSemaphore()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
+  std::cerr << "\n**************** -- InitOptimizationProfiles() is called !"
+            << std::endl;
   // TODO: replace getNbIOTensors() with getNbIOTensors
   total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
+  std::cerr << "\nengine->getNbBindings(): " << engine->getNbBindings()
+            << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
+            << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
+            << total_profiles << std::endl;
 
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
@@ -1726,18 +1732,25 @@ ModelInstanceState::InitOptimizationProfiles()
   }
 
   num_expected_bindings_ = total_bindings_ / total_profiles;
+  std::cerr << "\num_expected_bindings_ = total_bindings_ / total_profiles: "
+            << (total_bindings_ / total_profiles) << std::endl;
 
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
+  std::cerr << "\n ------------- " << std::endl;
   if (ProfileNames().empty()) {
     profile_name_index.emplace_back("default", 0);
+    std::cerr << "\n ProfileNames() is empty !!" << std::endl;
   } else {
     for (const auto& profile_name : ProfileNames()) {
       int profile_index = 0;
       RETURN_IF_ERROR(GetProfileIndex(profile_name, &profile_index));
       profile_name_index.emplace_back(profile_name, profile_index);
+      std::cerr << "\nrofile_name: " << profile_name
+                << " -- profile_index: " << profile_index << std::endl;
     }
   }
+  std::cerr << "\n ------------- " << std::endl;
 
   // Create one TRT context for each specified profile
   for (const auto& name_index : profile_name_index) {
@@ -1782,17 +1795,25 @@ ModelInstanceState::InitOptimizationProfiles()
       cudaStreamSynchronize(CudaStream());
     }
 
-    // TODO: bindingIsInput(), 
+    // TODO: bindingIsInput(),
     // Store the profile dimensions for later initializing the input bindings
     for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
       const auto binding_index =
           profile_index * num_expected_bindings_ + io_index;
+      std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
+                << profile_index << ") * num_expected_bindings_("
+                << num_expected_bindings_ << ") + io_index(" << io_index << ")"
+                << "\n engine_->bindingIsInput(binding_index) = "
+                << engine_->bindingIsInput(binding_index) << std::endl;
       if (engine_->bindingIsInput(binding_index)) {
         RETURN_IF_ERROR(
             GetProfileDimensions(io_index, profile_index, &res.first->second));
       }
+      std::cerr << "\n --------- " << max_shapes << std::endl;
     }
   }
+
+  std::cerr << "\n****************" << std::endl;
 
   return nullptr;
 }
