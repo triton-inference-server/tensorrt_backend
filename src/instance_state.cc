@@ -1809,7 +1809,7 @@ ModelInstanceState::InitOptimizationProfiles()
         RETURN_IF_ERROR(
             GetProfileDimensions(io_index, profile_index, &res.first->second));
       }
-      std::cerr << "\n --------- " << max_shapes << std::endl;
+      std::cerr << "\n --------- " << std::endl;
     }
   }
 

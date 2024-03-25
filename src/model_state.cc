@@ -737,9 +737,9 @@ ModelState::GetProfileMaxBatchSize(
         nvinfer1::Dims max_shape = engine->getProfileDimensions(
             effective_binding_index, profile_index,
             nvinfer1::OptProfileSelector::kMAX);
-        std::cerr << "\n max_shape = " << max_shape << std::endl;
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
+          std::cerr << "\n max_batch_size = " <<  max_shape.d[0] << std::endl;
         }
 
       } else {
@@ -749,10 +749,11 @@ ModelState::GetProfileMaxBatchSize(
         std::cerr << "\n max_shapes = " << max_shapes << std::endl;
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
+          std::cerr << "\n max_batch_size = " <<  *max_shapes << std::endl;
         }
       }
     }
-    std::cerr << "\n --------- " << max_shapes << std::endl;
+    std::cerr << "\n --------- " << std::endl;
   }
   return nullptr;
 }
