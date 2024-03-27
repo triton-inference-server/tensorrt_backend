@@ -1723,6 +1723,9 @@ ModelInstanceState::InitOptimizationProfiles()
             .c_str());
   }
 
+  const int total_profiles = engine_->getNbOptimizationProfiles();
+  num_expected_bindings_ = total_bindings_ / engine_->getNbOptimizationProfiles();
+
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
   if (ProfileNames().empty()) {
