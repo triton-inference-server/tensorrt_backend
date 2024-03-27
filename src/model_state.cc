@@ -668,17 +668,13 @@ ModelState::GetProfileMaxBatchSize(
     nvinfer1::ICudaEngine* engine, int profile_index, int* max_batch_size)
 {
   *max_batch_size = INT_MAX;
-
-  int num_profiles = engine->getNbOptimizationProfiles();
-  int num_profile_bindings = engine->getNbBindings() / num_profiles;
   int num_io_tensors = engine->getNbIOTensors();
 
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
-  for (int binding_index = 0; binding_index < num_io_tensors; binding_index++) {
-    int effective_binding_index =
-        (profile_index * num_profile_bindings) + binding_index;
-    auto tensor_name = engine->getIOTensorName(binding_index);
+  for (int io_index = 0; io_index < num_io_tensors; io_index++) {
+    int effective_binding_index = (profile_index * num_io_tensors) + io_index;
+    auto tensor_name = engine->getIOTensorName(io_index);
     if (engine->getTensorIOMode(tensor_name) ==
         nvinfer1::TensorIOMode::kINPUT) {
       if (!engine->isShapeInferenceIO(tensor_name)) {
