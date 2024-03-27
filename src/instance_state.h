@@ -414,12 +414,11 @@ class ModelInstanceState : public TensorRTModelInstance {
   // The total number of bindings
   // total_bindings_ = total_io_tensors_ * num_profiles ?
   int total_bindings_{0};
-  int total_io_tensors_{0};
 
-  // The number of expected bindings to the model. In case of dynamic
-  // shapes, it is the number of expected bindings to the configured
+  // The number of input and output tensors to the model. In case of dynamic
+  // shapes, it is the number of expected input and output tensors to the configured
   // optimization profile.
-  int num_expected_bindings_{0};
+  int total_io_tensors_{0};
 
   int cuda_stream_priority_{0};
 
@@ -510,7 +509,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   // safely.
   int next_buffer_binding_set_{0};
 
-  // There are Context::num_expected_bindings_ number of IOBindingInfo
+  // There are Context::total_io_tensors_ number of IOBindingInfo
   // elements for copy stream.
   std::vector<std::vector<IOBindingInfo>> io_binding_infos_{};
 
