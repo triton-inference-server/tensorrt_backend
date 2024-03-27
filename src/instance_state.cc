@@ -159,6 +159,11 @@ ModelInstanceState::Create(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
 
+  std::cerr << "\n*********************\n UseTensorRTv1API(): "
+            << UseTensorRTv1API((*state)->Engine())
+            << " *********************\n"
+            << std::endl;
+
   // Create TRT API interface once able to obtain implicit batch info,
   // all TRT operations must be done after the interface is instantiated.
   if (UseTensorRTv1API((*state)->Engine())) {
@@ -199,8 +204,8 @@ ModelInstanceState::Create(
 ModelInstanceState::ModelInstanceState(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance)
     : TensorRTModelInstance(model_state, triton_model_instance),
-      total_bindings_(0), total_io_tensors_(0),
-      uses_implicit_state_(false), model_state_(model_state)
+      total_bindings_(0), total_io_tensors_(0), uses_implicit_state_(false),
+      model_state_(model_state)
 {
   // 'coalesce_request_input_' is set at backend level
   {
@@ -1796,8 +1801,7 @@ ModelInstanceState::InitOptimizationProfiles()
     // TODO: bindingIsInput(),
     // Store the profile dimensions for later initializing the input bindings
     for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
-      const auto binding_index =
-          profile_index * total_io_tensors_ + io_index;
+      const auto binding_index = profile_index * total_io_tensors_ + io_index;
       std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
                 << profile_index << ") * total_io_tensors_("
                 << total_io_tensors_ << ") + io_index(" << io_index << ")"
@@ -2552,8 +2556,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     // Set buffer bindings of all optimization profile since buffer
     // is allocated
     for (auto& trt_context : trt_contexts_) {
-      auto binding_index =
-          total_io_tensors_ * trt_context.first + io_index;
+      auto binding_index = total_io_tensors_ * trt_context.first + io_index;
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.GetDeviceBuffer();
       if (!io_binding_info.IsDynamicShapeOutput()) {
@@ -3062,8 +3065,8 @@ ModelInstanceState::InitializeShapeInputBinding(
     int binding_index = total_io_tensors_ * profile_index + io_index;
 
     std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
-              << profile_index << ") * total_io_tensors_("
-              << total_io_tensors_ << ") + io_index(" << io_index << ")"
+              << profile_index << ") * total_io_tensors_(" << total_io_tensors_
+              << ") + io_index(" << io_index << ")"
               << "\n engine_->bindingIsInput(binding_index) = "
               << engine_->bindingIsInput(binding_index)
               << "\n input_name: " << input_name
@@ -3241,8 +3244,7 @@ ModelInstanceState::InitializeShapeInputBinding(
     // Set buffer bindings of all optimization profile since buffer is
     // allocated
     for (auto& trt_context : trt_contexts_) {
-      auto binding_index =
-          total_io_tensors_ * trt_context.first + io_index;
+      auto binding_index = total_io_tensors_ * trt_context.first + io_index;
       buffer_bindings_[next_buffer_binding_set_][binding_index] =
           io_binding_info.GetDeviceBuffer();
     }
@@ -3570,8 +3572,7 @@ TRTv1Interface::BuildCudaGraph(
                                    ? 1
                                    : graph_spec.lower_bound_batch_size_;
   cuda_graph.lower_bound_key_ = {lower_bound_batch_size};
-  for (int io_index = 0; io_index < instance_->total_io_tensors_;
-       ++io_index) {
+  for (int io_index = 0; io_index < instance_->total_io_tensors_; ++io_index) {
     // FIXME handle shape tensor properly, for now if model uses shape
     // tensor then cuda graph is not captured
     if (instance_->engine_->isShapeBinding(io_index)) {
@@ -3888,16 +3889,14 @@ TRTv3Interface::SetCudaGraphShape(
     TensorRTContext::CudaGraph* cuda_graph)
 {
   int batch_size = graph_spec.batch_size_;
-  int binding_offset =
-      trt_context->profile_idx_ * instance_->total_io_tensors_;
+  int binding_offset = trt_context->profile_idx_ * instance_->total_io_tensors_;
   *cuda_graph_key = std::vector<int64_t>{batch_size};
   auto& lower_bound_key = cuda_graph->lower_bound_key_;
   lower_bound_key.push_back(
       (graph_spec.lower_bound_batch_size_ == 0)
           ? 1
           : graph_spec.lower_bound_batch_size_);
-  for (int io_index = 0; io_index < instance_->total_io_tensors_;
-       io_index++) {
+  for (int io_index = 0; io_index < instance_->total_io_tensors_; io_index++) {
     auto& io_binding_info = instance_->io_binding_infos_[0][io_index];
     auto binding_index = binding_offset + io_index;
     if (!instance_->engine_->bindingIsInput(binding_index)) {
