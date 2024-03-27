@@ -412,6 +412,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   bool allow_inexact_match_{false};
 
   // The total number of bindings
+  // total_bindings_ = total_io_tensors_ * num_profiles ?
   int total_bindings_{0};
   int total_io_tensors_{0};
 

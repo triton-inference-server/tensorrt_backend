@@ -1733,7 +1733,7 @@ ModelInstanceState::InitOptimizationProfiles()
   }
 
   num_expected_bindings_ = total_bindings_ / total_profiles;
-  std::cerr << "\num_expected_bindings_ = total_bindings_ / total_profiles: "
+  std::cerr << "\n num_expected_bindings_ = total_bindings_ / total_profiles: "
             << (total_bindings_ / total_profiles) << std::endl;
 
   std::vector<std::pair<std::string, int>> profile_name_index;
@@ -1747,7 +1747,7 @@ ModelInstanceState::InitOptimizationProfiles()
       int profile_index = 0;
       RETURN_IF_ERROR(GetProfileIndex(profile_name, &profile_index));
       profile_name_index.emplace_back(profile_name, profile_index);
-      std::cerr << "\nrofile_name: " << profile_name
+      std::cerr << "\n profile_name: " << profile_name
                 << " -- profile_index: " << profile_index << std::endl;
     }
   }

@@ -746,7 +746,7 @@ ModelState::GetProfileMaxBatchSize(
             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
-          std::cerr << "\n max_batch_size = " << max_shape.d[0] << std::endl;
+          std::cerr << "\n max_batch_size = " << DimsDebugString(max_shape) << std::endl;
         }
 
       } else {
