@@ -159,7 +159,7 @@ ModelInstanceState::Create(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
 
-  std::cerr << "\n*********************\n UseTensorRTv1API(): "
+  std::cerr << "\n********************* UseTensorRTv1API(): "
             << UseTensorRTv1API((*state)->Engine())
             << " *********************\n"
             << std::endl;
