@@ -1713,14 +1713,13 @@ ModelInstanceState::InitOptimizationProfiles()
 {
   std::cerr << "\n**************** -- InitOptimizationProfiles() is called !"
             << std::endl;
-  // TODO: replace getNbIOTensors() with getNbIOTensors
-  total_bindings_ = engine_->getNbBindings();
   const int total_profiles = engine_->getNbOptimizationProfiles();
   std::cerr << "\nengine_->getNbBindings(): " << engine_->getNbBindings()
             << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
             << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
             << total_profiles << std::endl;
   total_io_tensors_ = engine_->getNbIOTensors();
+  total_bindings_ = total_io_tensors_ * total_profiles;
 
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
@@ -1809,8 +1808,7 @@ ModelInstanceState::InitOptimizationProfiles()
                 << engine_->bindingIsInput(binding_index) << std::endl;
 
       auto tensor_name = engine_->getIOTensorName(io_index);
-      if (engine_->getTensorIOMode(tensor_name) ==
-          nvinfer1::TensorIOMode::kINPUT) {
+      if (IsInput(engine_, tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
             io_index, tensor_name, profile_index, &res.first->second));
       }
@@ -1831,8 +1829,7 @@ ModelInstanceState::ValidateIO()
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
   for (int i = 0; i < total_io_tensors_; ++i) {
     auto tensor_name = engine_->getIOTensorName(i);
-    if (engine_->getTensorIOMode(tensor_name) ==
-        nvinfer1::TensorIOMode::kINPUT) {
+    if (IsInput(engine_, tensor_name)) {
       allowed_inputs.emplace(tensor_name);
     } else {
       allowed_outputs.emplace(tensor_name);

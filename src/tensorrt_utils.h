@@ -108,6 +108,8 @@ const std::string DimsJsonToString(common::TritonJson::Value& dims);
 TRITONSERVER_Error* SupportsIntegratedZeroCopy(
     const int gpu_id, bool* zero_copy_support);
 
+bool IsInput(nvinfer1::ICudaEngine* engine, char const* tensor_name);
+
 //
 // Templates
 //

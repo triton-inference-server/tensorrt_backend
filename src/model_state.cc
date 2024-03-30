@@ -490,8 +490,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
     for (int i = 0; i < num_io_tensors; ++i) {
       auto tensor_name = engine->getIOTensorName(i);
-      if (engine->getTensorIOMode(tensor_name) ==
-          nvinfer1::TensorIOMode::kINPUT) {
+      if (IsInput(engine, tensor_name)) {
         allowed_tensors["input"].emplace(tensor_name);
       } else {
         allowed_tensors["output"].emplace(tensor_name);
@@ -708,7 +707,7 @@ ModelState::GetProfileMaxBatchSize(
   *max_batch_size = INT_MAX;
 
   int num_profiles = engine->getNbOptimizationProfiles();
-  // TODO: getNbBindings
+  int num_io_tensors = engine->getNbIOTensors();
   int num_profile_bindings = engine->getNbBindings() / num_profiles;
   std::cerr
       << "\nengine->getNbBindings(): " << engine->getNbBindings()
@@ -718,24 +717,21 @@ ModelState::GetProfileMaxBatchSize(
       << "\nnum_profile_bindings = engine->getNbBindings() / num_profiles -- "
       << num_profile_bindings << std::endl;
 
-  int num_io_tensors = engine->getNbIOTensors();
-
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
-  for (int binding_index = 0; binding_index < num_io_tensors; binding_index++) {
+  for (int io_index = 0; io_index < num_io_tensors; io_index++) {
     int effective_binding_index =
-        (profile_index * num_profile_bindings) + binding_index;
+        (profile_index * num_profile_bindings) + io_index;
 
     std::cerr << "\n effective_binding_index(" << effective_binding_index
               << ") = profile_index(" << profile_index
               << ") * num_profile_bindings(" << num_profile_bindings
-              << ") + binding_index(" << binding_index << ")"
-              << "\n engine->bindingIsInput(binding_index) = "
+              << ") + io_index(" << io_index << ")"
+              << "\n engine->bindingIsInput(io_index) = "
               << engine->bindingIsInput(effective_binding_index) << std::endl;
 
-    auto tensor_name = engine->getIOTensorName(binding_index);
-    if (engine->getTensorIOMode(tensor_name) ==
-        nvinfer1::TensorIOMode::kINPUT) {
+    auto tensor_name = engine->getIOTensorName(io_index);
+    if (IsInput(engine, tensor_name)) {
       std::cerr << "\n engine->isShapeBinding() = "
                 << engine->isShapeBinding(effective_binding_index)
                 << "\n engine->isShapeInferenceIO(tensor_name) = "
@@ -746,7 +742,8 @@ ModelState::GetProfileMaxBatchSize(
             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
-          std::cerr << "\n max_batch_size = " << DimsDebugString(max_shape) << std::endl;
+          std::cerr << "\n max_batch_size = " << DimsDebugString(max_shape)
+                    << std::endl;
         }
 
       } else {
@@ -771,16 +768,13 @@ ModelState::ExtractBatchHintFromIOConfig(
     const common::TritonJson::Value& dims, bool* config_batch_hint)
 {
   // look up corresponding io info from model
-  int num_profiles = engine->getNbOptimizationProfiles();
-  // TODO: getNbBindings
-  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+  int num_io_tensors = engine->getNbIOTensors();
 
-  for (int binding_index = 0; binding_index < num_profile_bindings;
-       binding_index++) {
-    if (tensor_name == engine->getBindingName(binding_index)) {
-      nvinfer1::Dims shape = engine->getBindingDimensions(binding_index);
+  for (int io_index = 0; io_index < num_io_tensors; io_index++) {
+    if (tensor_name == engine->getIOTensorName(io_index)) {
+      nvinfer1::Dims shape = engine->getTensorShape(tensor_name.c_str());
       bool should_batch;
-      if (!engine->isShapeBinding(binding_index)) {
+      if (!engine->isShapeInferenceIO(tensor_name.c_str())) {
         should_batch = (shape.nbDims == ((int32_t)dims.ArraySize() + 1));
       } else {
         int64_t first_dim = 0;
@@ -835,15 +829,14 @@ ModelState::GetRefIO(
     const bool is_input, nvinfer1::ICudaEngine* engine,
     triton::common::TritonJson::Value* ref_io)
 {
-  int num_profiles = engine->getNbOptimizationProfiles();
-  // TODO: getNbBindings
-  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+  int num_io_tensors = engine->getNbIOTensors();
 
-  for (int i = 0; i < num_profile_bindings; ++i) {
-    nvinfer1::Dims dims = engine->getBindingDimensions(i);
-    bool is_shape_binding = engine->isShapeBinding(i);
-    if ((is_input && (!engine->bindingIsInput(i))) ||
-        ((!is_input) && (engine->bindingIsInput(i)))) {
+  for (int i = 0; i < num_io_tensors; ++i) {
+    auto tensor_name == engine->getIOTensorName(i);
+    nvinfer1::Dims dims = engine->getTensorShape(tensor_name);
+    bool is_shape_binding = engine->isShapeInferenceIO(tensor_name);
+    if ((is_input && (!IsInput(engine, tensor_name))) ||
+        ((!is_input) && (IsInput(engine, tensor_name)))) {
       continue;
     }
     triton::common::TritonJson::Value io(
