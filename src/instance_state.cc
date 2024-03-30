@@ -1808,7 +1808,7 @@ ModelInstanceState::InitOptimizationProfiles()
                 << engine_->bindingIsInput(binding_index) << std::endl;
 
       auto tensor_name = engine_->getIOTensorName(io_index);
-      if (IsInput(engine_, tensor_name)) {
+      if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
             io_index, tensor_name, profile_index, &res.first->second));
       }
@@ -1829,7 +1829,7 @@ ModelInstanceState::ValidateIO()
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
   for (int i = 0; i < total_io_tensors_; ++i) {
     auto tensor_name = engine_->getIOTensorName(i);
-    if (IsInput(engine_, tensor_name)) {
+    if (IsInput(engine_.get(), tensor_name)) {
       allowed_inputs.emplace(tensor_name);
     } else {
       allowed_outputs.emplace(tensor_name);

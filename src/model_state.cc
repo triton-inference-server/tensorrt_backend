@@ -488,7 +488,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
     for (int i = 0; i < num_io_tensors; ++i) {
       auto tensor_name = engine->getIOTensorName(i);
-      if (IsInput(engine, tensor_name)) {
+      if (IsInput(engine.get(), tensor_name)) {
         allowed_tensors["input"].emplace(tensor_name);
       } else {
         allowed_tensors["output"].emplace(tensor_name);
@@ -830,7 +830,7 @@ ModelState::GetRefIO(
   int num_io_tensors = engine->getNbIOTensors();
 
   for (int i = 0; i < num_io_tensors; ++i) {
-    auto tensor_name == engine->getIOTensorName(i);
+    auto tensor_name = engine->getIOTensorName(i);
     nvinfer1::Dims dims = engine->getTensorShape(tensor_name);
     bool is_shape_binding = engine->isShapeInferenceIO(tensor_name);
     if ((is_input && (!IsInput(engine, tensor_name))) ||
