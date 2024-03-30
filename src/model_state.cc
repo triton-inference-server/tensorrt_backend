@@ -450,7 +450,6 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
       output_cnt = outputs.ArraySize();
     }
   }
-  // TODO: Use getNbIOTensors
 
   int num_profiles = 0;
   int num_io_tensors = 0;
@@ -474,7 +473,6 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   // The number of IO Tensors with shape specification in config
   int tensors_with_config_shape_cnt = 0;
 
-  // TODO: Use getNbIOTensors and getTensorIOMode
   if ((input_cnt != 0) || (output_cnt != 0)) {
     std::vector<std::string> io_types{"input", "output"};
     std::map<std::string, std::set<std::string>> allowed_tensors;
