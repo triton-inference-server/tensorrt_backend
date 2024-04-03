@@ -998,16 +998,29 @@ ModelInstanceState::Run(
       model_state_->TritonMemoryManager(), model_state_->MaxBatchSize() > 0,
       model_state_->EnablePinnedOutput(), output_stream,
       events_[next_set_].output_ready_, zero_copy_support_));
+  std::cerr << "\n********** BackendOutputResponder **********\n" << std::endl;
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
+    int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
     if (IsInput(engine_.get(), name)) {
       continue;
     }
 
     nvinfer1::Dims dims;
-    dims = citr->second.context_->getTensorShape(name.c_str());
+    dims = citr->second.context_->getBindingDimensions(binding_index);
+    std::cerr
+        << " io_index: " << io_index << "\n name: " << name
+        << "\n binding_index: " << binding_index
+        << "\n getBindingName(): " << engine_->getBindingName(binding_index)
+        << "\n citr->second.context_->getBindingDimensions(binding_index): "
+        << DimsDebugString(
+               citr->second.context_->getBindingDimensions(binding_index))
+        << "\n citr->second.context_->getTensorShape(name.c_str()): "
+        << DimsDebugString(citr->second.context_->getTensorShape(name.c_str()))
+        << std::endl;
+
 
     // Make sure each output is of the expected size and copy it into
     // the payload responses.
@@ -1149,6 +1162,7 @@ ModelInstanceState::Run(
       }
     }
   }
+  std::cerr << "\n*************" << std::endl;
 }
 
 bool
