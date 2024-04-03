@@ -736,7 +736,7 @@ ModelState::GetProfileMaxBatchSize(
 
       if (!engine->isShapeInferenceIO(tensor_name.c_str())) {
         nvinfer1::Dims max_shape = engine->getProfileShape(
-            tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
+            tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
           std::cerr << "\n max_batch_size = " << DimsDebugString(max_shape)
@@ -951,7 +951,7 @@ ModelState::FixIO(
 
           // Check if the IO is a shape tensor.
           bool is_shape_tensor = false;
-          is_shape_tensor = engine->isShapeBinding(io_name.c_str());
+          is_shape_tensor = engine->isShapeInferenceIO(io_name.c_str());
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
