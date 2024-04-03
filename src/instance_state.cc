@@ -2725,13 +2725,13 @@ ModelInstanceState::InitializeExecuteInputBinding(
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
     std::cerr << "------------\n io_index: " << io_index
-              << "\n name: " << io_name << "\n binding_index: " << binding_index
+              << "\n input_name: " << input_name << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
               << engine_->getBindingName(binding_index)
               << "\n engine_->getBindingDimensions(binding_index): "
               << DimsDebugString(engine_->getBindingDimensions(binding_index))
-              << "\n engine_->getTensorShape(name.c_str()): "
-              << DimsDebugString(engine_->getTensorShape(io_name.c_str()))
+              << "\n engine_->getTensorShape(input_name.c_str()): "
+              << DimsDebugString(engine_->getTensorShape(input_name.c_str()))
               << std::endl;
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
