@@ -578,22 +578,21 @@ ModelInstanceState::Run(
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     int binding_index = binding_offset + io_index;
+    const std::string& name = engine_->getIOTensorName(io_index);
 
     if (io_binding_info.IsDynamicShapeOutput()) {
       citr->second.context_->setOutputAllocator(
           io_binding_info.GetName().c_str(), io_binding_info.GetAllocator());
     }
 
-    if (!engine_->bindingIsInput(binding_index)) {
+    if (!IsInput(engine_.get(), name)) {
       continue;
     }
-
-    const std::string& name = engine_->getBindingName(io_index);
 
     TRITONSERVER_Error* err = nullptr;
     // Set the shape binding if needed. If unable to set the shape
     // binding then fail all requests.
-    if (engine_->isShapeBinding(binding_index)) {
+    if (engine_->isShapeInferenceIO(name.c_str())) {
       auto it = request_shape_values.find(io_index);
       if (it != request_shape_values.end()) {
         err = ValidateShapeValues(
@@ -628,10 +627,7 @@ ModelInstanceState::Run(
             binding_index,
             reinterpret_cast<int32_t*>(io_binding_info.GetBuffer()));
       }
-    }
-
-    // Skip the upcoming section if it is a shape tensor
-    if (engine_->isShapeInferenceIO(name.c_str())) {
+      // Skip the upcoming section if it is a shape tensor
       continue;
     }
 
@@ -758,7 +754,7 @@ ModelInstanceState::Run(
       uint64_t dim_idx = 0;
       batchn_shape.reserve(dims_count);
       if (support_batching_) {
-        if (!engine_->isShapeBinding(binding_index)) {
+        if (!engine_->isShapeInferenceIO(name.c_str())) {
           batchn_shape.push_back(payload_->total_batch_size_);
           dim_idx = 1;
         }
@@ -769,7 +765,7 @@ ModelInstanceState::Run(
 
       // Set the binding dimension so that output dimensions can be
       // obtained
-      if (!engine_->isShapeBinding(binding_index)) {
+      if (!engine_->isShapeInferenceIO(name.c_str())) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             interface_->SetBindingDimensions(
@@ -811,8 +807,9 @@ ModelInstanceState::Run(
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       int binding_index = binding_offset + io_index;
-      if (!engine_->bindingIsInput(binding_index) ||
-          engine_->isShapeBinding(binding_index)) {
+      const std::string& tensor_name = engine_->getIOTensorName(io_index);
+      if (!IsInput(engine_.get(), tensor_name) ||
+          engine_->isShapeInferenceIO(tensor_name.c_str())) {
         continue;
       }
       FAIL_ALL_AND_RETURN_IF_ERROR(
@@ -1004,11 +1001,10 @@ ModelInstanceState::Run(
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     int binding_index = binding_offset + io_index;
-    if (engine_->bindingIsInput(binding_index)) {
+    const std::string& name = engine_->getIOTensorName(io_index);
+    if (IsInput(engine_.get(), name)) {
       continue;
     }
-
-    const std::string& name = engine_->getBindingName(io_index);
 
     nvinfer1::Dims dims;
     dims = citr->second.context_->getBindingDimensions(binding_index);
@@ -1016,7 +1012,7 @@ ModelInstanceState::Run(
     // Make sure each output is of the expected size and copy it into
     // the payload responses.
     bool cuda_copy = false;
-    if (engine_->isShapeBinding(binding_index)) {
+    if (engine_->isShapeInferenceIO(name.c_str())) {
       // Custom handling for shape tensors
       // Obtain the shape value
       if (dims.nbDims != 0) {
@@ -1065,7 +1061,7 @@ ModelInstanceState::Run(
               backend::GetElementCount(batchn_shape);
 
           TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
-              engine_->getBindingDataType(binding_index));
+              engine_->getTensorDataType(name.c_str()));
 
           // Only need an response tensor for requested outputs.
           if ((response != nullptr) &&
@@ -1105,7 +1101,7 @@ ModelInstanceState::Run(
       }
 
       TRITONSERVER_DataType dt =
-          ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
+          ConvertTrtTypeToDataType(engine_->getTensorDataType(name.c_str()));
 
       // FIXME process reformat-free output, need to update output
       // process code to accept batch1_byte_size and request batch
