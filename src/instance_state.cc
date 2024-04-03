@@ -1336,7 +1336,7 @@ ModelInstanceState::GetRequestShapeValues(
         &buffer_count));
 
     int io_index = engine_->getBindingIndex(input_name);
-    if (engine_->isShapeBinding(io_index)) {
+    if (engine_->isShapeInferenceIO(input_name)) {
       auto it =
           request_shape_values->emplace(io_index, std::vector<int32_t>()).first;
       if (support_batching_) {
@@ -1523,7 +1523,7 @@ ModelInstanceState::EvaluateTensorRTContext(
       bool valid_bs = true;
       TRITONSERVER_Error* shape_err = nullptr;
       bool missing_shape_values = false;
-      if (engine_->isShapeBinding(io_index)) {
+      if (engine_->isShapeInferenceIO(input_name)) {
         auto it = request_shape_values.find(io_index);
         if (it != request_shape_values.end()) {
           shape_err = ValidateShapeValues(
@@ -1557,7 +1557,7 @@ ModelInstanceState::EvaluateTensorRTContext(
           *error_distance +=
               std::abs(opt_dims.d[idx] - input_shape_vec[idx - 1]);
         }
-        if (engine_->isShapeBinding(io_index)) {
+        if (engine_->isShapeInferenceIO(input_name)) {
           const auto* opt_shape_values = citr->second.opt_shapes_[io_index];
           *error_distance +=
               std::abs(*opt_shape_values - (int64_t)total_batch_size);
