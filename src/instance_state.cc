@@ -2902,13 +2902,13 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+    nvinfer1::Dims engine_dims = engine_->getTensorShape(output_name.c_str());
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
 
-    TRITONSERVER_DataType dt =
-        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
+    TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
+        engine_->getTensorDataType(output_name.c_str()));
     TRITONSERVER_DataType config_dt =
         ModelConfigDataTypeToTritonServerDataType(output_datatype);
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
@@ -3072,7 +3072,15 @@ ModelInstanceState::InitializeShapeInputBinding(
               << "\n engine_->getBindingDataType(binding_index): "
               << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
                      engine_->getBindingDataType(binding_index)))
-              << std::endl;
+              << "\n engine_->isExecutionBinding(binding_index): "
+              << engine_->isExecutionBinding(binding_index) << std::endl;
+
+    if (engine_->getTensorLocation(input_name.c_str()) ==
+        nvinfer1::TensorLocation::kDEVICE) {
+      std::cerr << "\n engine_->getTensorLocation(): GPU" << std::endl;
+    } else {
+      std::cerr << "\n engine_->getTensorLocation(): CPU" << std::endl;
+    }
 
     if (io_index < 0) {
       return TRITONSERVER_ErrorNew(
@@ -3089,7 +3097,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    if (!engine_->bindingIsInput(binding_index)) {
+    if (!IsInput(engine_.get(), input_name)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
@@ -3098,7 +3106,7 @@ ModelInstanceState::InitializeShapeInputBinding(
     }
 
     // Skip if the binding is not a shape tensor
-    if (!engine_->isShapeBinding(binding_index)) {
+    if (!engine_->isShapeInferenceIO(input_name.c_str())) {
       return nullptr;
     }
 
@@ -3112,8 +3120,8 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    TRITONSERVER_DataType dt =
-        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
+    TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
+        engine_->getTensorDataType(input_name.c_str()));
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != input_datatype)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
@@ -3127,7 +3135,7 @@ ModelInstanceState::InitializeShapeInputBinding(
     RETURN_IF_ERROR(
         interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
-    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+    nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -3184,15 +3192,15 @@ ModelInstanceState::InitializeShapeInputBinding(
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
-            context.context_->getBindingDimensions(binding_index), &dim_vec);
+            context.context_->getTensorShape(input_name.c_str()), &dim_vec);
         byte_size = GetByteSize(dt, dim_vec);
       } else {
-        auto component_count =
-            GetElementCount(context.context_->getStrides(binding_index));
+        auto component_count = GetElementCount(
+            context.context_->getTensorStrides(input_name.c_str()));
         component_count *=
-            engine_->getBindingComponentsPerElement(binding_index);
+            engine_->getTensorComponentsPerElement(input_name.c_str());
         byte_size = component_count *
-                    engine_->getBindingBytesPerComponent(binding_index);
+                    engine_->getTensorBytesPerComponent(input_name.c_str());
       }
       max_byte_size = std::max(max_byte_size, byte_size);
     }
