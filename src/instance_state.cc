@@ -1011,7 +1011,7 @@ ModelInstanceState::Run(
     nvinfer1::Dims dims;
     dims = citr->second.context_->getBindingDimensions(binding_index);
     std::cerr
-        << " io_index: " << io_index << "\n name: " << name
+        << "------------\n io_index: " << io_index << "\n name: " << name
         << "\n binding_index: " << binding_index
         << "\n getBindingName(): " << engine_->getBindingName(binding_index)
         << "\n citr->second.context_->getBindingDimensions(binding_index): "
@@ -2442,6 +2442,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     io_binding_info.SetName(io_name);
+    std::cerr
+        << "\n********** InitializeConfigShapeOutputBindings() **********\n"
+        << std::endl;
     for (auto& trt_context : trt_contexts_) {
       auto& profile_index = trt_context.first;
       auto& context = trt_context.second;
@@ -2509,6 +2512,17 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       }
 
       nvinfer1::Dims engine_dims = engine_->getTensorShape(io_name.c_str());
+      std::cerr << "------------\n io_index: " << io_index
+                << "\n name: " << io_name
+                << "\n binding_index: " << binding_index
+                << "\n getBindingName(): "
+                << engine_->getBindingName(binding_index)
+                << "\n engine_->getBindingDimensions(binding_index): "
+                << DimsDebugString(engine_->getBindingDimensions(binding_index))
+                << "\n engine_->getTensorShape(name.c_str()): "
+                << DimsDebugString(engine_->getTensorShape(io_name.c_str()))
+                << std::endl;
+
       if (ContainsWildcard(engine_dims)) {
         context.is_dynamic_per_binding_[io_index] = true;
         io_binding_info.SetIsDynamicShapeOutput(true);
@@ -2520,6 +2534,20 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       if (!io_binding_info.IsDynamicShapeOutput()) {
         const nvinfer1::Dims output_dim =
             context.context_->getTensorShape(io_name.c_str());
+
+        std::cerr
+            << "####################\n io_index: " << io_index
+            << "\n name: " << io_name << "\n binding_index: " << binding_index
+            << "\n getBindingName(): "
+            << engine_->getBindingName(binding_index)
+            << "\n context.context_->getBindingDimensions(binding_index): "
+            << DimsDebugString(
+                   context.context_->getBindingDimensions(binding_index))
+            << "\n context.context_->getTensorShape(name.c_str()): "
+            << DimsDebugString(
+                   context.context_->getTensorShape(io_name.c_str()))
+            << "\n####################" << std::endl;
+
         std::vector<int64_t> dim_vec;
         DimsToDimVec(output_dim, &dim_vec);
         int64_t byte_size = GetByteSize(dt, dim_vec);
@@ -2527,6 +2555,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         max_byte_size = std::max(max_byte_size, byte_size);
       }
     }
+    std::cerr << "\n*******************" << std::endl;
 
     if (!io_binding_info.IsDynamicShapeOutput()) {
       // [DLIS-4283] review below comment
@@ -2640,6 +2669,9 @@ ModelInstanceState::InitializeExecuteInputBinding(
     return nullptr;
   }
 
+  std::cerr << "******************** InitializeExecuteInputBinding() "
+               "********************\n"
+            << std::endl;
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
@@ -2692,6 +2724,15 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
+    std::cerr << "------------\n io_index: " << io_index
+              << "\n name: " << io_name << "\n binding_index: " << binding_index
+              << "\n getBindingName(): "
+              << engine_->getBindingName(binding_index)
+              << "\n engine_->getBindingDimensions(binding_index): "
+              << DimsDebugString(engine_->getBindingDimensions(binding_index))
+              << "\n engine_->getTensorShape(name.c_str()): "
+              << DimsDebugString(engine_->getTensorShape(io_name.c_str()))
+              << std::endl;
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -2780,6 +2821,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     }
     max_byte_size = std::max(max_byte_size, byte_size);
   }
+  std::cerr << "\n********************" << std::endl;
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
   // We rely on buffer_bindings_ being non-nullptr to indicate that
@@ -2880,15 +2922,34 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     // hence, no need to proceed further.
     return nullptr;
   }
+  std::cerr << "******************** InitializeExecuteOutputBinding() "
+               "********************\n"
+            << std::endl;
 
   // Check whether the output shape is data-dependent.
   for (auto& trt_context : trt_contexts_) {
+    auto& profile_index = trt_context.first;
+    int binding_index = total_io_tensors_ * profile_index + io_index;
+    std::cerr
+        << "------------\n io_index: " << io_index
+        << "\n output_name: " << output_name
+        << "\n binding_index: " << binding_index
+        << "\n getBindingName(): " << engine_->getBindingName(binding_index)
+        << "\n "
+           "trt_context.second.context_->getBindingDimensions(binding_index): "
+        << DimsDebugString(
+               trt_context.second.context_->getBindingDimensions(binding_index))
+        << "\n trt_context.second.context_->getTensorShape(output_name.c_str()): "
+        << DimsDebugString(
+               trt_context.second.context_->getTensorShape(output_name.c_str()))
+        << std::endl;
     if (ContainsWildcard(
             trt_context.second.context_->getTensorShape(output_name.c_str()))) {
       io_binding_info.SetIsDynamicShapeOutput(true);
       break;
     }
   }
+  std::cerr << "********************" << std::endl;
 
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
@@ -2919,6 +2980,18 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     }
 
     nvinfer1::Dims engine_dims = engine_->getTensorShape(output_name.c_str());
+    std::cerr << "------------\n io_index: " << io_index
+              << "\n output_name: " << output_name
+              << "\n binding_index: " << binding_index
+              << "\n getBindingName(): "
+              << engine_->getBindingName(binding_index)
+              << "\n "
+                 "engine_->getBindingDimensions(binding_index): "
+              << DimsDebugString(engine_->getBindingDimensions(binding_index))
+              << "\n engine_->getTensorShape(output_name.c_str()): "
+              << DimsDebugString(engine_->getTensorShape(output_name.c_str()))
+              << std::endl;
+
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -2970,6 +3043,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
       max_byte_size = std::max(max_byte_size, byte_size);
     }
   }
+  std::cerr << "********************" << std::endl;
 
   cudaError_t err = cudaSuccess;
 
@@ -3068,6 +3142,9 @@ ModelInstanceState::InitializeShapeInputBinding(
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
+  std::cerr << "******************** InitializeShapeInputBinding() "
+               "********************\n"
+            << std::endl;
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
@@ -3152,6 +3229,18 @@ ModelInstanceState::InitializeShapeInputBinding(
         interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
+    std::cerr << "------------\n io_index: " << io_index
+              << "\n input_name: " << input_name
+              << "\n binding_index: " << binding_index
+              << "\n getBindingName(): "
+              << engine_->getBindingName(binding_index)
+              << "\n "
+                 "engine_->getBindingDimensions(binding_index): "
+              << DimsDebugString(engine_->getBindingDimensions(binding_index))
+              << "\n engine_->getTensorShape(input_name.c_str()): "
+              << DimsDebugString(engine_->getTensorShape(input_name.c_str()))
+              << std::endl;
+
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -3209,6 +3298,19 @@ ModelInstanceState::InitializeShapeInputBinding(
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
             context.context_->getTensorShape(input_name.c_str()), &dim_vec);
+        
+        std::cerr << "------------\n io_index: " << io_index
+              << "\n input_name: " << input_name
+              << "\n binding_index: " << binding_index
+              << "\n getBindingName(): "
+              << engine_->getBindingName(binding_index)
+              << "\n "
+                 "context.context_->getBindingDimensions(binding_index): "
+              << DimsDebugString(context.context_->getBindingDimensions(binding_index))
+              << "\n context.context_->getTensorShape(input_name.c_str()): "
+              << DimsDebugString(context.context_->getTensorShape(input_name.c_str()))
+              << std::endl;
+
         byte_size = GetByteSize(dt, dim_vec);
       } else {
         auto component_count = GetElementCount(
@@ -3221,6 +3323,8 @@ ModelInstanceState::InitializeShapeInputBinding(
       max_byte_size = std::max(max_byte_size, byte_size);
     }
   }
+  std::cerr << "********************"
+            << std::endl;
 
   if (max_byte_size != 0) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
