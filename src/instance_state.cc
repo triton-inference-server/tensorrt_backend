@@ -627,6 +627,7 @@ ModelInstanceState::Run(
             binding_index,
             reinterpret_cast<int32_t*>(io_binding_info.GetBuffer()));
       }
+
       // Skip the upcoming section if it is a shape tensor
       continue;
     }
@@ -1000,14 +1001,13 @@ ModelInstanceState::Run(
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
-    int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
     if (IsInput(engine_.get(), name)) {
       continue;
     }
 
     nvinfer1::Dims dims;
-    dims = citr->second.context_->getBindingDimensions(binding_index);
+    dims = citr->second.context_->getTensorShape(name.c_str());
 
     // Make sure each output is of the expected size and copy it into
     // the payload responses.
@@ -1806,7 +1806,7 @@ ModelInstanceState::InitOptimizationProfiles()
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
-            io_index, tensor_name.c_str(), profile_index, &res.first->second));
+            io_index, tensor_name, profile_index, &res.first->second));
       }
       std::cerr << "\n --------- " << std::endl;
     }
@@ -2020,8 +2020,9 @@ ModelInstanceState::InitIOBindingBuffers()
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("expected configuration for ") +
-             std::string((engine_->bindingIsInput(i) ? "input" : "output")) +
-             " '" + engine_->getBindingName(i) + "' for " + Name())
+             std::string(
+                 (IsInput(engine_.get(), tensor_name) ? "input" : "output")) +
+             " '" + tensor_name + "' for " + Name())
                 .c_str());
       }
     }
@@ -2887,7 +2888,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    if (engine_->bindingIsInput(binding_index)) {
+    if (IsInput(engine_.get(), output_name)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("output '") + output_name +
@@ -3731,7 +3732,8 @@ TRTv3Interface::BuildCudaGraph(
   // FIXME handle shape tensor properly, for now if model uses shape
   // tensor then cuda graph is not captured
   for (int i = 0; i < instance_->total_io_tensors_; ++i) {
-    if (instance_->engine_->isShapeBinding(i)) {
+    auto tensor_name = instance_->engine_->getIOTensorName(i);
+    if (instance_->engine_->isShapeInferenceIO(tensor_name)) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("Detected shape tensor, CUDA graph is not "
