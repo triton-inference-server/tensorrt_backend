@@ -2533,7 +2533,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
       if (!io_binding_info.IsDynamicShapeOutput()) {
         const nvinfer1::Dims output_dim =
-            context.context_->getTensorShape(io_name.c_str());
+            context.context_->getBindingDimensions(binding_index);
 
         std::cerr
             << "####################\n io_index: " << io_index
@@ -2944,7 +2944,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
                trt_context.second.context_->getTensorShape(output_name.c_str()))
         << std::endl;
     if (ContainsWildcard(
-            trt_context.second.context_->getTensorShape(output_name.c_str()))) {
+            trt_context.second.context_->getBindingDimensions(binding_index))) {
       io_binding_info.SetIsDynamicShapeOutput(true);
       break;
     }
@@ -3297,7 +3297,7 @@ ModelInstanceState::InitializeShapeInputBinding(
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
-            context.context_->getTensorShape(input_name.c_str()), &dim_vec);
+            context.context_->getBindingDimensions(binding_index), &dim_vec);
         
         std::cerr << "------------\n io_index: " << io_index
               << "\n input_name: " << input_name
