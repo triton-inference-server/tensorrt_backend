@@ -1810,7 +1810,7 @@ ModelInstanceState::InitOptimizationProfiles()
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
-            io_index, tensor_name, profile_index, &res.first->second));
+            io_index, tensor_name.c_str(), profile_index, &res.first->second));
       }
       std::cerr << "\n --------- " << std::endl;
     }
