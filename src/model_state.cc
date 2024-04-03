@@ -254,8 +254,7 @@ ModelState::CreateEngine(
     }
     std::cerr << "\n****************" << std::endl;
 
-    // TODO: replace getNbIOTensors() with getNbIOTensors and is_dynamic
-    // required ?
+    // TODO: replace getNbBindings() with getNbIOTensors
     if (IsEngineSharingEnabled()) {
       // This logic runs at least once to validate whether the engine
       // can be shared.
@@ -487,7 +486,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     std::cerr << "\n****************" << std::endl;
 
     for (int i = 0; i < num_io_tensors; ++i) {
-      auto tensor_name = engine->getIOTensorName(i);
+      const std::string& tensor_name = engine->getIOTensorName(i);
       if (IsInput(engine.get(), tensor_name)) {
         allowed_tensors["input"].emplace(tensor_name);
       } else {
@@ -728,14 +727,14 @@ ModelState::GetProfileMaxBatchSize(
               << "\n engine->bindingIsInput(io_index) = "
               << engine->bindingIsInput(effective_binding_index) << std::endl;
 
-    auto tensor_name = engine->getIOTensorName(io_index);
+    const std::string& tensor_name = engine->getIOTensorName(io_index);
     if (IsInput(engine, tensor_name)) {
       std::cerr << "\n engine->isShapeBinding() = "
                 << engine->isShapeBinding(effective_binding_index)
-                << "\n engine->isShapeInferenceIO(tensor_name) = "
-                << engine->isShapeInferenceIO(tensor_name) << std::endl;
+                << "\n engine->isShapeInferenceIO(tensor_name.c_str()) = "
+                << engine->isShapeInferenceIO(tensor_name.c_str()) << std::endl;
 
-      if (!engine->isShapeInferenceIO(tensor_name)) {
+      if (!engine->isShapeInferenceIO(tensor_name.c_str())) {
         nvinfer1::Dims max_shape = engine->getProfileShape(
             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
@@ -830,9 +829,9 @@ ModelState::GetRefIO(
   int num_io_tensors = engine->getNbIOTensors();
 
   for (int i = 0; i < num_io_tensors; ++i) {
-    auto tensor_name = engine->getIOTensorName(i);
-    nvinfer1::Dims dims = engine->getTensorShape(tensor_name);
-    bool is_shape_binding = engine->isShapeInferenceIO(tensor_name);
+    const std::string& tensor_name = engine->getIOTensorName(i);
+    nvinfer1::Dims dims = engine->getTensorShape(tensor_name.c_str());
+    bool is_shape_binding = engine->isShapeInferenceIO(tensor_name.c_str());
     if ((is_input && (!IsInput(engine, tensor_name))) ||
         ((!is_input) && (IsInput(engine, tensor_name)))) {
       continue;
@@ -952,15 +951,7 @@ ModelState::FixIO(
 
           // Check if the IO is a shape tensor.
           bool is_shape_tensor = false;
-          int io_index = engine->getBindingIndex(io_name.c_str());
-          if (io_index == -1) {
-            return TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_INVALID_ARG,
-                (std::string("binding for '") + io_name +
-                 "' not found in the model.")
-                    .c_str());
-          }
-          is_shape_tensor = engine->isShapeBinding(io_index);
+          is_shape_tensor = engine->isShapeBinding(io_name.c_str());
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {

@@ -1807,7 +1807,7 @@ ModelInstanceState::InitOptimizationProfiles()
                 << "\n engine_->bindingIsInput(binding_index) = "
                 << engine_->bindingIsInput(binding_index) << std::endl;
 
-      auto tensor_name = engine_->getIOTensorName(io_index);
+      const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
             io_index, tensor_name, profile_index, &res.first->second));
@@ -1828,7 +1828,7 @@ ModelInstanceState::ValidateIO()
   // and validate that the model configuration specifies only those.
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
   for (int i = 0; i < total_io_tensors_; ++i) {
-    auto tensor_name = engine_->getIOTensorName(i);
+    const std::string& tensor_name = engine_->getIOTensorName(i);
     if (IsInput(engine_.get(), tensor_name)) {
       allowed_inputs.emplace(tensor_name);
     } else {
@@ -1841,7 +1841,7 @@ ModelInstanceState::ValidateIO()
                                      " as execution binding for " + Name())
                                         .c_str());
     }
-    if (engine_->isShapeInferenceIO(tensor_name)) {
+    if (engine_->isShapeInferenceIO(tensor_name.c_str())) {
       allowed_shape_tensors.emplace(tensor_name);
       LOG_MESSAGE(
           TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +

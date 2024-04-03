@@ -507,9 +507,10 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
 }
 
 bool
-IsInput(nvinfer1::ICudaEngine* engine, char const* tensor_name)
+IsInput(nvinfer1::ICudaEngine* engine, const std::string& tensor_name)
 {
-  return engine->getTensorIOMode(tensor_name) == nvinfer1::TensorIOMode::kINPUT;
+  return engine->getTensorIOMode(tensor_name.c_str()) ==
+         nvinfer1::TensorIOMode::kINPUT;
 }
 
 }}}  // namespace triton::backend::tensorrt
