@@ -2016,6 +2016,7 @@ ModelInstanceState::InitIOBindingBuffers()
     for (int i = 0; i < total_io_tensors_; ++i) {
       if (!io_binding_infos_[s][i].IsBufferAllocated() &&
           engine_->isExecutionBinding(i)) {
+        const std::string& tensor_name = engine_->getIOTensorName(i);
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("expected configuration for ") +
@@ -2372,7 +2373,7 @@ ModelInstanceState::InitializeBatchOutputBindings(
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       io_binding_info.SetName(name);
-      if (engine_->isShapeBinding(io_index)) {
+      if (engine_->isShapeInferenceIO(name.c_str())) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string(
@@ -2445,7 +2446,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      if (engine_->bindingIsInput(binding_index)) {
+      if (IsInput(engine_.get(), io_name)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("output '") + io_name +
@@ -2466,7 +2467,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       }
 
       TRITONSERVER_DataType dt =
-          ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
+          ConvertTrtTypeToDataType(engine_->getTensorDataType(io_name.c_str()));
       TRITONSERVER_DataType config_dt =
           ModelConfigDataTypeToTritonServerDataType(io_data_type);
       if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
@@ -2492,7 +2493,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
       }
 
-      nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+      nvinfer1::Dims engine_dims = engine_->getTensorShape(io_name.c_str());
       if (ContainsWildcard(engine_dims)) {
         context.is_dynamic_per_binding_[io_index] = true;
         io_binding_info.SetIsDynamicShapeOutput(true);
@@ -2503,7 +2504,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
       if (!io_binding_info.IsDynamicShapeOutput()) {
         const nvinfer1::Dims output_dim =
-            context.context_->getBindingDimensions(binding_index);
+            context.context_->getTensorShape(io_name.c_str());
         std::vector<int64_t> dim_vec;
         DimsToDimVec(output_dim, &dim_vec);
         int64_t byte_size = GetByteSize(dt, dim_vec);
@@ -2636,7 +2637,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     }
 
     // Skip if shape binding is encountered
-    if (engine_->isShapeBinding(binding_index)) {
+    if (engine_->isShapeInferenceIO(input_name.c_str())) {
       return nullptr;
     }
 
@@ -2649,7 +2650,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     }
 
 
-    if (!engine_->bindingIsInput(binding_index)) {
+    if (!IsInput(engine_.get(), input_name)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
@@ -2657,8 +2658,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
               .c_str());
     }
 
-    TRITONSERVER_DataType dt =
-        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
+    TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
+        engine_->getTensorDataType(input_name.c_str()));
     TRITONSERVER_DataType config_dt =
         ModelConfigDataTypeToTritonServerDataType(input_datatype);
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
@@ -2675,7 +2676,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
         interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
     // Detect whether dynamic or not
-    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
+    nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
