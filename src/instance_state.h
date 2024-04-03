@@ -355,8 +355,8 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config);
 
   TRITONSERVER_Error* GetProfileDimensions(
-      const int io_index, const char* tensor_name, const int profile_index,
-      TensorRTContext* context);
+      const int io_index, const std::string& tensor_name,
+      const int profile_index, TensorRTContext* context);
 
   TRITONSERVER_Error* GetRequestShapeValues(
       size_t total_batch_size, TRITONBACKEND_Request* request,
@@ -416,8 +416,8 @@ class ModelInstanceState : public TensorRTModelInstance {
   int total_bindings_{0};
 
   // The number of input and output tensors to the model. In case of dynamic
-  // shapes, it is the number of expected input and output tensors to the configured
-  // optimization profile.
+  // shapes, it is the number of expected input and output tensors to the
+  // configured optimization profile.
   int total_io_tensors_{0};
 
   int cuda_stream_priority_{0};

@@ -3247,7 +3247,7 @@ ModelInstanceState::InitializeShapeInputBinding(
 
 TRITONSERVER_Error*
 ModelInstanceState::GetProfileDimensions(
-    const int io_index, const char* tensor_name, const int profile_index,
+    const int io_index, const std::string& tensor_name, const int profile_index,
     TensorRTContext* context)
 {
   std::cerr << "\n *********************** -- GetProfileDimensions() is called!"
@@ -3270,24 +3270,26 @@ ModelInstanceState::GetProfileDimensions(
   std::cerr << "\n ---------------------- " << std::endl;
 
   context->max_dims_[io_index] = engine_->getProfileShape(
-      tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX);
+      tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
   context->min_dims_[io_index] = engine_->getProfileShape(
-      tensor_name, profile_index, nvinfer1::OptProfileSelector::kMIN);
+      tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
   context->opt_dims_[io_index] = engine_->getProfileShape(
-      tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT);
+      tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
 
-  std::cerr
-      << "\n binding_index: " << binding_index
-      << "\n engine_->getProfileShape(kMAX): "
-      << DimsDebugString(engine_->getProfileShape(
-             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMAX))
-      << "\n engine_->getProfileShape(kMIN): "
-      << DimsDebugString(engine_->getProfileShape(
-             tensor_name, profile_index, nvinfer1::OptProfileSelector::kMIN))
-      << "\n engine_->getProfileShape(kOPT): "
-      << DimsDebugString(engine_->getProfileShape(
-             tensor_name, profile_index, nvinfer1::OptProfileSelector::kOPT))
-      << std::endl;
+  std::cerr << "\n binding_index: " << binding_index
+            << "\n engine_->getProfileShape(kMAX): "
+            << DimsDebugString(engine_->getProfileShape(
+                   tensor_name.c_str(), profile_index,
+                   nvinfer1::OptProfileSelector::kMAX))
+            << "\n engine_->getProfileShape(kMIN): "
+            << DimsDebugString(engine_->getProfileShape(
+                   tensor_name.c_str(), profile_index,
+                   nvinfer1::OptProfileSelector::kMIN))
+            << "\n engine_->getProfileShape(kOPT): "
+            << DimsDebugString(engine_->getProfileShape(
+                   tensor_name.c_str(), profile_index,
+                   nvinfer1::OptProfileSelector::kOPT))
+            << std::endl;
   std::cerr << "\n ***********************";
 
   return nullptr;
