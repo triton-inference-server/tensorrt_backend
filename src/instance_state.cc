@@ -1339,7 +1339,6 @@ ModelInstanceState::GetRequestShapeValues(
 
   std::cerr << "\n**************** GetRequestShapeValues() ****************\n "
             << "input_count: " << input_count << std::endl;
-  const int total_profiles = engine_->getNbOptimizationProfiles();
   for (uint32_t i = 0; i < input_count; i++) {
     TRITONBACKEND_Input* input;
     TRITONBACKEND_RequestInputByIndex(request, i, &input);
