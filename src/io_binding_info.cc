@@ -246,7 +246,7 @@ IOBindingInfo::GetAllocator()
   }
 }
 
-std::unordered_map<std::string, IOBindingInfo>&
+std::unordered_map<std::string, IOBindingInfo>
 CreateIoBindingMap(int total_io_tensors, const nvinfer1::ICudaEngine* engine)
 {
   std::unordered_map<std::string, IOBindingInfo> io_binding_map;
