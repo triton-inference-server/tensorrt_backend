@@ -1007,6 +1007,7 @@ ModelInstanceState::Run(
     if (IsInput(engine_.get(), name)) {
       continue;
     }
+    int binding_index = binding_offset + io_index;
 
     nvinfer1::Dims dims;
     dims = citr->second.context_->getBindingDimensions(binding_index);
@@ -2995,9 +2996,10 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   // Check whether the output shape is data-dependent.
   for (auto& trt_context : trt_contexts_) {
+    int binding_index = total_io_tensors_ * profile_index + io_index;
     std::cerr
         << "------------\n io_index: " << io_index
-        << "\n b-io_index: " << engine_->getBindingIndex(input_name.c_str())
+        << "\n b-io_index: " << engine_->getBindingIndex(output_name.c_str())
         << "\n output_name: " << output_name
         << "\n binding_index: " << binding_index
         << "\n getBindingName(): " << engine_->getBindingName(binding_index)
@@ -4283,8 +4285,7 @@ TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
 {
   const auto& io_binding_info =
       instance_->io_binding_infos_[instance_->next_buffer_binding_set_];
-  for (const auto& info_pair : io_binding_info) {
-    const auto& info = info_pair.second;
+  for (const auto& info : io_binding_info) {
     if (!context->setTensorAddress(
             info.GetName().c_str(), info.GetDeviceBuffer())) {
       return false;
