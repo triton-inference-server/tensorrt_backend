@@ -575,10 +575,9 @@ ModelInstanceState::Run(
   // For each input, concatenate input values from each request into
   // the corresponding binding.
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
-    auto& io_binding_info =
-        io_binding_infos_[next_buffer_binding_set_][io_index];
     int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
+    auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][name];
 
     if (io_binding_info.IsDynamicShapeOutput()) {
       citr->second.context_->setOutputAllocator(
@@ -805,10 +804,11 @@ ModelInstanceState::Run(
   if ((cuda_graph != nullptr) && !found_exact) {
     size_t input_idx = 0;
     for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
-      auto& io_binding_info =
-          io_binding_infos_[next_buffer_binding_set_][io_index];
       int binding_index = binding_offset + io_index;
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
+      auto& io_binding_info =
+          io_binding_infos_[next_buffer_binding_set_][tensor_name];
+
       if (!IsInput(engine_.get(), tensor_name) ||
           engine_->isShapeInferenceIO(tensor_name.c_str())) {
         continue;
@@ -1000,10 +1000,10 @@ ModelInstanceState::Run(
       events_[next_set_].output_ready_, zero_copy_support_));
   std::cerr << "\n********** BackendOutputResponder **********\n" << std::endl;
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
-    auto& io_binding_info =
-        io_binding_infos_[next_buffer_binding_set_][io_index];
     int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
+    auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][name];
+
     if (IsInput(engine_.get(), name)) {
       continue;
     }
@@ -1527,7 +1527,7 @@ ModelInstanceState::EvaluateTensorRTContext(
               << engine_->getBindingIndex(input_name) << std::endl;
 
     auto& io_binding_info =
-        io_binding_infos_[next_buffer_binding_set_][io_index];
+        io_binding_infos_[next_buffer_binding_set_][input_name];
     if (io_binding_info.IsBufferRagged()) {
       std::vector<int64_t> shape_vec{0};
       for (uint32_t req_idx = 0; req_idx < request_count; req_idx++) {
@@ -1990,13 +1990,15 @@ ModelInstanceState::InitIOBindingBuffers()
   // Initialize the inputs and outputs. Make sure the model matches
   // what is in the configuration. Allocate memory for the maximum
   // possible batch size: min(engine maximum, config maximum)
-  io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
+  io_binding_infos_.push_back(
+      CreateIoBindingMap(total_io_tensors_, engine_.get()));
   buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
 
   // Use an additional set of buffers if a separate stream is used for
   // output
   if (model_state_->SeparateOutputStream()) {
-    io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
+    io_binding_infos_.push_back(
+        CreateIoBindingMap(total_io_tensors_, engine_.get()));
     buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
   }
 
@@ -2052,9 +2054,9 @@ ModelInstanceState::InitIOBindingBuffers()
   // is initialized.
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
-      if (!io_binding_infos_[s][i].IsBufferAllocated() &&
+      const std::string& tensor_name = engine_->getIOTensorName(i);
+      if (!io_binding_infos_[s][tensor_name].IsBufferAllocated() &&
           engine_->isExecutionBinding(i)) {
-        const std::string& tensor_name = engine_->getIOTensorName(i);
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("expected configuration for ") +
@@ -2366,7 +2368,7 @@ ModelInstanceState::InitializeBatchInputBindings(
       }
       int io_index = engine_->getBindingIndex(tensor_name.c_str());
       auto& io_binding_info =
-          io_binding_infos_[next_buffer_binding_set_][io_index];
+          io_binding_infos_[next_buffer_binding_set_][tensor_name];
       io_binding_info.SetName(tensor_name);
       // Special handling hint for InitializeExecuteInputBinding()
       io_binding_info.SetBatchInput(batch_input);
@@ -2409,8 +2411,7 @@ ModelInstanceState::InitializeBatchOutputBindings(
       // FIXME Currently not handling the case that batch output is
       // shape tensor
       int io_index = engine_->getBindingIndex(name.c_str());
-      auto& io_binding_info =
-          io_binding_infos_[next_buffer_binding_set_][io_index];
+      auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][name];
       io_binding_info.SetName(name);
       if (engine_->isShapeInferenceIO(name.c_str())) {
         return TRITONSERVER_ErrorNew(
@@ -2468,7 +2469,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
     int io_index = engine_->getBindingIndex(io_name.c_str());
     auto& io_binding_info =
-        io_binding_infos_[next_buffer_binding_set_][io_index];
+        io_binding_infos_[next_buffer_binding_set_][io_name];
     io_binding_info.SetName(io_name);
 
     std::cerr << "\n----------"
@@ -2693,7 +2694,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
   int io_index = engine_->getBindingIndex(input_name.c_str());
-  auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  auto& io_binding_info =
+      io_binding_infos_[next_buffer_binding_set_][input_name];
   io_binding_info.SetName(input_name);
 
   if (io_binding_info.IsBufferAllocated() && is_state) {
@@ -2944,7 +2946,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   int io_index = engine_->getBindingIndex(output_name.c_str());
 
-  auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  auto& io_binding_info =
+      io_binding_infos_[next_buffer_binding_set_][output_name];
   io_binding_info.SetName(output_name);
 
   std::cerr << "\n############"
@@ -3181,7 +3184,8 @@ ModelInstanceState::InitializeShapeInputBinding(
   int64_t max_byte_size = 0;
   int io_index = engine_->getBindingIndex(input_name.c_str());
 
-  auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
+  auto& io_binding_info =
+      io_binding_infos_[next_buffer_binding_set_][input_name];
   io_binding_info.SetName(input_name);
   std::cerr << "******************** InitializeShapeInputBinding() "
                "********************\n"
@@ -4063,7 +4067,8 @@ TRTv3Interface::SetCudaGraphShape(
           ? 1
           : graph_spec.lower_bound_batch_size_);
   for (int io_index = 0; io_index < instance_->total_io_tensors_; io_index++) {
-    auto& io_binding_info = instance_->io_binding_infos_[0][io_index];
+    const std::string& name = instance_->engine_->getBindingName(io_index);
+    auto& io_binding_info = instance_->io_binding_infos_[0][name];
     auto binding_index = binding_offset + io_index;
     if (!instance_->engine_->bindingIsInput(binding_index)) {
       continue;
@@ -4089,7 +4094,6 @@ TRTv3Interface::SetCudaGraphShape(
       cuda_graph_key->insert(cuda_graph_key->end(), dims.begin(), dims.end());
       lower_bound_key.insert(lower_bound_key.end(), dims.begin(), dims.end());
     } else {
-      const std::string& name = instance_->engine_->getBindingName(io_index);
       auto it = graph_spec.shapes_.find(name);
       if (it != graph_spec.shapes_.end()) {
         // For ragged / batch input, assume the shape in graph spec is proper

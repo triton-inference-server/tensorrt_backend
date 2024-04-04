@@ -511,7 +511,7 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   // There are Context::total_io_tensors_ number of IOBindingInfo
   // elements for copy stream.
-  std::vector<std::vector<IOBindingInfo>> io_binding_infos_{};
+  std::vector<std::map<std::string, IOBindingInfo>> io_binding_infos_{};
 
   // [DLIS-4283] no longer needed for v3, but v1 still needs it. Should
   // encapsulate to v1 specific handling and gradually remove it from regular

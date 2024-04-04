@@ -246,4 +246,15 @@ IOBindingInfo::GetAllocator()
   }
 }
 
+std::map<std::string, IOBindingInfo>&
+CreateIoBindingMap(const int& total_io_tensors, nvinfer1::ICudaEngine* engine)
+{
+  std::map<std::string, IOBindingInfo> io_binding_map;
+  for (int i = 0; i < total_io_tensors; ++i) {
+    const std::string& tensor_name = engine->getIOTensorName(i);
+    io_binding_map[tensor_name] = IOBindingInfo();
+  }
+  return io_binding_map;
+}
+
 }}}  // namespace triton::backend::tensorrt
