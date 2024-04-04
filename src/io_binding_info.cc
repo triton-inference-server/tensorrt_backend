@@ -246,13 +246,13 @@ IOBindingInfo::GetAllocator()
   }
 }
 
-std::map<std::string, IOBindingInfo>&
+std::unordered_map<std::string, IOBindingInfo>&
 CreateIoBindingMap(const int& total_io_tensors, nvinfer1::ICudaEngine* engine)
 {
-  std::map<std::string, IOBindingInfo> io_binding_map;
+  std::unordered_map<std::string, IOBindingInfo> io_binding_map;
   for (int i = 0; i < total_io_tensors; ++i) {
-    const std::string& tensor_name = engine->getIOTensorName(i);
-    io_binding_map[tensor_name] = IOBindingInfo();
+    IOBindingInfo io_binding_info;
+    io_binding_map.emplace(engine->getIOTensorName(i), io_binding_info);
   }
   return io_binding_map;
 }
