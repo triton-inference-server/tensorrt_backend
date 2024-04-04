@@ -119,6 +119,6 @@ class IOBindingInfo {
 };
 
 std::unordered_map<std::string, IOBindingInfo>& CreateIoBindingMap(
-    const int& total_io_tensors, nvinfer1::ICudaEngine* engine);
+    int total_io_tensors, const nvinfer1::ICudaEngine* engine);
 
 }}}  // namespace triton::backend::tensorrt
