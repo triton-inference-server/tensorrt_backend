@@ -26,11 +26,8 @@
 
 #pragma once
 
-#include <NvInfer.h>
-
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "output_allocator.h"
@@ -117,8 +114,5 @@ class IOBindingInfo {
 
   OutputAllocator* GetAllocator();
 };
-
-std::unordered_map<std::string, IOBindingInfo> CreateIoBindingMap(
-    int total_io_tensors, const nvinfer1::ICudaEngine* engine);
 
 }}}  // namespace triton::backend::tensorrt
