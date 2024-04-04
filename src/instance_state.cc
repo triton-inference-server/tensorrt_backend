@@ -1336,6 +1336,10 @@ ModelInstanceState::GetRequestShapeValues(
   // request
   uint32_t input_count;
   RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(request, &input_count));
+
+  std::cerr << "\n**************** GetRequestShapeValues() ****************\n "
+            << "input_count: " << input_count << std::endl;
+  const int total_profiles = engine_->getNbOptimizationProfiles();
   for (uint32_t i = 0; i < input_count; i++) {
     TRITONBACKEND_Input* input;
     TRITONBACKEND_RequestInputByIndex(request, i, &input);
@@ -1350,6 +1354,13 @@ ModelInstanceState::GetRequestShapeValues(
         &buffer_count));
 
     int io_index = engine_->getBindingIndex(input_name);
+
+    std::cerr << "\n----------"
+              << "\n i: " << i << "\n io_index: " << io_index
+              << "\n input_name: " << input_name
+              << "\n engine_->getBindingIndex(input_name): "
+              << engine_->getBindingIndex(input_name) << std::endl;
+
     if (engine_->isShapeInferenceIO(input_name)) {
       auto it =
           request_shape_values->emplace(io_index, std::vector<int32_t>()).first;
@@ -1416,6 +1427,8 @@ ModelInstanceState::GetRequestShapeValues(
       }
     }
   }
+
+  std::cerr << "\n****************" << std::endl;
 
   return nullptr;
 }
@@ -1484,6 +1497,10 @@ ModelInstanceState::EvaluateTensorRTContext(
   // request
   uint32_t input_count;
   RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(requests[0], &input_count));
+
+  std::cerr << "\n**************** EvaluateTensorRTContext() ****************\n "
+            << "input_count: " << input_count << std::endl;
+
   for (uint32_t i = 0; i < input_count; i++) {
     TRITONBACKEND_Input* input;
     TRITONBACKEND_RequestInputByIndex(requests[0], i, &input);
@@ -1502,6 +1519,13 @@ ModelInstanceState::EvaluateTensorRTContext(
     }
 
     int io_index = engine_->getBindingIndex(input_name);
+
+    std::cerr << "\n----------"
+              << "\n i: " << i << "\n io_index: " << io_index
+              << "\n input_name: " << input_name
+              << "\n engine_->getBindingIndex(input_name): "
+              << engine_->getBindingIndex(input_name) << std::endl;
+
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     if (io_binding_info.IsBufferRagged()) {
@@ -2538,8 +2562,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         std::cerr
             << "####################\n io_index: " << io_index
             << "\n name: " << io_name << "\n binding_index: " << binding_index
-            << "\n getBindingName(): "
-            << engine_->getBindingName(binding_index)
+            << "\n getBindingName(): " << engine_->getBindingName(binding_index)
             << "\n context.context_->getBindingDimensions(binding_index): "
             << DimsDebugString(
                    context.context_->getBindingDimensions(binding_index))
@@ -2725,7 +2748,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
     std::cerr << "------------\n io_index: " << io_index
-              << "\n input_name: " << input_name << "\n binding_index: " << binding_index
+              << "\n input_name: " << input_name
+              << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
               << engine_->getBindingName(binding_index)
               << "\n engine_->getBindingDimensions(binding_index): "
@@ -2939,7 +2963,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
            "trt_context.second.context_->getBindingDimensions(binding_index): "
         << DimsDebugString(
                trt_context.second.context_->getBindingDimensions(binding_index))
-        << "\n trt_context.second.context_->getTensorShape(output_name.c_str()): "
+        << "\n "
+           "trt_context.second.context_->getTensorShape(output_name.c_str()): "
         << DimsDebugString(
                trt_context.second.context_->getTensorShape(output_name.c_str()))
         << std::endl;
@@ -3298,18 +3323,20 @@ ModelInstanceState::InitializeShapeInputBinding(
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
             context.context_->getBindingDimensions(binding_index), &dim_vec);
-        
+
         std::cerr << "------------\n io_index: " << io_index
-              << "\n input_name: " << input_name
-              << "\n binding_index: " << binding_index
-              << "\n getBindingName(): "
-              << engine_->getBindingName(binding_index)
-              << "\n "
-                 "context.context_->getBindingDimensions(binding_index): "
-              << DimsDebugString(context.context_->getBindingDimensions(binding_index))
-              << "\n context.context_->getTensorShape(input_name.c_str()): "
-              << DimsDebugString(context.context_->getTensorShape(input_name.c_str()))
-              << std::endl;
+                  << "\n input_name: " << input_name
+                  << "\n binding_index: " << binding_index
+                  << "\n getBindingName(): "
+                  << engine_->getBindingName(binding_index)
+                  << "\n "
+                     "context.context_->getBindingDimensions(binding_index): "
+                  << DimsDebugString(
+                         context.context_->getBindingDimensions(binding_index))
+                  << "\n context.context_->getTensorShape(input_name.c_str()): "
+                  << DimsDebugString(
+                         context.context_->getTensorShape(input_name.c_str()))
+                  << std::endl;
 
         byte_size = GetByteSize(dt, dim_vec);
       } else {
@@ -3323,8 +3350,7 @@ ModelInstanceState::InitializeShapeInputBinding(
       max_byte_size = std::max(max_byte_size, byte_size);
     }
   }
-  std::cerr << "********************"
-            << std::endl;
+  std::cerr << "********************" << std::endl;
 
   if (max_byte_size != 0) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
