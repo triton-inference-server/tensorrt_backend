@@ -1992,14 +1992,14 @@ ModelInstanceState::InitIOBindingBuffers()
   // what is in the configuration. Allocate memory for the maximum
   // possible batch size: min(engine maximum, config maximum)
   io_binding_infos_.push_back(
-      CreateIoBindingMap(total_io_tensors_, engine_.get()));
+      std::move(CreateIoBindingMap(total_io_tensors_, engine_.get())));
   buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
 
   // Use an additional set of buffers if a separate stream is used for
   // output
   if (model_state_->SeparateOutputStream()) {
     io_binding_infos_.push_back(
-        CreateIoBindingMap(total_io_tensors_, engine_.get()));
+        std::move(CreateIoBindingMap(total_io_tensors_, engine_.get())));
     buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
   }
 
