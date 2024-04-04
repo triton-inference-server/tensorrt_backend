@@ -266,7 +266,8 @@ ModelInstanceState::~ModelInstanceState()
 {
   cudaSetDevice(DeviceId());
   for (auto& io_binding_infos : io_binding_infos_) {
-    for (auto& io_binding_info : io_binding_infos) {
+    for (auto& io_binding_pair : io_binding_infos) {
+      auto& io_binding_info = io_binding_pair.second;
       if (!io_binding_info.IsDynamicShapeOutput() &&
           io_binding_info.GetBuffer() != nullptr) {
         cudaError_t err = cudaSuccess;
@@ -4257,7 +4258,8 @@ TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
 {
   const auto& io_binding_info =
       instance_->io_binding_infos_[instance_->next_buffer_binding_set_];
-  for (const auto& info : io_binding_info) {
+  for (const auto& info_pair : io_binding_info) {
+    const auto& info = info_pair.second;
     if (!context->setTensorAddress(
             info.GetName().c_str(), info.GetDeviceBuffer())) {
       return false;
