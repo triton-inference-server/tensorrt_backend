@@ -2366,7 +2366,6 @@ ModelInstanceState::InitializeBatchInputBindings(
                     .c_str());
         }
       }
-      int io_index = engine_->getBindingIndex(tensor_name.c_str());
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][tensor_name];
       io_binding_info.SetName(tensor_name);
@@ -2410,7 +2409,6 @@ ModelInstanceState::InitializeBatchOutputBindings(
     for (const auto& name : io.TargetNames()) {
       // FIXME Currently not handling the case that batch output is
       // shape tensor
-      int io_index = engine_->getBindingIndex(name.c_str());
       auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][name];
       io_binding_info.SetName(name);
       if (engine_->isShapeInferenceIO(name.c_str())) {

@@ -251,8 +251,9 @@ CreateIoBindingMap(const int& total_io_tensors, nvinfer1::ICudaEngine* engine)
 {
   std::map<std::string, IOBindingInfo> io_binding_map;
   for (int i = 0; i < total_io_tensors; ++i) {
+    IOBindingInfo io_binding_info;
     const std::string& tensor_name = engine->getIOTensorName(i);
-    io_binding_map[tensor_name] = IOBindingInfo();
+    io_binding_map[tensor_name] = io_binding_info;
   }
   return io_binding_map;
 }
