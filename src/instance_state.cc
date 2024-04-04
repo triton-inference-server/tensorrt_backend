@@ -1497,8 +1497,9 @@ ModelInstanceState::EvaluateTensorRTContext(
   uint32_t input_count;
   RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(requests[0], &input_count));
 
-  std::cerr << "\n**************** EvaluateTensorRTContext() ****************\n "
-            << "input_count: " << input_count << std::endl;
+  std::cerr
+      << "\n**************** EvaluateTensorRTContext() ****************\n "
+      << "input_count: " << input_count << std::endl;
 
   for (uint32_t i = 0; i < input_count; i++) {
     TRITONBACKEND_Input* input;
@@ -2444,6 +2445,10 @@ TRITONSERVER_Error*
 ModelInstanceState::InitializeConfigShapeOutputBindings(
     common::TritonJson::Value& config_output)
 {
+  std::cerr << "\n**************** InitializeConfigShapeOutputBindings() "
+               "****************\n "
+            << "config_output.ArraySize(): " << config_output.ArraySize()
+            << std::endl;
   for (size_t i = 0; i < config_output.ArraySize(); i++) {
     triton::common::TritonJson::Value io;
     RETURN_IF_ERROR(config_output.IndexAsObject(i, &io));
@@ -2465,6 +2470,12 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     io_binding_info.SetName(io_name);
+
+    std::cerr << "\n----------"
+              << "\n io_index: " << io_index << "\n io_name: " << io_name
+              << "\n engine_->getBindingIndex(io_name.c_str()): "
+              << engine_->getBindingIndex(io_name.c_str()) << std::endl;
+
     std::cerr
         << "\n********** InitializeConfigShapeOutputBindings() **********\n"
         << std::endl;
@@ -2925,6 +2936,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     const std::string& output_name, const std::string& output_datatype,
     common::TritonJson::Value& output_dims, bool is_state)
 {
+  std::cerr << "******************** InitializeExecuteOutputBinding() "
+               "********************\n"
+            << std::endl;
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
 
@@ -2932,6 +2946,12 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(output_name);
+
+  std::cerr << "\n############"
+            << "\n io_index: " << io_index << "\n output_name: " << output_name
+            << "\n engine_->getBindingIndex(output_name.c_str()): "
+            << engine_->getBindingIndex(output_name.c_str()) << "\n############"
+            << std::endl;
 
   // State output is initialized before the requested output tensor.
   if (is_state) {
@@ -2945,9 +2965,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     // hence, no need to proceed further.
     return nullptr;
   }
-  std::cerr << "******************** InitializeExecuteOutputBinding() "
-               "********************\n"
-            << std::endl;
 
   // Check whether the output shape is data-dependent.
   for (auto& trt_context : trt_contexts_) {
