@@ -316,6 +316,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   TRITONSERVER_Error* InitStreamsAndEvents();
   TRITONSERVER_Error* InitEventSet(bool busy_wait_events);
   TRITONSERVER_Error* DestroyEventSet();
+  TRITONSERVER_Error* InitIOIndexMap();
   TRITONSERVER_Error* InitOptimizationProfiles();
 
   TRITONSERVER_Error* ValidateIO();
@@ -419,6 +420,9 @@ class ModelInstanceState : public TensorRTModelInstance {
   // shapes, it is the number of expected input and output tensors to the
   // configured optimization profile.
   int total_io_tensors_{0};
+
+  // Mapping from Input/Output Tensor Name to its corresponding Index
+  std::unordered_map<std::string, int> io_index_map_{};
 
   int cuda_stream_priority_{0};
 

@@ -171,6 +171,7 @@ ModelInstanceState::Create(
   } else {
     (*state)->interface_.reset(new TRTv3Interface(*state));
   }
+  RETURN_IF_ERROR((*state)->InitIOIndexMap());
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -1351,10 +1352,11 @@ ModelInstanceState::GetRequestShapeValues(
         input, &input_name, &datatype, &shape, &dims_count, &byte_size,
         &buffer_count));
 
-    int io_index = engine_->getBindingIndex(input_name);
+    int io_index = io_index_map_[input_name];
 
     std::cerr << "\n----------"
               << "\n i: " << i << "\n io_index: " << io_index
+              << "\n b-io_index: " << engine_->getBindingIndex(input_name)
               << "\n input_name: " << input_name
               << "\n engine_->getBindingIndex(input_name): "
               << engine_->getBindingIndex(input_name) << std::endl;
@@ -1517,10 +1519,11 @@ ModelInstanceState::EvaluateTensorRTContext(
       input_shape_vec[0] = total_batch_size;
     }
 
-    int io_index = engine_->getBindingIndex(input_name);
+    int io_index = io_index_map_[input_name];
 
     std::cerr << "\n----------"
               << "\n i: " << i << "\n io_index: " << io_index
+              << "\n b-io_index: " << engine_->getBindingIndex(input_name)
               << "\n input_name: " << input_name
               << "\n engine_->getBindingIndex(input_name): "
               << engine_->getBindingIndex(input_name) << std::endl;
@@ -1742,6 +1745,17 @@ ModelInstanceState::InitSemaphore()
 }
 
 TRITONSERVER_Error*
+ModelInstanceState::InitIOIndexMap()
+{
+  total_io_tensors_ = engine_->getNbIOTensors();
+  for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
+    const std::string& tensor_name = engine_->getIOTensorName(io_index);
+    io_index_map_[tensor_name] = io_index;
+  }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
   std::cerr << "\n**************** -- InitOptimizationProfiles() is called !"
@@ -1751,7 +1765,6 @@ ModelInstanceState::InitOptimizationProfiles()
             << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
             << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
             << total_profiles << std::endl;
-  total_io_tensors_ = engine_->getNbIOTensors();
   total_bindings_ = total_io_tensors_ * total_profiles;
 
   // TRT sets the optimization profile index to be 0 implicitly with
@@ -2363,7 +2376,13 @@ ModelInstanceState::InitializeBatchInputBindings(
                     .c_str());
         }
       }
-      int io_index = engine_->getBindingIndex(tensor_name.c_str());
+      int io_index = io_index_map_[tensor_name];
+
+      std::cerr << "**********\n"
+                << "\n io_index: " << io_index << "\n b-io_index: "
+                << engine_->getBindingIndex(tensor_name.c_str())
+                << "\n*************" << std::endl;
+
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       io_binding_info.SetName(tensor_name);
@@ -2407,7 +2426,11 @@ ModelInstanceState::InitializeBatchOutputBindings(
     for (const auto& name : io.TargetNames()) {
       // FIXME Currently not handling the case that batch output is
       // shape tensor
-      int io_index = engine_->getBindingIndex(name.c_str());
+      int io_index = io_index_map_[name];
+      std::cerr << "**********\n"
+                << "\n io_index: " << io_index
+                << "\n b-io_index: " << engine_->getBindingIndex(name.c_str())
+                << "\n*************" << std::endl;
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       io_binding_info.SetName(name);
@@ -2465,7 +2488,11 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       continue;
     }
 
-    int io_index = engine_->getBindingIndex(io_name.c_str());
+    int io_index = io_index_map_[io_name];
+    std::cerr << "**********\n"
+              << "\n io_index: " << io_index
+              << "\n b-io_index: " << engine_->getBindingIndex(io_name.c_str())
+              << "\n*************" << std::endl;
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     io_binding_info.SetName(io_name);
@@ -2691,7 +2718,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-  int io_index = engine_->getBindingIndex(input_name.c_str());
+  int io_index = io_index_map_[input_name];
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
 
@@ -2756,7 +2783,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
-    std::cerr << "------------\n io_index: " << io_index
+    std::cerr << "------------\n io_index: " << io_index << "\n b-io_index: "
+              << engine_->getBindingIndex(input_name.c_str())
               << "\n input_name: " << input_name
               << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
@@ -2941,7 +2969,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
 
-  int io_index = engine_->getBindingIndex(output_name.c_str());
+  int io_index = io_index_map_[output_name];
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(output_name);
@@ -2969,6 +2997,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   for (auto& trt_context : trt_contexts_) {
     std::cerr
         << "------------\n io_index: " << io_index
+        << "\n b-io_index: " << engine_->getBindingIndex(input_name.c_str())
         << "\n output_name: " << output_name
         << "\n binding_index: " << binding_index
         << "\n getBindingName(): " << engine_->getBindingName(binding_index)
@@ -3176,7 +3205,7 @@ ModelInstanceState::InitializeShapeInputBinding(
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-  int io_index = engine_->getBindingIndex(input_name.c_str());
+  int io_index = io_index_map_[input_name];
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
@@ -3191,6 +3220,8 @@ ModelInstanceState::InitializeShapeInputBinding(
     std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
               << profile_index << ") * total_io_tensors_(" << total_io_tensors_
               << ") + io_index(" << io_index << ")"
+              << "\n b-io_index: "
+              << engine_->getBindingIndex(input_name.c_str())
               << "\n engine_->bindingIsInput(binding_index) = "
               << engine_->bindingIsInput(binding_index)
               << "\n input_name: " << input_name
