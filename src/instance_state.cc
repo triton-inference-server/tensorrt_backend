@@ -2996,6 +2996,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   // Check whether the output shape is data-dependent.
   for (auto& trt_context : trt_contexts_) {
+    auto& profile_index = trt_context.first;
     int binding_index = total_io_tensors_ * profile_index + io_index;
     std::cerr
         << "------------\n io_index: " << io_index
