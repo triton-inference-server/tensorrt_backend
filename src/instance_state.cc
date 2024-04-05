@@ -2047,7 +2047,7 @@ ModelInstanceState::InitIOBindingBuffers()
         InitializeSequenceStateInputBindings(model_state_->ModelConfig()));
   }
 
-  for (const auto& trt_context : trt_contexts_) {
+  //for (const auto& trt_context : trt_contexts_) {
     // if (!trt_context.second.context_->allInputDimensionsSpecified()) {
     //   return TRITONSERVER_ErrorNew(
     //       TRITONSERVER_ERROR_INTERNAL,
@@ -2058,7 +2058,7 @@ ModelInstanceState::InitIOBindingBuffers()
     //      TRITONSERVER_ERROR_INTERNAL,
     //      "failed to specify the values of all input shape tensors");
     //}
-  }
+  //}
 
   // Validate the batch dimension against the implicit batch dimension
   // if available.
