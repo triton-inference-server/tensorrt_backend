@@ -2845,7 +2845,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   // Check whether the output shape is data-dependent.
   for (auto& trt_context : trt_contexts_) {
-    auto& profile_index = trt_context.first;
     if (ContainsWildcard(
             trt_context.second.context_->getTensorShape(output_name.c_str()))) {
       io_binding_info.SetIsDynamicShapeOutput(true);
