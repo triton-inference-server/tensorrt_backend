@@ -3479,6 +3479,7 @@ ModelInstanceState::GetProfileDimensions(
             << std::endl;
   // TODO: getProfileDimensions()
   int io_index = io_index_map_[tensor_name];
+  int binding_index = total_io_tensors_ * profile_index + io_index;
   std::cerr
       << "\n binding_index: " << binding_index
       << "\n engine_->getProfileDimensions(kMAX): "
