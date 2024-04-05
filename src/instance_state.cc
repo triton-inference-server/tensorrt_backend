@@ -919,15 +919,15 @@ ModelInstanceState::Run(
          Name())
             .c_str());
 
-    if (!citr->second.context_->allInputDimensionsSpecified()) {
-      FAIL_ALL_AND_RETURN_IF_ERROR(
-          payload_->requests_, payload_->request_count_, payload_->responses_,
-          TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INTERNAL,
-              "failed to specify the dimensions of all input "
-              "bindings"),
-          "failed to run TRT inference");
-    }
+    //if (!citr->second.context_->allInputDimensionsSpecified()) {
+    //  FAIL_ALL_AND_RETURN_IF_ERROR(
+    //      payload_->requests_, payload_->request_count_, payload_->responses_,
+    //      TRITONSERVER_ErrorNew(
+    //          TRITONSERVER_ERROR_INTERNAL,
+    //          "failed to specify the dimensions of all input "
+    //          "bindings"),
+    //      "failed to run TRT inference");
+    //}
     if (!citr->second.context_->allInputShapesSpecified()) {
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
@@ -1010,7 +1010,7 @@ ModelInstanceState::Run(
     int binding_index = binding_offset + io_index;
 
     nvinfer1::Dims dims;
-    dims = citr->second.context_->getBindingDimensions(binding_index);
+    dims = citr->second.context_->getTensorShape(name.c_str());
     std::cerr
         << "------------\n io_index: " << io_index << "\n name: " << name
         << "\n binding_index: " << binding_index
@@ -2026,11 +2026,11 @@ ModelInstanceState::InitIOBindingBuffers()
   }
 
   for (const auto& trt_context : trt_contexts_) {
-    if (!trt_context.second.context_->allInputDimensionsSpecified()) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          "failed to specify the dimensions of all input bindings");
-    }
+    //if (!trt_context.second.context_->allInputDimensionsSpecified()) {
+    //  return TRITONSERVER_ErrorNew(
+    //      TRITONSERVER_ERROR_INTERNAL,
+    //      "failed to specify the dimensions of all input bindings");
+    //}
     if (!trt_context.second.context_->allInputShapesSpecified()) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -2594,7 +2594,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
       if (!io_binding_info.IsDynamicShapeOutput()) {
         const nvinfer1::Dims output_dim =
-            context.context_->getBindingDimensions(binding_index);
+            context.context_->getTensorShape(io_name.c_str());
 
         std::cerr
             << "####################\n io_index: " << io_index
@@ -3320,8 +3320,8 @@ ModelInstanceState::InitializeShapeInputBinding(
     RETURN_IF_ERROR(CompareShapeDimsSupported(
         name_, input_name, engine_dims, model_config_dims, support_batching_));
 
-    if (!context.context_->setBindingDimensions(
-            binding_index, context.max_dims_[io_index])) {
+    if (!context.context_->setInputShape(
+            input_name.c_str(), context.max_dims_[io_index])) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("trt failed to set binding dimension to ") +
@@ -3369,7 +3369,7 @@ ModelInstanceState::InitializeShapeInputBinding(
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
-            context.context_->getBindingDimensions(binding_index), &dim_vec);
+            context.context_->getTensorShape(input_name.c_str()), &dim_vec);
 
         std::cerr << "------------\n io_index: " << io_index
                   << "\n input_name: " << input_name
@@ -4106,7 +4106,8 @@ TRTv3Interface::SetCudaGraphShape(
       if (batch_size != 0) {
         shape.d[0] = batch_size;
       }
-      if (!trt_context->context_->setBindingDimensions(binding_index, shape)) {
+      if (!trt_context->context_->setInputShape(
+              instance_->engine_->getIOTensorName(io_index), shape)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
             (std::string("trt failed to set binding dimension to ") +
@@ -4139,8 +4140,8 @@ TRTv3Interface::SetCudaGraphShape(
         shape.insert(shape.end(), it->second.begin(), it->second.end());
         nvinfer1::Dims trt_shape;
         DimVecToDims(shape, &trt_shape);
-        if (!trt_context->context_->setBindingDimensions(
-                binding_index, trt_shape)) {
+        if (!trt_context->context_->setInputShape(
+                instance_->engine_->getIOTensorName(io_index), trt_shape)) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INTERNAL,
               (std::string("trt failed to set binding dimension to ") +
@@ -4367,8 +4368,9 @@ TRTv3Interface::ConfigureInputDimensions(
   }
   DimVecToDims(*maximum_dims, &context->max_dims_[io_index]);
 
-  if (!context->context_->setBindingDimensions(
-          binding_index, context->max_dims_[io_index])) {
+  if (!context->context_->setInputShape(
+          instance_->engine_->getIOTensorName(io_index),
+          context->max_dims_[io_index])) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("trt failed to set binding dimension to ") +
@@ -4455,7 +4457,8 @@ TRTv3Interface::SetBindingDimensions(
     return nullptr;
   }
 
-  if (!trt_context.context_->setBindingDimensions(binding_index, this_dim)) {
+  if (!trt_context.context_->setInputShape(
+          instance_->engine_->getIOTensorName(io_index), this_dim)) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("trt failed to set binding dimension to ") +
