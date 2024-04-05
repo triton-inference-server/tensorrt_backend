@@ -316,6 +316,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   TRITONSERVER_Error* InitStreamsAndEvents();
   TRITONSERVER_Error* InitEventSet(bool busy_wait_events);
   TRITONSERVER_Error* DestroyEventSet();
+  TRITONSERVER_Error* InitIOIndexMap();
   TRITONSERVER_Error* InitOptimizationProfiles();
 
   TRITONSERVER_Error* ValidateIO();
@@ -355,7 +356,8 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config);
 
   TRITONSERVER_Error* GetProfileDimensions(
-      const int io_index, const int profile_index, TensorRTContext* context);
+      const std::string& tensor_name, const int profile_index,
+      TensorRTContext* context);
 
   TRITONSERVER_Error* GetRequestShapeValues(
       size_t total_batch_size, TRITONBACKEND_Request* request,
@@ -413,10 +415,13 @@ class ModelInstanceState : public TensorRTModelInstance {
   // The total number of bindings
   int total_bindings_{0};
 
-  // The number of expected bindings to the model. In case of dynamic
-  // shapes, it is the number of expected bindings to the configured
-  // optimization profile.
-  int num_expected_bindings_{0};
+  // The number of input and output tensors to the model. In case of dynamic
+  // shapes, it is the number of expected input and output tensors to the
+  // configured optimization profile.
+  int total_io_tensors_{0};
+
+  // Mapping from Input/Output Tensor Name to its corresponding Index
+  std::unordered_map<std::string, int> io_index_map_{};
 
   int cuda_stream_priority_{0};
 
@@ -507,7 +512,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   // safely.
   int next_buffer_binding_set_{0};
 
-  // There are Context::num_expected_bindings_ number of IOBindingInfo
+  // There are Context::total_io_tensors_ number of IOBindingInfo
   // elements for copy stream.
   std::vector<std::vector<IOBindingInfo>> io_binding_infos_{};
 

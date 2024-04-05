@@ -243,8 +243,9 @@ ModelState::CreateEngine(
       // This logic runs at least once to validate whether the engine
       // can be shared.
       bool is_dynamic = false;
-      for (int idx = 0; idx < eit->second.second->getNbBindings(); idx++) {
-        auto dims = eit->second.second->getBindingDimensions(idx);
+      for (int idx = 0; idx < eit->second.second->getNbIOTensors(); idx++) {
+        auto name = eit->second.second->getIOTensorName(idx);
+        auto dims = eit->second.second->getTensorShape(name);
         // Detect whether dynamic or not
         if (ContainsWildcard(dims)) {
           is_dynamic = true;
@@ -432,10 +433,9 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
-  int num_profile_bindings = 0;
   int num_profiles = 0;
   num_profiles = engine->getNbOptimizationProfiles();
-  num_profile_bindings = engine->getNbBindings() / num_profiles;
+  int num_io_tensors = engine->getNbIOTensors();
 
   // For batching support, the number of dimensions specified in model config
   // should be 1 less than the number of dimensions present in engine.
@@ -450,11 +450,12 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   if ((input_cnt != 0) || (output_cnt != 0)) {
     std::vector<std::string> io_types{"input", "output"};
     std::map<std::string, std::set<std::string>> allowed_tensors;
-    for (int i = 0; i < num_profile_bindings; ++i) {
-      if (engine->bindingIsInput(i)) {
-        allowed_tensors["input"].emplace(engine->getBindingName(i));
+    for (int i = 0; i < num_io_tensors; ++i) {
+      const std::string& tensor_name = engine->getIOTensorName(i);
+      if (IsInput(engine.get(), tensor_name)) {
+        allowed_tensors["input"].emplace(tensor_name);
       } else {
-        allowed_tensors["output"].emplace(engine->getBindingName(i));
+        allowed_tensors["output"].emplace(tensor_name);
       }
     }
 
@@ -665,18 +666,19 @@ ModelState::GetProfileMaxBatchSize(
   *max_batch_size = INT_MAX;
 
   int num_profiles = engine->getNbOptimizationProfiles();
+  int num_io_tensors = engine->getNbIOTensors();
   int num_profile_bindings = engine->getNbBindings() / num_profiles;
 
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
-  for (int binding_index = 0; binding_index < num_profile_bindings;
-       binding_index++) {
+  for (int io_index = 0; io_index < num_io_tensors; io_index++) {
     int effective_binding_index =
-        (profile_index * num_profile_bindings) + binding_index;
-    if (engine->bindingIsInput(effective_binding_index)) {
-      if (!engine->isShapeBinding(effective_binding_index)) {
-        nvinfer1::Dims max_shape = engine->getProfileDimensions(
-            effective_binding_index, profile_index,
+        (profile_index * num_profile_bindings) + io_index;
+    const std::string& tensor_name = engine->getIOTensorName(io_index);
+    if (IsInput(engine, tensor_name)) {
+      if (!engine->isShapeInferenceIO(tensor_name.c_str())) {
+        nvinfer1::Dims max_shape = engine->getProfileShape(
+            tensor_name.c_str(), profile_index,
             nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
@@ -701,15 +703,13 @@ ModelState::ExtractBatchHintFromIOConfig(
     const common::TritonJson::Value& dims, bool* config_batch_hint)
 {
   // look up corresponding io info from model
-  int num_profiles = engine->getNbOptimizationProfiles();
-  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+  int num_io_tensors = engine->getNbIOTensors();
 
-  for (int binding_index = 0; binding_index < num_profile_bindings;
-       binding_index++) {
-    if (tensor_name == engine->getBindingName(binding_index)) {
-      nvinfer1::Dims shape = engine->getBindingDimensions(binding_index);
+  for (int io_index = 0; io_index < num_io_tensors; io_index++) {
+    if (tensor_name == engine->getIOTensorName(io_index)) {
+      nvinfer1::Dims shape = engine->getTensorShape(tensor_name.c_str());
       bool should_batch;
-      if (!engine->isShapeBinding(binding_index)) {
+      if (!engine->isShapeInferenceIO(tensor_name.c_str())) {
         should_batch = (shape.nbDims == ((int32_t)dims.ArraySize() + 1));
       } else {
         int64_t first_dim = 0;
@@ -764,24 +764,23 @@ ModelState::GetRefIO(
     const bool is_input, nvinfer1::ICudaEngine* engine,
     triton::common::TritonJson::Value* ref_io)
 {
-  int num_profiles = engine->getNbOptimizationProfiles();
-  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+  int num_io_tensors = engine->getNbIOTensors();
 
-  for (int i = 0; i < num_profile_bindings; ++i) {
-    nvinfer1::Dims dims = engine->getBindingDimensions(i);
-    bool is_shape_binding = engine->isShapeBinding(i);
-    if ((is_input && (!engine->bindingIsInput(i))) ||
-        ((!is_input) && (engine->bindingIsInput(i)))) {
+  for (int i = 0; i < num_io_tensors; ++i) {
+    const std::string& tensor_name = engine->getIOTensorName(i);
+    nvinfer1::Dims dims = engine->getTensorShape(tensor_name.c_str());
+    bool is_shape_binding = engine->isShapeInferenceIO(tensor_name.c_str());
+    if ((is_input && (!IsInput(engine, tensor_name))) ||
+        ((!is_input) && (IsInput(engine, tensor_name)))) {
       continue;
     }
     triton::common::TritonJson::Value io(
         ModelConfig(), triton::common::TritonJson::ValueType::OBJECT);
-    std::string input_name{engine->getBindingName(i)};
     RETURN_IF_ERROR(
-        io.AddString("name", input_name.substr(0, input_name.find(" "))));
+        io.AddString("name", tensor_name.substr(0, tensor_name.find(" "))));
     RETURN_IF_ERROR(io.AddString(
-        "data_type",
-        ConvertTrtTypeToConfigDataType(engine->getBindingDataType(i))));
+        "data_type", ConvertTrtTypeToConfigDataType(
+                         engine->getTensorDataType(tensor_name.c_str()))));
     RETURN_IF_ERROR(InitIODims(engine, dims, is_shape_binding, &io));
     RETURN_IF_ERROR(io.AddBool("is_shape_tensor", is_shape_binding));
 
@@ -889,15 +888,7 @@ ModelState::FixIO(
 
           // Check if the IO is a shape tensor.
           bool is_shape_tensor = false;
-          int io_index = engine->getBindingIndex(io_name.c_str());
-          if (io_index == -1) {
-            return TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_INVALID_ARG,
-                (std::string("binding for '") + io_name +
-                 "' not found in the model.")
-                    .c_str());
-          }
-          is_shape_tensor = engine->isShapeBinding(io_index);
+          is_shape_tensor = engine->isShapeInferenceIO(io_name.c_str());
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
