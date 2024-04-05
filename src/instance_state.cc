@@ -999,7 +999,8 @@ ModelInstanceState::Run(
       model_state_->TritonMemoryManager(), model_state_->MaxBatchSize() > 0,
       model_state_->EnablePinnedOutput(), output_stream,
       events_[next_set_].output_ready_, zero_copy_support_));
-  std::cerr << "\n********** BackendOutputResponder **********\n" << std::endl;
+  // std::cerr << "\n********** BackendOutputResponder **********\n" <<
+  // std::endl;
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
@@ -1010,16 +1011,17 @@ ModelInstanceState::Run(
 
     nvinfer1::Dims dims;
     dims = citr->second.context_->getTensorShape(name.c_str());
-    std::cerr
-        << "------------\n io_index: " << io_index << "\n name: " << name
-        << "\n binding_index: " << binding_index
-        << "\n getBindingName(): " << engine_->getBindingName(binding_index)
-        << "\n citr->second.context_->getBindingDimensions(binding_index): "
-        << DimsDebugString(
-               citr->second.context_->getBindingDimensions(binding_index))
-        << "\n citr->second.context_->getTensorShape(name.c_str()): "
-        << DimsDebugString(citr->second.context_->getTensorShape(name.c_str()))
-        << std::endl;
+    // std::cerr
+    //     << "------------\n io_index: " << io_index << "\n name: " << name
+    //     << "\n binding_index: " << binding_index
+    //     << "\n getBindingName(): " << engine_->getBindingName(binding_index)
+    //     << "\n citr->second.context_->getBindingDimensions(binding_index): "
+    //     << DimsDebugString(
+    //            citr->second.context_->getBindingDimensions(binding_index))
+    //     << "\n citr->second.context_->getTensorShape(name.c_str()): "
+    //     <<
+    //     DimsDebugString(citr->second.context_->getTensorShape(name.c_str()))
+    //     << std::endl;
 
 
     // Make sure each output is of the expected size and copy it into
@@ -1162,7 +1164,7 @@ ModelInstanceState::Run(
       }
     }
   }
-  std::cerr << "\n*************" << std::endl;
+  // std::cerr << "\n*************" << std::endl;
 }
 
 bool
@@ -1337,8 +1339,9 @@ ModelInstanceState::GetRequestShapeValues(
   uint32_t input_count;
   RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(request, &input_count));
 
-  std::cerr << "\n**************** GetRequestShapeValues() ****************\n "
-            << "input_count: " << input_count << std::endl;
+  // std::cerr << "\n**************** GetRequestShapeValues() ****************\n
+  // "
+  //           << "input_count: " << input_count << std::endl;
   for (uint32_t i = 0; i < input_count; i++) {
     TRITONBACKEND_Input* input;
     TRITONBACKEND_RequestInputByIndex(request, i, &input);
@@ -1354,12 +1357,12 @@ ModelInstanceState::GetRequestShapeValues(
 
     int io_index = io_index_map_[input_name];
 
-    std::cerr << "\n----------"
-              << "\n i: " << i << "\n io_index: " << io_index
-              << "\n b-io_index: " << engine_->getBindingIndex(input_name)
-              << "\n input_name: " << input_name
-              << "\n engine_->getBindingIndex(input_name): "
-              << engine_->getBindingIndex(input_name) << std::endl;
+    // std::cerr << "\n----------"
+    //           << "\n i: " << i << "\n io_index: " << io_index
+    //           << "\n b-io_index: " << engine_->getBindingIndex(input_name)
+    //           << "\n input_name: " << input_name
+    //           << "\n engine_->getBindingIndex(input_name): "
+    //           << engine_->getBindingIndex(input_name) << std::endl;
 
     if (engine_->isShapeInferenceIO(input_name)) {
       auto it =
@@ -1428,7 +1431,7 @@ ModelInstanceState::GetRequestShapeValues(
     }
   }
 
-  std::cerr << "\n****************" << std::endl;
+  // std::cerr << "\n****************" << std::endl;
 
   return nullptr;
 }
@@ -1498,9 +1501,9 @@ ModelInstanceState::EvaluateTensorRTContext(
   uint32_t input_count;
   RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(requests[0], &input_count));
 
-  std::cerr
-      << "\n**************** EvaluateTensorRTContext() ****************\n "
-      << "input_count: " << input_count << std::endl;
+  // std::cerr
+  //     << "\n**************** EvaluateTensorRTContext() ****************\n "
+  //     << "input_count: " << input_count << std::endl;
 
   for (uint32_t i = 0; i < input_count; i++) {
     TRITONBACKEND_Input* input;
@@ -1521,12 +1524,12 @@ ModelInstanceState::EvaluateTensorRTContext(
 
     int io_index = io_index_map_[input_name];
 
-    std::cerr << "\n----------"
-              << "\n i: " << i << "\n io_index: " << io_index
-              << "\n b-io_index: " << engine_->getBindingIndex(input_name)
-              << "\n input_name: " << input_name
-              << "\n engine_->getBindingIndex(input_name): "
-              << engine_->getBindingIndex(input_name) << std::endl;
+    // std::cerr << "\n----------"
+    //           << "\n i: " << i << "\n io_index: " << io_index
+    //           << "\n b-io_index: " << engine_->getBindingIndex(input_name)
+    //           << "\n input_name: " << input_name
+    //           << "\n engine_->getBindingIndex(input_name): "
+    //           << engine_->getBindingIndex(input_name) << std::endl;
 
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
