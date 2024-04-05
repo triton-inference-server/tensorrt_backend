@@ -1766,6 +1766,10 @@ ModelInstanceState::InitIOIndexMap()
               << "\n engine_->isExecutionBinding(binding_index): "
               << engine_->isExecutionBinding(
                      engine_->getBindingIndex(tensor_name.c_str()))
+              << ((engine_->getTensorLocation(tensor_name.c_str()) ==
+                   nvinfer1::TensorLocation::kDEVICE)
+                      ? "\n engine_->getTensorLocation(): GPU"
+                      : "\n engine_->getTensorLocation(): CPU")
               << std::endl;
   }
   std::cerr << "\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
