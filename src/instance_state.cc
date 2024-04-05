@@ -928,15 +928,15 @@ ModelInstanceState::Run(
     //           "bindings"),
     //       "failed to run TRT inference");
     // }
-    if (!citr->second.context_->allInputShapesSpecified()) {
-      FAIL_ALL_AND_RETURN_IF_ERROR(
-          payload_->requests_, payload_->request_count_, payload_->responses_,
-          TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INTERNAL,
-              "failed to specify the values for all input shape "
-              "tensors"),
-          "failed to run TRT inference");
-    }
+    //if (!citr->second.context_->allInputShapesSpecified()) {
+    //  FAIL_ALL_AND_RETURN_IF_ERROR(
+    //      payload_->requests_, payload_->request_count_, payload_->responses_,
+    //      TRITONSERVER_ErrorNew(
+    //          TRITONSERVER_ERROR_INTERNAL,
+    //          "failed to specify the values for all input shape "
+    //          "tensors"),
+    //      "failed to run TRT inference");
+    //}
 
     if (!interface_->Enqueue(citr->second.context_.get())) {
       cudaStreamSynchronize(stream_);
@@ -2053,11 +2053,11 @@ ModelInstanceState::InitIOBindingBuffers()
     //       TRITONSERVER_ERROR_INTERNAL,
     //       "failed to specify the dimensions of all input bindings");
     // }
-    if (!trt_context.second.context_->allInputShapesSpecified()) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          "failed to specify the values of all input shape tensors");
-    }
+    //if (!trt_context.second.context_->allInputShapesSpecified()) {
+    //  return TRITONSERVER_ErrorNew(
+    //      TRITONSERVER_ERROR_INTERNAL,
+    //      "failed to specify the values of all input shape tensors");
+    //}
   }
 
   // Validate the batch dimension against the implicit batch dimension
