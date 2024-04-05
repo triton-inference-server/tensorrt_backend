@@ -996,7 +996,6 @@ ModelInstanceState::Run(
     if (IsInput(engine_.get(), name)) {
       continue;
     }
-    int binding_index = binding_offset + io_index;
 
     nvinfer1::Dims dims;
     dims = citr->second.context_->getTensorShape(name.c_str());
@@ -1710,8 +1709,8 @@ ModelInstanceState::InitIOIndexMap()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
-  total_bindings_ = total_io_tensors_ * total_profiles;
   const int total_profiles = engine_->getNbOptimizationProfiles();
+  total_bindings_ = total_io_tensors_ * total_profiles;
 
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
@@ -1783,7 +1782,6 @@ ModelInstanceState::InitOptimizationProfiles()
 
     // Store the profile dimensions for later initializing the input bindings
     for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
-      const auto binding_index = profile_index * total_io_tensors_ + io_index;
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
@@ -2848,7 +2846,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   // Check whether the output shape is data-dependent.
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
-    int binding_index = total_io_tensors_ * profile_index + io_index;
     if (ContainsWildcard(
             trt_context.second.context_->getTensorShape(output_name.c_str()))) {
       io_binding_info.SetIsDynamicShapeOutput(true);
