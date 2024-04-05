@@ -254,7 +254,6 @@ ModelState::CreateEngine(
     }
     std::cerr << "\n****************" << std::endl;
 
-    // TODO: replace getNbBindings() with getNbIOTensors
     if (IsEngineSharingEnabled()) {
       // This logic runs at least once to validate whether the engine
       // can be shared.
@@ -262,7 +261,6 @@ ModelState::CreateEngine(
       for (int idx = 0; idx < eit->second.second->getNbIOTensors(); idx++) {
         auto name = eit->second.second->getIOTensorName(idx);
         auto dims = eit->second.second->getTensorShape(name);
-
         // Detect whether dynamic or not
         if (ContainsWildcard(dims)) {
           is_dynamic = true;
@@ -451,9 +449,8 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   }
 
   int num_profiles = 0;
-  int num_io_tensors = 0;
   num_profiles = engine->getNbOptimizationProfiles();
-  num_io_tensors = engine->getNbIOTensors();
+  int num_io_tensors = engine->getNbIOTensors();
 
   std::cerr << "\n****************"
             << "\nengine->getNbBindings(): " << engine->getNbBindings()

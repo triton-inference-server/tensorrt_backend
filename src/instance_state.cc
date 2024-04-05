@@ -928,7 +928,7 @@ ModelInstanceState::Run(
     //           "bindings"),
     //       "failed to run TRT inference");
     // }
-    //if (!citr->second.context_->allInputShapesSpecified()) {
+    // if (!citr->second.context_->allInputShapesSpecified()) {
     //  FAIL_ALL_AND_RETURN_IF_ERROR(
     //      payload_->requests_, payload_->request_count_, payload_->responses_,
     //      TRITONSERVER_ErrorNew(
@@ -1007,7 +1007,6 @@ ModelInstanceState::Run(
     if (IsInput(engine_.get(), name)) {
       continue;
     }
-    int binding_index = binding_offset + io_index;
 
     nvinfer1::Dims dims;
     dims = citr->second.context_->getTensorShape(name.c_str());
@@ -1879,7 +1878,7 @@ ModelInstanceState::InitOptimizationProfiles()
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
-            io_index, tensor_name, profile_index, &res.first->second));
+            tensor_name, profile_index, &res.first->second));
       }
       std::cerr << "\n --------- " << std::endl;
     }
@@ -2047,17 +2046,17 @@ ModelInstanceState::InitIOBindingBuffers()
         InitializeSequenceStateInputBindings(model_state_->ModelConfig()));
   }
 
-  //for (const auto& trt_context : trt_contexts_) {
-    // if (!trt_context.second.context_->allInputDimensionsSpecified()) {
-    //   return TRITONSERVER_ErrorNew(
-    //       TRITONSERVER_ERROR_INTERNAL,
-    //       "failed to specify the dimensions of all input bindings");
-    // }
-    //if (!trt_context.second.context_->allInputShapesSpecified()) {
-    //  return TRITONSERVER_ErrorNew(
-    //      TRITONSERVER_ERROR_INTERNAL,
-    //      "failed to specify the values of all input shape tensors");
-    //}
+  // for (const auto& trt_context : trt_contexts_) {
+  //  if (!trt_context.second.context_->allInputDimensionsSpecified()) {
+  //    return TRITONSERVER_ErrorNew(
+  //        TRITONSERVER_ERROR_INTERNAL,
+  //        "failed to specify the dimensions of all input bindings");
+  //  }
+  // if (!trt_context.second.context_->allInputShapesSpecified()) {
+  //   return TRITONSERVER_ErrorNew(
+  //       TRITONSERVER_ERROR_INTERNAL,
+  //       "failed to specify the values of all input shape tensors");
+  // }
   //}
 
   // Validate the batch dimension against the implicit batch dimension
@@ -3470,13 +3469,13 @@ ModelInstanceState::InitializeShapeInputBinding(
 
 TRITONSERVER_Error*
 ModelInstanceState::GetProfileDimensions(
-    const int io_index, const std::string& tensor_name, const int profile_index,
+    const std::string& tensor_name, const int profile_index,
     TensorRTContext* context)
 {
   std::cerr << "\n *********************** -- GetProfileDimensions() is called!"
             << std::endl;
   // TODO: getProfileDimensions()
-  int binding_index = (profile_index * total_io_tensors_) + io_index;
+  int io_index = io_index_map_[tensor_name];
   std::cerr
       << "\n binding_index: " << binding_index
       << "\n engine_->getProfileDimensions(kMAX): "

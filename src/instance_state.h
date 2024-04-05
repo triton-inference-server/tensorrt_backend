@@ -356,8 +356,8 @@ class ModelInstanceState : public TensorRTModelInstance {
       common::TritonJson::Value& config);
 
   TRITONSERVER_Error* GetProfileDimensions(
-      const int io_index, const std::string& tensor_name,
-      const int profile_index, TensorRTContext* context);
+      const std::string& tensor_name, const int profile_index,
+      TensorRTContext* context);
 
   TRITONSERVER_Error* GetRequestShapeValues(
       size_t total_batch_size, TRITONBACKEND_Request* request,
@@ -413,7 +413,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   bool allow_inexact_match_{false};
 
   // The total number of bindings
-  // total_bindings_ = total_io_tensors_ * num_profiles ?
   int total_bindings_{0};
 
   // The number of input and output tensors to the model. In case of dynamic
