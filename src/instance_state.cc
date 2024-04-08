@@ -169,7 +169,7 @@ ModelInstanceState::Create(
   if ((*state)->Engine()->hasImplicitBatchDimension()) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_UNSUPPORTED,
-        (std::string("unable to load model '") + model_state_->Name() +
+        (std::string("unable to load model '") + model_state->Name() +
          "', TensorRT backend does not suppport implicit batch models")
             .c_str());
   } else {
@@ -820,7 +820,6 @@ ModelInstanceState::Run(
     for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
-      int binding_index = binding_offset + io_index;
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (!IsInput(engine_.get(), tensor_name) ||
           engine_->isShapeInferenceIO(tensor_name.c_str())) {
@@ -4033,7 +4032,7 @@ TRTv3Interface::SetCudaGraphShape(
       if (batch_size != 0) {
         shape.d[0] = batch_size;
       }
-      if (!trt_context->context_->setInputShape(name, shape)) {
+      if (!trt_context->context_->setInputShape(name.c_str(), shape)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
             (std::string("trt failed to set input shape to ") +
@@ -4065,11 +4064,11 @@ TRTv3Interface::SetCudaGraphShape(
         shape.insert(shape.end(), it->second.begin(), it->second.end());
         nvinfer1::Dims trt_shape;
         DimVecToDims(shape, &trt_shape);
-        if (!trt_context->context_->setInputShape(name, trt_shape)) {
+        if (!trt_context->context_->setInputShape(name.c_str(), trt_shape)) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INTERNAL,
               (std::string("trt failed to set input shape to ") +
-               DimsDebugString(trt_shape) + " for input " + input + " for " +
+               DimsDebugString(trt_shape) + " for input " + name + " for " +
                instance_->Name())
                   .c_str());
         }
