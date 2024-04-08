@@ -413,6 +413,9 @@ void
 ModelInstanceState::Run(
     TRITONBACKEND_Request** requests, const uint32_t request_count)
 {
+  std::cerr << "\n**************************** Run() "
+               "****************************"
+            << std::endl;
   LOG_MESSAGE(
       TRITONSERVER_LOG_VERBOSE,
       (std::string("TRITONBACKEND_ModelExecute: Running ") + Name() + " with " +
@@ -524,6 +527,9 @@ ModelInstanceState::Run(
   err = GetMostOptimizedProfile(
       payload_->total_batch_size_, payload_->requests_,
       payload_->request_count_, request_shape_values, &citr);
+
+  std::cerr << "\n Before:\n citr->second.context_->inferShapes(0, nullptr): "
+            << citr->second.context_->inferShapes(0, nullptr) << std::endl;
 
   if (err != nullptr) {
     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
@@ -937,6 +943,11 @@ ModelInstanceState::Run(
     //          "tensors"),
     //      "failed to run TRT inference");
     //}
+
+    std::cerr << "\n---------\n After:\n citr->second.context_->inferShapes(0, "
+                 "nullptr): "
+              << citr->second.context_->inferShapes(0, nullptr) << std::endl;
+
 
     if (!interface_->Enqueue(citr->second.context_.get())) {
       cudaStreamSynchronize(stream_);
@@ -2017,6 +2028,17 @@ ModelInstanceState::ValidateIOHelper(
 TRITONSERVER_Error*
 ModelInstanceState::InitIOBindingBuffers()
 {
+  std::cerr << "\n**************************** InitIOBindingBuffers() "
+               "****************************"
+            << std::endl;
+  for (const auto& trt_context : trt_contexts_) {
+    std::cerr << "\n---------\n Before:\n "
+                 "trt_context.second.context_->inferShapes(0, "
+                 "nullptr): "
+              << trt_context.second.context_->inferShapes(0, nullptr)
+              << std::endl;
+  }
+
   triton::common::TritonJson::Value config_inputs;
   RETURN_IF_ERROR(
       model_state_->ModelConfig().MemberAsArray("input", &config_inputs));
@@ -2049,18 +2071,22 @@ ModelInstanceState::InitIOBindingBuffers()
         InitializeSequenceStateInputBindings(model_state_->ModelConfig()));
   }
 
-  // for (const auto& trt_context : trt_contexts_) {
-  //  if (!trt_context.second.context_->allInputDimensionsSpecified()) {
-  //    return TRITONSERVER_ErrorNew(
-  //        TRITONSERVER_ERROR_INTERNAL,
-  //        "failed to specify the dimensions of all input bindings");
-  //  }
-  // if (!trt_context.second.context_->allInputShapesSpecified()) {
-  //   return TRITONSERVER_ErrorNew(
-  //       TRITONSERVER_ERROR_INTERNAL,
-  //       "failed to specify the values of all input shape tensors");
-  // }
-  //}
+  for (const auto& trt_context : trt_contexts_) {
+    //  if (!trt_context.second.context_->allInputDimensionsSpecified()) {
+    //    return TRITONSERVER_ErrorNew(
+    //        TRITONSERVER_ERROR_INTERNAL,
+    //        "failed to specify the dimensions of all input bindings");
+    //  }
+    // if (!trt_context.second.context_->allInputShapesSpecified()) {
+    //   return TRITONSERVER_ErrorNew(
+    //       TRITONSERVER_ERROR_INTERNAL,
+    //       "failed to specify the values of all input shape tensors");
+    // }
+    std::cerr
+        << "\n---------\n After:\n trt_context.second.context_->inferShapes(0, "
+           "nullptr): "
+        << trt_context.second.context_->inferShapes(0, nullptr) << std::endl;
+  }
 
   // Validate the batch dimension against the implicit batch dimension
   // if available.
@@ -2102,6 +2128,8 @@ ModelInstanceState::InitIOBindingBuffers()
       }
     }
   }
+  std::cerr << "\n********************************************************"
+            << std::endl;
 
   return nullptr;
 }
