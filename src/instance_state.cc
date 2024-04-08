@@ -529,7 +529,11 @@ ModelInstanceState::Run(
       payload_->request_count_, request_shape_values, &citr);
 
   std::cerr << "\n Before:\n citr->second.context_->inferShapes(0, nullptr): "
-            << citr->second.context_->inferShapes(0, nullptr) << std::endl;
+            << citr->second.context_->inferShapes(0, nullptr)
+            << "\n citr->second.context_->allInputDimensionsSpecified(): "
+            << citr->second.context_->allInputDimensionsSpecified()
+            << "\n citr->second.context_->allInputShapesSpecified(): "
+            << citr->second.context_->allInputShapesSpecified() << std::endl;
 
   if (err != nullptr) {
     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
@@ -946,7 +950,11 @@ ModelInstanceState::Run(
 
     std::cerr << "\n---------\n After:\n citr->second.context_->inferShapes(0, "
                  "nullptr): "
-              << citr->second.context_->inferShapes(0, nullptr) << std::endl;
+              << citr->second.context_->inferShapes(0, nullptr)
+              << "\n citr->second.context_->allInputDimensionsSpecified(): "
+              << citr->second.context_->allInputDimensionsSpecified()
+              << "\n citr->second.context_->allInputShapesSpecified(): "
+              << citr->second.context_->allInputShapesSpecified() << std::endl;
 
 
     if (!interface_->Enqueue(citr->second.context_.get())) {
@@ -2032,11 +2040,15 @@ ModelInstanceState::InitIOBindingBuffers()
                "****************************"
             << std::endl;
   for (const auto& trt_context : trt_contexts_) {
-    std::cerr << "\n---------\n Before:\n "
-                 "trt_context.second.context_->inferShapes(0, "
-                 "nullptr): "
-              << trt_context.second.context_->inferShapes(0, nullptr)
-              << std::endl;
+    std::cerr
+        << "\n---------\n Before:\n "
+           "trt_context.second.context_->inferShapes(0, "
+           "nullptr): "
+        << trt_context.second.context_->inferShapes(0, nullptr)
+        << "\n trt_context.second.context_->allInputDimensionsSpecified(): "
+        << trt_context.second.context_->allInputDimensionsSpecified()
+        << "\n trt_context.second.context_->allInputShapesSpecified(): "
+        << trt_context.second.context_->allInputShapesSpecified() << std::endl;
   }
 
   triton::common::TritonJson::Value config_inputs;
@@ -2085,7 +2097,11 @@ ModelInstanceState::InitIOBindingBuffers()
     std::cerr
         << "\n---------\n After:\n trt_context.second.context_->inferShapes(0, "
            "nullptr): "
-        << trt_context.second.context_->inferShapes(0, nullptr) << std::endl;
+        << trt_context.second.context_->inferShapes(0, nullptr)
+        << "\n trt_context.second.context_->allInputDimensionsSpecified(): "
+        << trt_context.second.context_->allInputDimensionsSpecified()
+        << "\n trt_context.second.context_->allInputShapesSpecified(): "
+        << trt_context.second.context_->allInputShapesSpecified() << std::endl;
   }
 
   // Validate the batch dimension against the implicit batch dimension
