@@ -3428,7 +3428,7 @@ ModelInstanceState::InitializeShapeInputBinding(
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
-    // pre-allocation..
+    // pre-allocation.
     if (!context.context_->setInputTensorAddress(
             input_name.c_str(), context.max_shapes_[io_index])) {
       return TRITONSERVER_ErrorNew(
