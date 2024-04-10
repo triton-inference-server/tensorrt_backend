@@ -2591,9 +2591,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
   }
 
   for (auto& trt_context : trt_contexts_) {
-    auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
-    int binding_index = total_io_tensors_ * profile_index + io_index;
     if (io_index < 0) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_NOT_FOUND,
@@ -3021,7 +3019,6 @@ ModelInstanceState::InitializeShapeInputBinding(
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
-    int binding_index = total_io_tensors_ * profile_index + io_index;
     if (io_index < 0) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_NOT_FOUND,
@@ -3096,12 +3093,12 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context.max_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
+    context.max_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context.min_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
