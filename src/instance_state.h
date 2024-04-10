@@ -384,9 +384,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether inexact match is allowed for finding CUDA graph
   bool allow_inexact_match_{false};
 
-  // The total number of bindings
-  int total_bindings_{0};
-
   // The number of input and output tensors to the model. In case of dynamic
   // shapes, it is the number of expected input and output tensors to the
   // configured optimization profile.
@@ -487,16 +484,6 @@ class ModelInstanceState : public TensorRTModelInstance {
   // There are Context::total_io_tensors_ number of IOBindingInfo
   // elements for copy stream.
   std::vector<std::vector<IOBindingInfo>> io_binding_infos_{};
-
-  // [DLIS-4283] no longer needed for v3, but v1 still needs it. Should
-  // encapsulate to v1 specific handling and gradually remove it from regular
-  // workflow.
-  // The pointer to the CUDA buffer for each binding index of the
-  // TensorRT engine. This is used to match the TensorRT context
-  // execution declaration while minimizing memory allocation. The
-  // array size is equal to Context::total_bindings_ One of for each
-  // copy stream
-  std::vector<std::vector<void*>> buffer_bindings_{};
 
   // The request details of the ongoing model execution
   std::unique_ptr<Payload> payload_{nullptr};
