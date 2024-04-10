@@ -209,7 +209,7 @@ ModelInstanceState::Create(
 ModelInstanceState::ModelInstanceState(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance)
     : TensorRTModelInstance(model_state, triton_model_instance),
-      total_bindings_(0), total_io_tensors_(0), uses_implicit_state_(false),
+      total_io_tensors_(0), uses_implicit_state_(false),
       model_state_(model_state)
 {
   // 'coalesce_request_input_' is set at backend level
@@ -575,7 +575,7 @@ ModelInstanceState::Run(
   // Calculate the set of event used with the current buffer set
   // in previous execution
   int prev_set = (EVENT_SET_COUNT -
-                  (buffer_bindings_.size() % EVENT_SET_COUNT) + next_set_) %
+                  (io_binding_infos_.size() % EVENT_SET_COUNT) + next_set_) %
                  EVENT_SET_COUNT;
   auto prev_input_ready_event = model_state_->EagerBatching()
                                     ? events_[prev_set].ready_for_input_
@@ -1820,7 +1820,6 @@ ModelInstanceState::InitOptimizationProfiles()
             << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
             << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
             << total_profiles << std::endl;
-  total_bindings_ = total_io_tensors_ * total_profiles;
 
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
@@ -1835,8 +1834,6 @@ ModelInstanceState::InitOptimizationProfiles()
          model_state_->GetTensorRTLogger().LastErrorMsg())
             .c_str());
   }
-  std::cerr << "\n total_io_tensors_ = total_bindings_ / total_profiles: "
-            << (total_bindings_ / total_profiles) << std::endl;
 
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
@@ -2073,13 +2070,11 @@ ModelInstanceState::InitIOBindingBuffers()
   // what is in the configuration. Allocate memory for the maximum
   // possible batch size: min(engine maximum, config maximum)
   io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
-  buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
 
   // Use an additional set of buffers if a separate stream is used for
   // output
   if (model_state_->SeparateOutputStream()) {
     io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
-    buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
   }
 
   // Sequence State should be processed at the end.
@@ -2706,10 +2701,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     if (!io_binding_info.IsDynamicShapeOutput()) {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
-      // supported. For static output tensors, we rely on
-      // buffer_bindings_ being non-nullptr to indicate that the
-      // buffer has been correctly initialized so even for zero-sized
-      // tensors always allocate something.
+      // supported.
       void* buffer = nullptr;
       cudaError_t err = cudaSuccess;
       // [DLIS-4283] by knowing that shape tensor should be on host, ideally
@@ -2735,14 +2727,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     io_binding_info.SetMemoryType(TRITONSERVER_MEMORY_CPU_PINNED);
     io_binding_info.SetMemoryTypeId(0);
 
-    // [DLIS-4283] below is v1 handling and v1 doesn't support shape tensor,
-    // can be removed.
-    // Set buffer bindings of all optimization profile since buffer
-    // is allocated
     for (auto& trt_context : trt_contexts_) {
       auto binding_index = total_io_tensors_ * trt_context.first + io_index;
-      buffer_bindings_[next_buffer_binding_set_][binding_index] =
-          io_binding_info.GetDeviceBuffer();
       if (!io_binding_info.IsDynamicShapeOutput()) {
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
@@ -2972,9 +2958,6 @@ ModelInstanceState::InitializeExecuteInputBinding(
   std::cerr << "\n********************" << std::endl;
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
-  // We rely on buffer_bindings_ being non-nullptr to indicate that
-  // the buffer has been correctly initialized so even for zero-sized
-  // tensors always allocate something.
   void* buffer = nullptr;
   cudaError_t err = cudaSuccess;
   if (zero_copy_support_) {
@@ -3028,12 +3011,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
             .c_str());
   }
 
-  // Set buffer bindings of all optimization profile since buffer is
-  // allocated
   for (auto& trt_context : trt_contexts_) {
     auto binding_index = total_io_tensors_ * trt_context.first + io_index;
-    buffer_bindings_[next_buffer_binding_set_][binding_index] =
-        io_binding_info.GetDeviceBuffer();
     RETURN_ERROR_IF_FALSE(
         trt_context.second.context_->setTensorAddress(
             input_name.c_str(), io_binding_info.GetDeviceBuffer()),
@@ -3205,9 +3184,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   if (!io_binding_info.IsDynamicShapeOutput()) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
-    // For static output tensors, we rely on buffer_bindings_ being
-    // non-nullptr to indicate that the buffer has been correctly initialized
-    // so even for zero-sized tensors always allocate something.
     void* buffer = nullptr;
     if (zero_copy_support_) {
       err = cudaHostAlloc(
@@ -3268,12 +3244,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     io_binding_info.SetMemoryTypeId(DeviceId());
   }
 
-  // Set buffer bindings of all optimization profile since buffer is
-  // allocated
   for (auto& trt_context : trt_contexts_) {
     auto binding_index = total_io_tensors_ * trt_context.first + io_index;
-    buffer_bindings_[next_buffer_binding_set_][binding_index] =
-        io_binding_info.GetDeviceBuffer();
     if (!io_binding_info.IsDynamicShapeOutput()) {
       RETURN_ERROR_IF_FALSE(
           trt_context.second.context_->setTensorAddress(
@@ -3487,9 +3459,6 @@ ModelInstanceState::InitializeShapeInputBinding(
 
   if (max_byte_size != 0) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
-    // We rely on buffer_bindings_ being non-nullptr to indicate that
-    // the buffer has been correctly initialized so even for zero-sized
-    // tensors always allocate something.
     void* buffer = nullptr;
     cudaError_t err = cudaSuccess;
     // [DLIS-4283] by knowing that shape tensor should be on host, ideally
@@ -3518,16 +3487,6 @@ ModelInstanceState::InitializeShapeInputBinding(
     // above because the buffer content will affect the output shape
     // inference. We rely on Enqueue() function to make sure the correct
     // buffer is set during runtime.
-
-    // [DLIS-4283] below is v1 handling and v1 doesn't support shape tensor,
-    // can be removed.
-    // Set buffer bindings of all optimization profile since buffer is
-    // allocated
-    for (auto& trt_context : trt_contexts_) {
-      auto binding_index = total_io_tensors_ * trt_context.first + io_index;
-      buffer_bindings_[next_buffer_binding_set_][binding_index] =
-          io_binding_info.GetDeviceBuffer();
-    }
   }
   return nullptr;
 }
