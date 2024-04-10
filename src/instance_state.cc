@@ -2728,7 +2728,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     io_binding_info.SetMemoryTypeId(0);
 
     for (auto& trt_context : trt_contexts_) {
-      auto binding_index = total_io_tensors_ * trt_context.first + io_index;
       if (!io_binding_info.IsDynamicShapeOutput()) {
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
@@ -3012,7 +3011,6 @@ ModelInstanceState::InitializeExecuteInputBinding(
   }
 
   for (auto& trt_context : trt_contexts_) {
-    auto binding_index = total_io_tensors_ * trt_context.first + io_index;
     RETURN_ERROR_IF_FALSE(
         trt_context.second.context_->setTensorAddress(
             input_name.c_str(), io_binding_info.GetDeviceBuffer()),
@@ -3245,7 +3243,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   }
 
   for (auto& trt_context : trt_contexts_) {
-    auto binding_index = total_io_tensors_ * trt_context.first + io_index;
     if (!io_binding_info.IsDynamicShapeOutput()) {
       RETURN_ERROR_IF_FALSE(
           trt_context.second.context_->setTensorAddress(
