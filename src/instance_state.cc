@@ -159,17 +159,21 @@ ModelInstanceState::Create(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
 
-  // Create TRT API interface once able to obtain implicit batch info,
-  // all TRT operations must be done after the interface is instantiated.
+  // [FIXME] hasImplicitBatchDimension() is deprecated in TensorRT 10.0.
+  // Always returns false since TensorRT 10.0 does not support an implicit batch
+  // dimension.
   if ((*state)->Engine()->hasImplicitBatchDimension()) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_UNSUPPORTED,
         (std::string("unable to load model '") + model_state->Name() +
          "', TensorRT backend does not suppport implicit batch models")
             .c_str());
-  } else {
-    (*state)->interface_.reset(new TRTv3Interface(*state));
   }
+
+  // Create TRT API interface, all TRT operations must be done after the
+  // interface is instantiated.
+  (*state)->interface_.reset(new TRTv3Interface(*state));
+
   RETURN_IF_ERROR((*state)->InitIOIndexMap());
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
@@ -577,7 +581,6 @@ ModelInstanceState::Run(
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
-    int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
 
     if (io_binding_info.IsDynamicShapeOutput()) {
@@ -596,9 +599,9 @@ ModelInstanceState::Run(
       auto it = request_shape_values.find(io_index);
       if (it != request_shape_values.end()) {
         err = ValidateShapeValues(
-            it->second, citr->second.min_shapes_[binding_index],
-            citr->second.max_shapes_[binding_index],
-            citr->second.nb_shape_values_, support_batching_);
+            it->second, citr->second.min_shapes_[io_index],
+            citr->second.max_shapes_[io_index], citr->second.nb_shape_values_,
+            support_batching_);
       } else {
         err = TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -1946,18 +1949,6 @@ ModelInstanceState::InitIOBindingBuffers()
     }
   }
 
-  // Validate the batch dimension against the implicit batch dimension
-  // if available.
-  // if (engine_->hasImplicitBatchDimension() &&
-  //    (model_state_->MaxBatchSize() > engine_->getMaxBatchSize())) {
-  //  return TRITONSERVER_ErrorNew(
-  //      TRITONSERVER_ERROR_INVALID_ARG,
-  //      (std::string("unexpected configuration maximum batch size ") +
-  //       std::to_string(model_state_->MaxBatchSize()) + " for '" + Name() +
-  //       "', model maximum is " + std::to_string(engine_->getMaxBatchSize()))
-  //          .c_str());
-  //}
-
   // Batch output must be processed before other outputs and sequence state
   // should be processed at the end.
   for (int s = 0; s < num_copy_streams_; s++) {
@@ -2390,13 +2381,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     for (auto& trt_context : trt_contexts_) {
       auto& profile_index = trt_context.first;
       auto& context = trt_context.second;
-      int binding_index = total_io_tensors_ * profile_index + io_index;
-      if (binding_index < 0) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_NOT_FOUND,
-            (std::string("output '") + io_name + "' not found for " + Name())
-                .c_str());
-      }
 
       if (io_binding_info.IsBufferAllocated()) {
         return TRITONSERVER_ErrorNew(
@@ -2633,8 +2617,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
       if (!is_ragged) {
         RETURN_IF_ERROR(CompareDimsSupported(
             StateForModel()->Name(), input_name, engine_dims, input_dims,
-            support_batching_, (!engine_->hasImplicitBatchDimension()),
-            false /* compare_exact */));
+            support_batching_, false /* compare_exact */));
       } else {
         // For ragged input, the input will be concatenated and
         // flatten, so expecting engine dims to be one dimensional.
@@ -2816,16 +2799,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   }
 
   for (auto& trt_context : trt_contexts_) {
-    auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
-    int binding_index = total_io_tensors_ * profile_index + io_index;
-
-    if (binding_index < 0) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_NOT_FOUND,
-          (std::string("output '") + output_name + "' not found for " + Name())
-              .c_str());
-    }
 
     if (IsInput(engine_.get(), output_name)) {
       return TRITONSERVER_ErrorNew(
@@ -2870,8 +2844,7 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     if (!io_binding_info.IsBufferRagged()) {
       RETURN_IF_ERROR(CompareDimsSupported(
           StateForModel()->Name(), output_name, engine_dims, output_dims,
-          support_batching_, (!engine_->hasImplicitBatchDimension()),
-          false /* compare_exact */));
+          support_batching_, false /* compare_exact */));
     }
 
     if (io_binding_info.IsBufferRagged() &&
@@ -3063,12 +3036,24 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context.max_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
+    // context.max_shapes_[io_index] = engine_->getProfileTensorValues(
+    //     input_name.c_str(), profile_index,
+    //     nvinfer1::OptProfileSelector::kMAX);
+    // context.min_shapes_[io_index] = engine_->getProfileTensorValues(
+    //     input_name.c_str(), profile_index,
+    //     nvinfer1::OptProfileSelector::kMIN);
+    // context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
+    //     input_name.c_str(), profile_index,
+    //     nvinfer1::OptProfileSelector::kOPT);
+
+    // [FIXME] getProfileShapeValues() code needs to be replaced by the above
+    // (getProfileTensorValues()) in TensorRT version 10
+    context.max_shapes_[io_index] = engine_->getProfileShapeValues(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context.min_shapes_[io_index] = engine_->getProfileShapeValues(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
@@ -3082,7 +3067,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    if (engine_->isExecutionBinding(binding_index)) {
+    if (engine_->isExecutionBinding(io_index)) {
       int64_t byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;

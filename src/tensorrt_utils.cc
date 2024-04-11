@@ -74,14 +74,6 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
   }
 }
 
-bool
-UseTensorRTv1API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine)
-{
-  // If the engine still uses implicit batch dimension (deprecated),
-  // TensorRT V1 API must be used to serve the model.
-  return engine->hasImplicitBatchDimension();
-}
-
 TRITONSERVER_Error*
 GetProfileIndex(const std::string& profile_name, int* profile_index)
 {
@@ -168,8 +160,7 @@ TRITONSERVER_Error*
 CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
-    const bool supports_batching, const bool contains_explicit_batch,
-    const bool compare_exact)
+    const bool supports_batching, const bool compare_exact)
 {
   std::vector<int64_t> dims_vec;
   for (size_t i = 0; i < dims.ArraySize(); i++) {
@@ -180,7 +171,7 @@ CompareDimsSupported(
 
   RETURN_IF_ERROR(CompareDimsSupported(
       model_name, tensor_name, model_dims, dims_vec, supports_batching,
-      contains_explicit_batch, compare_exact));
+      compare_exact));
   return nullptr;
 }
 
@@ -188,12 +179,11 @@ TRITONSERVER_Error*
 CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
-    const bool supports_batching, const bool contains_explicit_batch,
-    const bool compare_exact)
+    const bool supports_batching, const bool compare_exact)
 {
   // If the model configuration expects batching support in the model,
   // then the first dimension must be -1.
-  if (supports_batching && contains_explicit_batch) {
+  if (supports_batching) {
     if ((model_dims.nbDims == 0)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
