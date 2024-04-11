@@ -36,8 +36,6 @@
 
 namespace triton { namespace backend { namespace tensorrt {
 
-bool UseTensorRTv1API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine);
-
 TRITONSERVER_Error* GetProfileIndex(
     const std::string& profile_name, int* profile_index);
 
@@ -66,14 +64,12 @@ TRITONSERVER_Error* ValidateDimension(
 TRITONSERVER_Error* CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
-    const bool supports_batching, const bool contains_explicit_batch,
-    const bool compare_exact);
+    const bool supports_batching, const bool compare_exact);
 
 TRITONSERVER_Error* CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
-    const bool supports_batching, const bool contains_explicit_batch,
-    const bool compare_exact);
+    const bool supports_batching, const bool compare_exact);
 
 TRITONSERVER_Error* CompareShapeDimsSupported(
     const std::string& model_name, const std::string& tensor_name,

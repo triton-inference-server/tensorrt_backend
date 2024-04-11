@@ -536,19 +536,11 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
-  // TODO: getMaxBatchSize()
   int max_batch_size = 0;
-  bool has_implicit_batch_dim = false;
-  if (engine->hasImplicitBatchDimension()) {
-    // If engine has implicit batch dimension then retrieve the value and exit
-    max_batch_size = engine->getMaxBatchSize();
-    has_implicit_batch_dim = (max_batch_size != 1) || (MaxBatchSize() != 0);
-  } else {
-    // Assuming the first dimension to be batch dimension, until and unless
-    // proven the batching is not supported.
-    RETURN_IF_ERROR(
-        GetMaxSupportedBatchSize(engine.get(), num_profiles, &max_batch_size));
-  }
+  // Assuming the first dimension to be batch dimension, until and unless
+  // proven the batching is not supported.
+  RETURN_IF_ERROR(
+      GetMaxSupportedBatchSize(engine.get(), num_profiles, &max_batch_size));
 
   if (config_batch_hint && max_batch_size == 0) {
     return TRITONSERVER_ErrorNew(
@@ -557,9 +549,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
          "': model tensor shape configuration hints for dynamic batching "
          "but the underlying engine doesn't support batching.")
             .c_str());
-  } else if (
-      (tensors_with_config_shape_cnt != 0) && (!config_batch_hint) &&
-      (!has_implicit_batch_dim)) {
+  } else if ((tensors_with_config_shape_cnt != 0) && (!config_batch_hint)) {
     // if an explicit hint for non batching in config io
     LOG_MESSAGE(
         TRITONSERVER_LOG_WARN,
@@ -714,6 +704,7 @@ ModelState::GetProfileMaxBatchSize(
   // Visit all the bindings of the profile to capture the maximum and
   // minimum batch size supported.
   for (int io_index = 0; io_index < num_io_tensors; io_index++) {
+    const std::string& tensor_name = engine->getIOTensorName(io_index);
     int effective_binding_index =
         (profile_index * num_profile_bindings) + io_index;
 
@@ -724,7 +715,6 @@ ModelState::GetProfileMaxBatchSize(
               << "\n engine->bindingIsInput(io_index) = "
               << engine->bindingIsInput(effective_binding_index) << std::endl;
 
-    const std::string& tensor_name = engine->getIOTensorName(io_index);
     if (IsInput(engine, tensor_name)) {
       std::cerr << "\n engine->isShapeBinding() = "
                 << engine->isShapeBinding(effective_binding_index)
@@ -737,18 +727,24 @@ ModelState::GetProfileMaxBatchSize(
             nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
-          std::cerr << "\n max_batch_size = " << DimsDebugString(max_shape)
-                    << std::endl;
+          std::cerr << "\n max_batch_size (DimsDebugString(max_shape)) = "
+                    << DimsDebugString(max_shape) << std::endl;
         }
 
       } else {
+        // const int32_t* max_shapes = engine->getProfileTensorValues(
+        //     tensor_name.c_str(), profile_index,
+        //     nvinfer1::OptProfileSelector::kMAX);
+
+        // [FIXME] getProfileShapeValues() code needs to be replaced by the
+        // above (getProfileTensorValues()) in TensorRT version 10
         const int32_t* max_shapes = engine->getProfileShapeValues(
             effective_binding_index, profile_index,
             nvinfer1::OptProfileSelector::kMAX);
         std::cerr << "\n max_shapes = " << max_shapes << std::endl;
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
-          std::cerr << "\n max_batch_size = " << *max_shapes << std::endl;
+          std::cerr << "\n max_batch_size = " << *max_batch_size << std::endl;
         }
       }
     }
@@ -855,8 +851,7 @@ ModelState::InitIODims(
     nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims, bool is_shape_binding,
     triton::common::TritonJson::Value* io)
 {
-  bool skip_first =
-      (MaxBatchSize() != 0) && (!engine->hasImplicitBatchDimension());
+  bool skip_first = (MaxBatchSize() != 0);
   triton::common::TritonJson::Value config_dims(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
   if (!is_shape_binding) {
