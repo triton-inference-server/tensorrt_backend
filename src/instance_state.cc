@@ -541,7 +541,10 @@ ModelInstanceState::Run(
             << "\n citr->second.context_->allInputDimensionsSpecified(): "
             << citr->second.context_->allInputDimensionsSpecified()
             << "\n citr->second.context_->allInputShapesSpecified(): "
-            << citr->second.context_->allInputShapesSpecified() << std::endl;
+            << citr->second.context_->allInputShapesSpecified() 
+            << "\n citr->second.min_shapes_.size(): " << citr->second.min_shapes_.size()
+            << "\n citr->second.max_shapes_.size(): " << citr->second.max_shapes_.size()
+            << "\n citr->second.nb_shape_values_: " << citr->second.nb_shape_values_ << std::endl;
 
   if (err != nullptr) {
     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
@@ -598,6 +601,8 @@ ModelInstanceState::Run(
         io_binding_infos_[next_buffer_binding_set_][io_index];
     int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
+
+    std::cerr << "\n binding_index: " << binding_index  << " -- io_index: " << io_index << std::endl;
 
     if (io_binding_info.IsDynamicShapeOutput()) {
       citr->second.context_->setOutputAllocator(

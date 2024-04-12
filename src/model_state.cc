@@ -429,6 +429,14 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
              .c_str()));
   }
 
+  if (engine->hasImplicitBatchDimension()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_UNSUPPORTED,
+        (std::string("unable to load model '") + Name() +
+         "', TensorRT backend does not suppport implicit batch models")
+            .c_str());
+  }
+
   size_t input_cnt = 0;
   size_t output_cnt = 0;
   {
@@ -542,6 +550,11 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   RETURN_IF_ERROR(
       GetMaxSupportedBatchSize(engine.get(), num_profiles, &max_batch_size));
 
+  std::cerr << "\n *********** After GetMaxSupportedBatchSize() ***********"
+            << "\n max_batch_size: " << max_batch_size
+            << "\n config_batch_hint: " << config_batch_hint 
+            << "\n MaxBatchSize(): " << MaxBatchSize() << "\n*************************" << std::endl; 
+  
   if (config_batch_hint && max_batch_size == 0) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
@@ -727,8 +740,9 @@ ModelState::GetProfileMaxBatchSize(
             nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > max_shape.d[0]) {
           *max_batch_size = max_shape.d[0];
-          std::cerr << "\n max_batch_size (DimsDebugString(max_shape)) = "
-                    << DimsDebugString(max_shape) << std::endl;
+          std::cerr << "\n DimsDebugString(max_shape): "
+                    << DimsDebugString(max_shape) 
+                    << "\n max_batch_size: " << max_batch_size << std::endl;
         }
 
       } else {
@@ -741,7 +755,7 @@ ModelState::GetProfileMaxBatchSize(
         const int32_t* max_shapes = engine->getProfileShapeValues(
             effective_binding_index, profile_index,
             nvinfer1::OptProfileSelector::kMAX);
-        std::cerr << "\n max_shapes = " << max_shapes << std::endl;
+        std::cerr << "\n max_shapes: " << max_shapes << std::endl;
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
           std::cerr << "\n max_batch_size = " << *max_batch_size << std::endl;
