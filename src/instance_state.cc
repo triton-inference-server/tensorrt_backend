@@ -2166,7 +2166,7 @@ ModelInstanceState::InitIOBindingBuffers()
         std::cerr << "\n engine_->getTensorLocation(): GPU (kDEVICE)"
                   << std::endl;
       } else {
-        std::cerr << "\n engine_->getTensorLocation(): CPU (kHost)"
+        std::cerr << "\n engine_->getTensorLocation(): CPU (kHOST)"
                   << std::endl;
       }
       if (io_binding_infos_[s][i].GetMemoryType() == TRITONSERVER_MEMORY_CPU) {
@@ -3505,7 +3505,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               << "\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << std::endl;
 
     if (engine_->getTensorLocation(input_name.c_str()) ==
-        nvinfer1::TensorLocation::kHost) {
+        nvinfer1::TensorLocation::kHOST) {
       int64_t byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;
