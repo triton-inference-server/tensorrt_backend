@@ -1795,7 +1795,7 @@ ModelInstanceState::InitIOIndexMap()
 {
   total_io_tensors_ = engine_->getNbIOTensors();
   std::cerr << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ InitIOIndexMap() - "
-            << model_state_.Name() << " @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+            << "model_state_->Name: " << model_state_->Name() << " @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
             << "\ntotal_io_tensors_: " << total_io_tensors_ << std::endl;
 
   for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
@@ -2154,7 +2154,7 @@ ModelInstanceState::InitIOBindingBuffers()
   next_buffer_binding_set_ = 0;
   // Make sure every index which corresponds to an execution binding
   // is initialized.
-  std::cerr << "@@@@@@@@@@@@@@@@@@@@ InitIOBindingBuffers - Model name - " << model_state_.Name()
+  std::cerr << "@@@@@@@@@@@@@@@@@@@@ InitIOBindingBuffers - Model name - " << model_state_->Name()
             << "@@@@@@@@@@@@@@@@@@@" << std::endl;
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
@@ -3480,8 +3480,8 @@ ModelInstanceState::InitializeShapeInputBinding(
 
     std::cerr
         << "@@@@@@@@@@@@@@@@@@@@ InitializeShapeInputBinding - Model name: "
-        << model_state_.Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
-    std::cerr :: << "\n input_name: " << input_name << "\n io_index" << io_index
+        << model_state_->Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
+    std::cerr << "\n input_name: " << input_name << "\n io_index" << io_index
                  << "\n engine_->bindingIsInput(binding_index) = "
                  << engine_->bindingIsInput(binding_index)
                  << "\n engine_->isShapeBinding(binding_index): "
