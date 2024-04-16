@@ -541,10 +541,13 @@ ModelInstanceState::Run(
             << "\n citr->second.context_->allInputDimensionsSpecified(): "
             << citr->second.context_->allInputDimensionsSpecified()
             << "\n citr->second.context_->allInputShapesSpecified(): "
-            << citr->second.context_->allInputShapesSpecified() 
-            << "\n citr->second.min_shapes_.size(): " << citr->second.min_shapes_.size()
-            << "\n citr->second.max_shapes_.size(): " << citr->second.max_shapes_.size()
-            << "\n citr->second.nb_shape_values_: " << citr->second.nb_shape_values_ << std::endl;
+            << citr->second.context_->allInputShapesSpecified()
+            << "\n citr->second.min_shapes_.size(): "
+            << citr->second.min_shapes_.size()
+            << "\n citr->second.max_shapes_.size(): "
+            << citr->second.max_shapes_.size()
+            << "\n citr->second.nb_shape_values_: "
+            << citr->second.nb_shape_values_ << std::endl;
 
   if (err != nullptr) {
     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
@@ -602,7 +605,8 @@ ModelInstanceState::Run(
     int binding_index = binding_offset + io_index;
     const std::string& name = engine_->getIOTensorName(io_index);
 
-    std::cerr << "\n binding_index: " << binding_index  << " -- io_index: " << io_index << std::endl;
+    std::cerr << "\n binding_index: " << binding_index
+              << " -- io_index: " << io_index << std::endl;
 
     if (io_binding_info.IsDynamicShapeOutput()) {
       citr->second.context_->setOutputAllocator(
@@ -1790,8 +1794,8 @@ TRITONSERVER_Error*
 ModelInstanceState::InitIOIndexMap()
 {
   total_io_tensors_ = engine_->getNbIOTensors();
-  std::cerr << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ InitIOIndexMap() "
-               "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+  std::cerr << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ InitIOIndexMap() - "
+            << model_state_.Name() << " @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
             << "\ntotal_io_tensors_: " << total_io_tensors_ << std::endl;
 
   for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
@@ -2150,8 +2154,44 @@ ModelInstanceState::InitIOBindingBuffers()
   next_buffer_binding_set_ = 0;
   // Make sure every index which corresponds to an execution binding
   // is initialized.
+  std::cerr << "@@@@@@@@@@@@@@@@@@@@ InitIOBindingBuffers - Model name - " << model_state_.Name()
+            << "@@@@@@@@@@@@@@@@@@@" << std::endl;
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
+            std::cerr << "\n-------------------\n engine_->isExecutionBinding(i): "
+                << engine_->isExecutionBinding(i) << std::endl;
+      if (engine_->getTensorLocation(engine_->getIOTensorName(i)) ==
+          nvinfer1::TensorLocation::kDEVICE) {
+        std::cerr << "\n engine_->getTensorLocation(): GPU (kDEVICE)"
+                  << std::endl;
+      } else {
+        std::cerr << "\n engine_->getTensorLocation(): CPU (kHost)"
+                  << std::endl;
+      }
+      if (io_binding_infos_[s][i].GetMemoryType() == TRITONSERVER_MEMORY_CPU) {
+        std::cerr << "\n io_binding_infos_[s][i].GetMemoryType(): "
+                     "TRITONSERVER_MEMORY_CPU"
+                  << std::endl;
+      } else if (
+          io_binding_infos_[s][i].GetMemoryType() ==
+          TRITONSERVER_MEMORY_CPU_PINNED) {
+        std::cerr << "\n io_binding_infos_[s][i].GetMemoryType(): "
+                     "TRITONSERVER_MEMORY_CPU_PINNED"
+                  << std::endl;
+      } else {
+        std::cerr << "\n io_binding_infos_[s][i].GetMemoryType(): "
+                     "TRITONSERVER_MEMORY_GPU"
+                  << std::endl;
+      }
+      std::cerr << "\n io_binding_infos_[s][i].IsBufferAllocated(): "
+                << io_binding_infos_[s][i].IsBufferAllocated()
+                << "\n io_binding_infos_[s][i].GetMemoryType(): "
+                << io_binding_infos_[s][i].GetMemoryType()
+                << "\n io_binding_infos_[s][i].GetName(): "
+                << io_binding_infos_[s][i].GetName()
+                << "\n io_binding_infos_[s][i].GetByteSize(): "
+                << io_binding_infos_[s][i].GetByteSize() << std::endl;
+
       if (!io_binding_infos_[s][i].IsBufferAllocated() &&
           engine_->isExecutionBinding(i)) {
         const std::string& tensor_name = engine_->getIOTensorName(i);
@@ -2165,6 +2205,7 @@ ModelInstanceState::InitIOBindingBuffers()
       }
     }
   }
+  std::cerr << "\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << std::endl;
   std::cerr << "\n********************************************************"
             << std::endl;
 
@@ -3436,6 +3477,32 @@ ModelInstanceState::InitializeShapeInputBinding(
     //       input_name + "' for " + Name())
     //          .c_str());
     //}
+
+    std::cerr
+        << "@@@@@@@@@@@@@@@@@@@@ InitializeShapeInputBinding - Model name: "
+        << model_state_.Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
+    std::cerr :: << "\n input_name: " << input_name << "\n io_index" << io_index
+                 << "\n engine_->bindingIsInput(binding_index) = "
+                 << engine_->bindingIsInput(binding_index)
+                 << "\n engine_->isShapeBinding(binding_index): "
+                 << engine_->isShapeBinding(binding_index)
+                 << "\n isShapeInferenceIO(): "
+                 << engine_->isShapeInferenceIO(input_name.c_str())
+                 << "\n engine_->getBindingDataType(binding_index): "
+                 << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
+                        engine_->getBindingDataType(binding_index)))
+                 << "\n engine_->isExecutionBinding(binding_index): "
+                 << engine_->isExecutionBinding(binding_index) << std::endl;
+
+    if (engine_->getTensorLocation(input_name.c_str()) ==
+        nvinfer1::TensorLocation::kDEVICE) {
+      std::cerr << "\n engine_->getTensorLocation(): GPU" << std::endl;
+    } else {
+      std::cerr << "\n engine_->getTensorLocation(): CPU" << std::endl;
+    }
+    std::cerr << "\n io_binding_info.GetFormat().is_linear_format_: "
+              << io_binding_info.GetFormat().is_linear_format_
+              << "\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << std::endl;
 
     if (engine_->isExecutionBinding(io_index)) {
       int64_t byte_size = 0;
