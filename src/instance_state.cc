@@ -1798,13 +1798,6 @@ ModelInstanceState::ValidateIO()
     } else {
       allowed_outputs.emplace(tensor_name);
     }
-    // TODO isExecutionBinding
-    if (engine_->isExecutionBinding(i)) {
-      LOG_MESSAGE(
-          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
-                                     " as execution binding for " + Name())
-                                        .c_str());
-    }
     if (engine_->isShapeInferenceIO(tensor_name.c_str())) {
       allowed_shape_tensors.emplace(tensor_name);
       LOG_MESSAGE(
@@ -1964,8 +1957,7 @@ ModelInstanceState::InitIOBindingBuffers()
   // is initialized.
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
-      if (!io_binding_infos_[s][i].IsBufferAllocated() &&
-          engine_->isExecutionBinding(i)) {
+      if (!io_binding_infos_[s][i].IsBufferAllocated()) {
         const std::string& tensor_name = engine_->getIOTensorName(i);
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
@@ -3067,7 +3059,8 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    if (engine_->isExecutionBinding(io_index)) {
+    if (engine_->getTensorLocation(input_name.c_str()) ==
+        nvinfer1::TensorLocation::kHOST) {
       int64_t byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;
