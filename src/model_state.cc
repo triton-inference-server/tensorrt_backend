@@ -456,8 +456,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
-  int num_profiles = 0;
-  num_profiles = engine->getNbOptimizationProfiles();
+  int num_profiles = engine->getNbOptimizationProfiles();
   int num_io_tensors = engine->getNbIOTensors();
 
   std::cerr << "\n****************"
