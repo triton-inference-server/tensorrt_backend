@@ -2019,8 +2019,8 @@ ModelInstanceState::ValidateIOHelper(
              .first) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unsupported datatype") + io_data_type + " for " + type +
-           " '" + io_name + "' for model '" + model_state_->Name() + "'")
+          (std::string("unsupported datatype ") + io_data_type + " for " +
+           type + " '" + io_name + "' for model '" + model_state_->Name() + "'")
               .c_str());
     }
 
@@ -2666,12 +2666,12 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       std::string io_data_type;
       RETURN_IF_ERROR(io.MemberAsString("data_type", &io_data_type));
 
-      if (io_data_type.compare("TYPE_INT32") != 0) {
+      if (io_data_type.compare("TYPE_INT64") != 0) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("unexpected datatype '") + io_data_type +
              " in model configuration for shape output '" + io_name +
-             "', expecting TYPE_INT32 for " + Name())
+             "', expecting TYPE_INT64 for " + Name())
                 .c_str());
       }
 

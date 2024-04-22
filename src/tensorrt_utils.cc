@@ -46,6 +46,8 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
       return TRITONSERVER_TYPE_UINT8;
     case nvinfer1::DataType::kINT32:
       return TRITONSERVER_TYPE_INT32;
+    case nvinfer1::DataType::kINT64:
+      return TRITONSERVER_TYPE_INT64;
     case nvinfer1::DataType::kBOOL:
       return TRITONSERVER_TYPE_BOOL;
     default:
@@ -67,6 +69,8 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
       return "TYPE_UINT8";
     case nvinfer1::DataType::kINT32:
       return "TYPE_INT32";
+    case nvinfer1::DataType::kINT64:
+      return "TYPE_INT64";
     case nvinfer1::DataType::kBOOL:
       return "TYPE_BOOL";
     default:
@@ -114,6 +118,9 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
       break;
     case TRITONSERVER_TYPE_INT32:
       trt_type = nvinfer1::DataType::kINT32;
+      break;
+    case TRITONSERVER_TYPE_INT64:
+      trt_type = nvinfer1::DataType::kINT64;
       break;
     case TRITONSERVER_TYPE_BOOL:
       trt_type = nvinfer1::DataType::kBOOL;
