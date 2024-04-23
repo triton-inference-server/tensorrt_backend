@@ -1805,13 +1805,13 @@ ModelInstanceState::InitIOIndexMap()
 
     std::cerr << "\n io_index(" << io_index << ")"
               << "\n b-io_index: "
-              << engine_->getBindingIndex(tensor_name.c_str())
+              //<< engine_->getBindingIndex(tensor_name.c_str())
               << "\n tensor_name: " << tensor_name
               << "\n isShapeInferenceIO(): "
               << engine_->isShapeInferenceIO(tensor_name.c_str())
               << "\n engine_->isExecutionBinding(binding_index): "
-              << engine_->isExecutionBinding(
-                     engine_->getBindingIndex(tensor_name.c_str()))
+              //<< engine_->isExecutionBinding(
+              //       engine_->getBindingIndex(tensor_name.c_str()))
               << ((engine_->getTensorLocation(tensor_name.c_str()) ==
                    nvinfer1::TensorLocation::kDEVICE)
                       ? "\n engine_->getTensorLocation(): GPU"
@@ -1830,7 +1830,7 @@ ModelInstanceState::InitOptimizationProfiles()
   std::cerr << "\n**************** -- InitOptimizationProfiles() is called !"
             << std::endl;
   const int total_profiles = engine_->getNbOptimizationProfiles();
-  std::cerr << "\nengine_->getNbBindings(): " << engine_->getNbBindings()
+  std::cerr //<< "\nengine_->getNbBindings(): " << engine_->getNbBindings()
             << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
             << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
             << total_profiles << std::endl;
@@ -1915,8 +1915,9 @@ ModelInstanceState::InitOptimizationProfiles()
       std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
                 << profile_index << ") * total_io_tensors_("
                 << total_io_tensors_ << ") + io_index(" << io_index << ")"
-                << "\n engine_->bindingIsInput(binding_index) = "
-                << engine_->bindingIsInput(binding_index) << std::endl;
+                //<< "\n engine_->bindingIsInput(binding_index) = "
+                //<< engine_->bindingIsInput(binding_index) 
+                << std::endl;
 
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
       if (IsInput(engine_.get(), tensor_name)) {
@@ -1946,12 +1947,12 @@ ModelInstanceState::ValidateIO()
       allowed_outputs.emplace(tensor_name);
     }
     // TODO isExecutionBinding
-    if (engine_->isExecutionBinding(i)) {
-      LOG_MESSAGE(
-          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
-                                     " as execution binding for " + Name())
-                                        .c_str());
-    }
+    //if (engine_->isExecutionBinding(i)) {
+    //  LOG_MESSAGE(
+    //      TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
+    //                                 " as execution binding for " + Name())
+    //                                    .c_str());
+    //}
     if (engine_->isShapeInferenceIO(tensor_name.c_str())) {
       allowed_shape_tensors.emplace(tensor_name);
       LOG_MESSAGE(
@@ -2004,6 +2005,9 @@ ModelInstanceState::ValidateIOHelper(
     common::TritonJson::Value& ios,
     const std::set<std::string>& allowed_shape_tensors, const bool is_input)
 {
+  std::cerr << "++++++++++++++++++++ ModelInstanceState::ValidateIOHelper() "
+               "+++++++++++++++++++++"
+            << std::endl;
   std::string type = is_input ? "input" : "output";
   for (size_t i = 0; i < ios.ArraySize(); i++) {
     triton::common::TritonJson::Value io;
@@ -2014,6 +2018,22 @@ ModelInstanceState::ValidateIOHelper(
 
     std::string io_data_type;
     RETURN_IF_ERROR(io.MemberAsString("data_type", &io_data_type));
+    std::cerr
+        << " io_name: " << io_name << "\n io_data_type" << io_data_type
+        << "\n "
+           "ConvertDataTypeToTrtType(ModelConfigDataTypeToTritonServerDataType("
+           "io_data_type)).first: "
+        << ConvertDataTypeToTrtType(
+               ModelConfigDataTypeToTritonServerDataType(io_data_type))
+               .first
+        << "\n after function call second: "
+        << ConvertTrtTypeToConfigDataType(
+               ConvertDataTypeToTrtType(
+                   ModelConfigDataTypeToTritonServerDataType(io_data_type))
+                   .second)
+        << "\n +++++++++++++++++++++++++++++++++++++++++++\n"
+        << std::endl;
+
     if (!ConvertDataTypeToTrtType(
              ModelConfigDataTypeToTritonServerDataType(io_data_type))
              .first) {
@@ -2159,8 +2179,8 @@ ModelInstanceState::InitIOBindingBuffers()
             << model_state_->Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
-      std::cerr << "\n-------------------\n engine_->isExecutionBinding(i): "
-                << engine_->isExecutionBinding(i) << std::endl;
+      //std::cerr << "\n-------------------\n engine_->isExecutionBinding(i): "
+      //          << engine_->isExecutionBinding(i) << std::endl;
       if (engine_->getTensorLocation(engine_->getIOTensorName(i)) ==
           nvinfer1::TensorLocation::kDEVICE) {
         std::cerr << "\n engine_->getTensorLocation(): GPU (kDEVICE)"
@@ -2511,7 +2531,7 @@ ModelInstanceState::InitializeBatchInputBindings(
 
       std::cerr << "**********\n"
                 << "\n io_index: " << io_index << "\n b-io_index: "
-                << engine_->getBindingIndex(tensor_name.c_str())
+                //<< engine_->getBindingIndex(tensor_name.c_str())
                 << "\n*************" << std::endl;
 
       auto& io_binding_info =
@@ -2560,7 +2580,7 @@ ModelInstanceState::InitializeBatchOutputBindings(
       int io_index = io_index_map_[name];
       std::cerr << "**********\n"
                 << "\n io_index: " << io_index
-                << "\n b-io_index: " << engine_->getBindingIndex(name.c_str())
+                //<< "\n b-io_index: " << engine_->getBindingIndex(name.c_str())
                 << "\n*************" << std::endl;
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
@@ -2622,7 +2642,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     int io_index = io_index_map_[io_name];
     std::cerr << "**********\n"
               << "\n io_index: " << io_index
-              << "\n b-io_index: " << engine_->getBindingIndex(io_name.c_str())
+              //<< "\n b-io_index: " << engine_->getBindingIndex(io_name.c_str())
               << "\n*************" << std::endl;
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
@@ -2630,8 +2650,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
     std::cerr << "\n----------"
               << "\n io_index: " << io_index << "\n io_name: " << io_name
-              << "\n engine_->getBindingIndex(io_name.c_str()): "
-              << engine_->getBindingIndex(io_name.c_str()) << std::endl;
+              //<< "\n engine_->getBindingIndex(io_name.c_str()): "
+              //<< engine_->getBindingIndex(io_name.c_str()) 
+              << std::endl;
 
     std::cerr
         << "\n********** InitializeConfigShapeOutputBindings() **********\n"
@@ -2707,9 +2728,9 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 << "\n name: " << io_name
                 << "\n binding_index: " << binding_index
                 << "\n getBindingName(): "
-                << engine_->getBindingName(binding_index)
+                //<< engine_->getBindingName(binding_index)
                 << "\n engine_->getBindingDimensions(binding_index): "
-                << DimsDebugString(engine_->getBindingDimensions(binding_index))
+                //<< DimsDebugString(engine_->getBindingDimensions(binding_index))
                 << "\n engine_->getTensorShape(name.c_str()): "
                 << DimsDebugString(engine_->getTensorShape(io_name.c_str()))
                 << std::endl;
@@ -2729,10 +2750,10 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         std::cerr
             << "####################\n io_index: " << io_index
             << "\n name: " << io_name << "\n binding_index: " << binding_index
-            << "\n getBindingName(): " << engine_->getBindingName(binding_index)
-            << "\n context.context_->getBindingDimensions(binding_index): "
-            << DimsDebugString(
-                   context.context_->getBindingDimensions(binding_index))
+            //<< "\n getBindingName(): " << engine_->getBindingName(binding_index)
+            //<< "\n context.context_->getBindingDimensions(binding_index): "
+            //<< DimsDebugString(
+            //       context.context_->getBindingDimensions(binding_index))
             << "\n context.context_->getTensorShape(name.c_str()): "
             << DimsDebugString(
                    context.context_->getTensorShape(io_name.c_str()))
@@ -2905,15 +2926,15 @@ ModelInstanceState::InitializeExecuteInputBinding(
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
     std::cerr << "------------\n io_index: " << io_index << "\n b-io_index: "
-              << engine_->getBindingIndex(input_name.c_str())
+              //<< engine_->getBindingIndex(input_name.c_str())
               << "\n input_name: " << input_name
               << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
-              << engine_->getBindingName(binding_index)
+              //<< engine_->getBindingName(binding_index)
               << "\n engine_->getBindingDimensions(binding_index): "
-              << DimsDebugString(engine_->getBindingDimensions(binding_index))
+              //<< DimsDebugString(engine_->getBindingDimensions(binding_index))
               << "\n engine_->getTensorShape(input_name.c_str()): "
-              << DimsDebugString(engine_->getTensorShape(input_name.c_str()))
+              //<< DimsDebugString(engine_->getTensorShape(input_name.c_str()))
               << std::endl;
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
@@ -3088,8 +3109,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   std::cerr << "\n############"
             << "\n io_index: " << io_index << "\n output_name: " << output_name
-            << "\n engine_->getBindingIndex(output_name.c_str()): "
-            << engine_->getBindingIndex(output_name.c_str()) << "\n############"
+            //<< "\n engine_->getBindingIndex(output_name.c_str()): "
+            //<< engine_->getBindingIndex(output_name.c_str()) << "\n############"
             << std::endl;
 
   // State output is initialized before the requested output tensor.
@@ -3111,14 +3132,14 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     int binding_index = total_io_tensors_ * profile_index + io_index;
     std::cerr
         << "------------\n io_index: " << io_index
-        << "\n b-io_index: " << engine_->getBindingIndex(output_name.c_str())
+        //<< "\n b-io_index: " << engine_->getBindingIndex(output_name.c_str())
         << "\n output_name: " << output_name
         << "\n binding_index: " << binding_index
-        << "\n getBindingName(): " << engine_->getBindingName(binding_index)
+        //<< "\n getBindingName(): " << engine_->getBindingName(binding_index)
         << "\n "
            "trt_context.second.context_->getBindingDimensions(binding_index): "
-        << DimsDebugString(
-               trt_context.second.context_->getBindingDimensions(binding_index))
+        //<< DimsDebugString(
+        //       trt_context.second.context_->getBindingDimensions(binding_index))
         << "\n "
            "trt_context.second.context_->getTensorShape(output_name.c_str()): "
         << DimsDebugString(
@@ -3165,10 +3186,10 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               << "\n output_name: " << output_name
               << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
-              << engine_->getBindingName(binding_index)
-              << "\n "
-                 "engine_->getBindingDimensions(binding_index): "
-              << DimsDebugString(engine_->getBindingDimensions(binding_index))
+              //<< engine_->getBindingName(binding_index)
+              //<< "\n "
+              ////   "engine_->getBindingDimensions(binding_index): "
+              //<< DimsDebugString(engine_->getBindingDimensions(binding_index))
               << "\n engine_->getTensorShape(output_name.c_str()): "
               << DimsDebugString(engine_->getTensorShape(output_name.c_str()))
               << std::endl;
@@ -3326,21 +3347,22 @@ ModelInstanceState::InitializeShapeInputBinding(
               << profile_index << ") * total_io_tensors_(" << total_io_tensors_
               << ") + io_index(" << io_index << ")"
               << "\n b-io_index: "
-              << engine_->getBindingIndex(input_name.c_str())
-              << "\n engine_->bindingIsInput(binding_index) = "
-              << engine_->bindingIsInput(binding_index)
-              << "\n input_name: " << input_name
-              << "\n engine_->isShapeBinding(binding_index): "
-              << engine_->isShapeBinding(binding_index)
-              << "\n isShapeInferenceIO(): "
+              //<< engine_->getBindingIndex(input_name.c_str())
+              //<< "\n engine_->bindingIsInput(binding_index) = "
+              //<< engine_->bindingIsInput(binding_index)
+              //<< "\n input_name: " << input_name
+              //<< "\n engine_->isShapeBinding(binding_index): "
+              //<< engine_->isShapeBinding(binding_index)
+              //<< "\n isShapeInferenceIO(): "
               << engine_->isShapeInferenceIO(input_name.c_str())
-              << "\n engine_->getBindingName(binding_index): "
-              << engine_->getBindingName(binding_index)
-              << "\n engine_->getBindingDataType(binding_index): "
-              << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
-                     engine_->getBindingDataType(binding_index)))
-              << "\n engine_->isExecutionBinding(binding_index): "
-              << engine_->isExecutionBinding(binding_index) << std::endl;
+              //<< "\n engine_->getBindingName(binding_index): "
+              //<< engine_->getBindingName(binding_index)
+              ////<< "\n engine_->getBindingDataType(binding_index): "
+              //<< TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
+              //       engine_->getBindingDataType(binding_index)))
+              //<< "\n engine_->isExecutionBinding(binding_index): "
+              //<< engine_->isExecutionBinding(binding_index) 
+              << std::endl;
 
     if (engine_->getTensorLocation(input_name.c_str()) ==
         nvinfer1::TensorLocation::kDEVICE) {
@@ -3407,10 +3429,10 @@ ModelInstanceState::InitializeShapeInputBinding(
               << "\n input_name: " << input_name
               << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
-              << engine_->getBindingName(binding_index)
-              << "\n "
-                 "engine_->getBindingDimensions(binding_index): "
-              << DimsDebugString(engine_->getBindingDimensions(binding_index))
+              //<< engine_->getBindingName(binding_index)
+              //<< "\n "
+              //   "engine_->getBindingDimensions(binding_index): "
+              //<< DimsDebugString(engine_->getBindingDimensions(binding_index))
               << "\n engine_->getTensorShape(input_name.c_str()): "
               << DimsDebugString(engine_->getTensorShape(input_name.c_str()))
               << std::endl;
@@ -3435,24 +3457,24 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    // context.max_shapes_[io_index] = engine_->getProfileTensorValues(
-    //     input_name.c_str(), profile_index,
-    //     nvinfer1::OptProfileSelector::kMAX);
-    // context.min_shapes_[io_index] = engine_->getProfileTensorValues(
-    //     input_name.c_str(), profile_index,
-    //     nvinfer1::OptProfileSelector::kMIN);
-    // context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
-    //     input_name.c_str(), profile_index,
-    //     nvinfer1::OptProfileSelector::kOPT);
+     context.max_shapes_[io_index] = engine_->getProfileTensorValues(
+         input_name.c_str(), profile_index,
+         nvinfer1::OptProfileSelector::kMAX);
+     context.min_shapes_[io_index] = engine_->getProfileTensorValues(
+         input_name.c_str(), profile_index,
+         nvinfer1::OptProfileSelector::kMIN);
+     context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
+         input_name.c_str(), profile_index,
+         nvinfer1::OptProfileSelector::kOPT);
 
     // [FIXME] getProfileShapeValues() code needs to be replaced by the above
     // (getProfileTensorValues()) in TensorRT version 10
-    context.max_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
-        binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
+    //context.max_shapes_[io_index] = engine_->getProfileShapeValues(
+    //    binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
+    //context.min_shapes_[io_index] = engine_->getProfileShapeValues(
+    //    binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
+    //context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
+    //    binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
@@ -3483,16 +3505,17 @@ ModelInstanceState::InitializeShapeInputBinding(
         << model_state_->Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
     std::cerr << "\n input_name: " << input_name << "\n io_index" << io_index
               << "\n engine_->bindingIsInput(binding_index) = "
-              << engine_->bindingIsInput(binding_index)
+//              << engine_->bindingIsInput(binding_index)
               << "\n engine_->isShapeBinding(binding_index): "
-              << engine_->isShapeBinding(binding_index)
+//              << engine_->isShapeBinding(binding_index)
               << "\n isShapeInferenceIO(): "
               << engine_->isShapeInferenceIO(input_name.c_str())
               << "\n engine_->getBindingDataType(binding_index): "
-              << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
-                     engine_->getBindingDataType(binding_index)))
-              << "\n engine_->isExecutionBinding(binding_index): "
-              << engine_->isExecutionBinding(binding_index) << std::endl;
+//              << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
+//                     engine_->getBindingDataType(binding_index)))
+//              << "\n engine_->isExecutionBinding(binding_index): "
+//              << engine_->isExecutionBinding(binding_index) 
+<< std::endl;
 
     if (engine_->getTensorLocation(input_name.c_str()) ==
         nvinfer1::TensorLocation::kDEVICE) {
@@ -3516,11 +3539,11 @@ ModelInstanceState::InitializeShapeInputBinding(
                   << "\n input_name: " << input_name
                   << "\n binding_index: " << binding_index
                   << "\n getBindingName(): "
-                  << engine_->getBindingName(binding_index)
-                  << "\n "
-                     "context.context_->getBindingDimensions(binding_index): "
-                  << DimsDebugString(
-                         context.context_->getBindingDimensions(binding_index))
+                  //<< engine_->getBindingName(binding_index)
+                  //<< "\n "
+                  //   "context.context_->getBindingDimensions(binding_index): "
+                  //<< DimsDebugString(
+                  //       context.context_->getBindingDimensions(binding_index))
                   << "\n context.context_->getTensorShape(input_name.c_str()): "
                   << DimsDebugString(
                          context.context_->getTensorShape(input_name.c_str()))
@@ -3584,20 +3607,20 @@ ModelInstanceState::GetProfileDimensions(
   // TODO: getProfileDimensions()
   int io_index = io_index_map_[tensor_name];
   int binding_index = total_io_tensors_ * profile_index + io_index;
-  std::cerr
-      << "\n binding_index: " << binding_index
-      << "\n engine_->getProfileDimensions(kMAX): "
-      << DimsDebugString(engine_->getProfileDimensions(
-             binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX))
-      << "\n engine_->getProfileDimensions(kMIN): "
-      << DimsDebugString(engine_->getProfileDimensions(
-             binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN))
-      << "\n engine_->getProfileDimensions(kOPT): "
-      << DimsDebugString(engine_->getProfileDimensions(
-             binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT))
-      << std::endl;
-
-  std::cerr << "\n ---------------------- " << std::endl;
+  //std::cerr
+  //    << "\n binding_index: " << binding_index
+  //    << "\n engine_->getProfileDimensions(kMAX): "
+  //    << DimsDebugString(engine_->getProfileDimensions(
+  //           binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX))
+  //    << "\n engine_->getProfileDimensions(kMIN): "
+  //    << DimsDebugString(engine_->getProfileDimensions(
+  //           binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN))
+  //    << "\n engine_->getProfileDimensions(kOPT): "
+  //    << DimsDebugString(engine_->getProfileDimensions(
+  //           binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT))
+  //    << std::endl;
+//
+  //std::cerr << "\n ---------------------- " << std::endl;
 
   context->max_dims_[io_index] = engine_->getProfileShape(
       tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);

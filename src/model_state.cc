@@ -240,8 +240,8 @@ ModelState::CreateEngine(
             .c_str());
 
     std::cerr << "\n****************"
-              << "\neit->second.second->getNbBindings(): "
-              << eit->second.second->getNbBindings()
+              //<< "\neit->second.second->getNbBindings(): "
+              //<< eit->second.second->getNbBindings()
               << "\neit->second.second->getNbIOTensors(): "
               << eit->second.second->getNbIOTensors() << "\n****************"
               << std::endl;
@@ -460,10 +460,10 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
   int num_io_tensors = engine->getNbIOTensors();
 
   std::cerr << "\n****************"
-            << "\nengine->getNbBindings(): " << engine->getNbBindings()
+            //<< "\nengine->getNbBindings(): " << engine->getNbBindings()
             << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
             << "\nnum_profiles: " << num_profiles << "\nnum_profile_bindings: "
-            << (engine->getNbBindings() / num_profiles) << "\n****************"
+//            << (engine->getNbBindings() / num_profiles) << "\n****************"
             << std::endl;
 
   // For batching support, the number of dimensions specified in model config
@@ -482,7 +482,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
 
     std::cerr << "\n****************" << std::endl;
     for (int i = 0; i < num_io_tensors; ++i) {
-      std::cerr << "\nengine->getBindingName(i): " << engine->getBindingName(i)
+      std::cerr //<< "\nengine->getBindingName(i): " << engine->getBindingName(i)
                 << "\nengine->getIOTensorName(i): "
                 << engine->getIOTensorName(i) << "\n-----------------------"
                 << std::endl;
@@ -702,11 +702,11 @@ ModelState::GetProfileMaxBatchSize(
             << std::endl;
   *max_batch_size = INT_MAX;
 
-  int num_profiles = engine->getNbOptimizationProfiles();
+  //int num_profiles = engine->getNbOptimizationProfiles();
   int num_io_tensors = engine->getNbIOTensors();
-  int num_profile_bindings = engine->getNbBindings() / num_profiles;
+  int num_profile_bindings = engine->getNbIOTensors();// engine->getNbBindings() / num_profiles;
   std::cerr
-      << "\nengine->getNbBindings(): " << engine->getNbBindings()
+//      << "\nengine->getNbBindings(): " << engine->getNbBindings()
       << "\nengine->getNbIOTensors(): " << engine->getNbIOTensors()
       << "\num_profiles = engine->getNbOptimizationProfiles(): "
       << engine->getNbOptimizationProfiles()
@@ -725,11 +725,13 @@ ModelState::GetProfileMaxBatchSize(
               << ") * num_profile_bindings(" << num_profile_bindings
               << ") + io_index(" << io_index << ")"
               << "\n engine->bindingIsInput(io_index) = "
-              << engine->bindingIsInput(effective_binding_index) << std::endl;
+//              << engine->bindingIsInput(effective_binding_index) 
+<< std::endl;
 
     if (IsInput(engine, tensor_name)) {
-      std::cerr << "\n engine->isShapeBinding() = "
-                << engine->isShapeBinding(effective_binding_index)
+      std::cerr 
+      //<< "\n engine->isShapeBinding() = "
+                //<< engine->isShapeBinding(effective_binding_index)
                 << "\n engine->isShapeInferenceIO(tensor_name.c_str()) = "
                 << engine->isShapeInferenceIO(tensor_name.c_str()) << std::endl;
 
@@ -745,15 +747,15 @@ ModelState::GetProfileMaxBatchSize(
         }
 
       } else {
-        // const int32_t* max_shapes = engine->getProfileTensorValues(
-        //     tensor_name.c_str(), profile_index,
-        //     nvinfer1::OptProfileSelector::kMAX);
+         const int32_t* max_shapes = engine->getProfileTensorValues(
+             tensor_name.c_str(), profile_index,
+             nvinfer1::OptProfileSelector::kMAX);
 
         // [FIXME] getProfileShapeValues() code needs to be replaced by the
         // above (getProfileTensorValues()) in TensorRT version 10
-        const int32_t* max_shapes = engine->getProfileShapeValues(
-            effective_binding_index, profile_index,
-            nvinfer1::OptProfileSelector::kMAX);
+        //const int32_t* max_shapes = engine->getProfileShapeValues(
+        //    effective_binding_index, profile_index,
+        //    nvinfer1::OptProfileSelector::kMAX);
         std::cerr << "\n max_shapes: " << *max_shapes << std::endl;
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
