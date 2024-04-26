@@ -444,8 +444,7 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
     }
   }
 
-  int num_profiles = 0;
-  num_profiles = engine->getNbOptimizationProfiles();
+  int num_profiles = engine->getNbOptimizationProfiles();
   int num_io_tensors = engine->getNbIOTensors();
 
   // For batching support, the number of dimensions specified in model config
@@ -683,15 +682,15 @@ ModelState::GetProfileMaxBatchSize(
         }
 
       } else {
-        // const int32_t* max_shapes = engine->getProfileTensorValues(
-        //     tensor_name.c_str(), profile_index,
-        //     nvinfer1::OptProfileSelector::kMAX);
+         const int32_t* max_shapes = engine->getProfileTensorValues(
+             tensor_name.c_str(), profile_index,
+             nvinfer1::OptProfileSelector::kMAX);
 
         // [FIXME] getProfileShapeValues() code needs to be replaced by the
         // above (getProfileTensorValues()) in TensorRT version 10
-        const int32_t* max_shapes = engine->getProfileShapeValues(
-            effective_binding_index, profile_index,
-            nvinfer1::OptProfileSelector::kMAX);
+        //const int32_t* max_shapes = engine->getProfileShapeValues(
+        //    effective_binding_index, profile_index,
+        //    nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
         }
