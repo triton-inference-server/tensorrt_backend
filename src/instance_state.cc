@@ -3451,7 +3451,7 @@ TRTv3Interface::BuildCudaGraph(
   for (int set_idx = 0; set_idx < EVENT_SET_COUNT; set_idx++) {
     cudaGraph_t graph;
     instance_->next_buffer_binding_set_ =
-        instance_->num_copy_streams_ == 1 ? 0 : set_idx;
+        set_idx % instance_->num_copy_streams_;
     instance_->next_set_ = set_idx;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph
     // capture to this thread and avoid interference from other potentially
