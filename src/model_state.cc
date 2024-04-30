@@ -429,6 +429,9 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
              .c_str()));
   }
 
+  // [FIXME] hasImplicitBatchDimension() is deprecated in TensorRT 10.0.
+  // Always returns false since TensorRT 10.0 does not support an implicit batch
+  // dimension.
   if (engine->hasImplicitBatchDimension()) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_UNSUPPORTED,
