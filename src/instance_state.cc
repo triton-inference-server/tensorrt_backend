@@ -523,8 +523,6 @@ ModelInstanceState::Run(
     err = nullptr;
   }
 
-  int binding_offset = citr->first * total_io_tensors_;
-
   // At this point we are committed to running inference with all
   // 'requests'. Create a response for each request. During input
   // processing if there is an error with any request that error will
@@ -2524,9 +2522,17 @@ ModelInstanceState::InitializeExecuteInputBinding(
     common::TritonJson::Value& input_dims, const bool is_control,
     const bool is_ragged, const bool is_state)
 {
+  auto itr = io_index_map_.find(input_name);
+  if (itr == io_index_map_.end()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("input '") + input_name + "' not found for " + Name())
+            .c_str());
+  }
+  int io_index = itr->second;
+
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-  int io_index = io_index_map_[input_name];
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
 
@@ -2538,12 +2544,6 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
   for (auto& trt_context : trt_contexts_) {
     auto& context = trt_context.second;
-    if (io_index < 0) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_NOT_FOUND,
-          (std::string("input '") + input_name + "' not found for " + Name())
-              .c_str());
-    }
 
     // Skip if shape binding is encountered
     if (engine_->isShapeInferenceIO(input_name.c_str())) {
@@ -2745,11 +2745,17 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     const std::string& output_name, const std::string& output_datatype,
     common::TritonJson::Value& output_dims, bool is_state)
 {
+  auto itr = io_index_map_.find(input_name);
+  if (itr == io_index_map_.end()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("input '") + input_name + "' not found for " + Name())
+            .c_str());
+  }
+  int io_index = itr->second;
+
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-
-  int io_index = io_index_map_[output_name];
-
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(output_name);
 
