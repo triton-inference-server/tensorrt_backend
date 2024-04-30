@@ -159,17 +159,6 @@ ModelInstanceState::Create(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
 
-  // [FIXME] hasImplicitBatchDimension() is deprecated in TensorRT 10.0.
-  // Always returns false since TensorRT 10.0 does not support an implicit batch
-  // dimension.
-  if ((*state)->Engine()->hasImplicitBatchDimension()) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_UNSUPPORTED,
-        (std::string("unable to load model '") + model_state->Name() +
-         "', TensorRT backend does not suppport implicit batch models")
-            .c_str());
-  }
-
   // Create TRT API interface, all TRT operations must be done after the
   // interface is instantiated.
   (*state)->interface_.reset(new TRTv3Interface(*state));
@@ -1077,10 +1066,6 @@ ModelInstanceState::Run(
           io_binding_info.GetMemoryType(), io_binding_info.GetMemoryTypeId());
     } else {
       std::vector<int64_t> batchn_shape;
-
-      if (engine_->hasImplicitBatchDimension() && support_batching_) {
-        batchn_shape.push_back(payload_->total_batch_size_);
-      }
 
       for (int i = 0; i < dims.nbDims; ++i) {
         batchn_shape.push_back(dims.d[i]);
@@ -2946,20 +2931,21 @@ ModelInstanceState::InitializeShapeInputBinding(
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-  int io_index = io_index_map_[input_name];
+
+  auto itr = io_index_map_.find(input_name);
+  if (itr == io_index_map_.end()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("input '") + input_name + "' not found for " + Name())
+            .c_str());
+  }
+  int io_index = itr->second;
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
-    //int binding_index = total_io_tensors_ * profile_index + io_index;
-    if (io_index < 0) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_NOT_FOUND,
-          (std::string("input '") + input_name + "' not found for " + Name())
-              .c_str());
-    }
 
     if (io_binding_info.IsBufferAllocated()) {
       return TRITONSERVER_ErrorNew(
@@ -3028,24 +3014,12 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-     context.max_shapes_[io_index] = engine_->getProfileTensorValues(
-         input_name.c_str(), profile_index,
-         nvinfer1::OptProfileSelector::kMAX);
-     context.min_shapes_[io_index] = engine_->getProfileTensorValues(
-         input_name.c_str(), profile_index,
-         nvinfer1::OptProfileSelector::kMIN);
-     context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
-         input_name.c_str(), profile_index,
-         nvinfer1::OptProfileSelector::kOPT);
-
-    // [FIXME] getProfileShapeValues() code needs to be replaced by the above
-    // (getProfileTensorValues()) in TensorRT version 10
-    //context.max_shapes_[io_index] = engine_->getProfileShapeValues(
-    //    binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-    //context.min_shapes_[io_index] = engine_->getProfileShapeValues(
-    //    binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-    //context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
-    //    binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
+    context.max_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context.min_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for

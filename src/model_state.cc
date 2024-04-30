@@ -414,17 +414,6 @@ ModelState::AutoCompleteConfigHelper(const std::string& model_path)
              .c_str()));
   }
 
-  // [FIXME] hasImplicitBatchDimension() is deprecated in TensorRT 10.0.
-  // Always returns false since TensorRT 10.0 does not support an implicit batch
-  // dimension.
-  if (engine->hasImplicitBatchDimension()) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_UNSUPPORTED,
-        (std::string("unable to load model '") + Name() +
-         "', TensorRT backend does not suppport implicit batch models")
-            .c_str());
-  }
-
   size_t input_cnt = 0;
   size_t output_cnt = 0;
   {
@@ -671,7 +660,6 @@ ModelState::GetProfileMaxBatchSize(
   // minimum batch size supported.
   for (int io_index = 0; io_index < num_io_tensors; io_index++) {
     const std::string& tensor_name = engine->getIOTensorName(io_index);
-    int effective_binding_index = (profile_index * num_io_tensors) + io_index;
     if (IsInput(engine, tensor_name)) {
       if (!engine->isShapeInferenceIO(tensor_name.c_str())) {
         nvinfer1::Dims max_shape = engine->getProfileShape(
@@ -682,15 +670,9 @@ ModelState::GetProfileMaxBatchSize(
         }
 
       } else {
-         const int32_t* max_shapes = engine->getProfileTensorValues(
-             tensor_name.c_str(), profile_index,
-             nvinfer1::OptProfileSelector::kMAX);
-
-        // [FIXME] getProfileShapeValues() code needs to be replaced by the
-        // above (getProfileTensorValues()) in TensorRT version 10
-        //const int32_t* max_shapes = engine->getProfileShapeValues(
-        //    effective_binding_index, profile_index,
-        //    nvinfer1::OptProfileSelector::kMAX);
+        const int32_t* max_shapes = engine->getProfileTensorValues(
+            tensor_name.c_str(), profile_index,
+            nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > *max_shapes) {
           *max_batch_size = *max_shapes;
         }
