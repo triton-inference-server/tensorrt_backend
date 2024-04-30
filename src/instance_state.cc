@@ -2354,7 +2354,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         io_binding_infos_[next_buffer_binding_set_][io_index];
     io_binding_info.SetName(io_name);
     for (auto& trt_context : trt_contexts_) {
-      auto& profile_index = trt_context.first;
       auto& context = trt_context.second;
 
       if (io_binding_info.IsBufferAllocated()) {
@@ -2745,11 +2744,11 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     const std::string& output_name, const std::string& output_datatype,
     common::TritonJson::Value& output_dims, bool is_state)
 {
-  auto itr = io_index_map_.find(input_name);
+  auto itr = io_index_map_.find(output_name);
   if (itr == io_index_map_.end()) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_NOT_FOUND,
-        (std::string("input '") + input_name + "' not found for " + Name())
+        (std::string("output '") + output_name + "' not found for " + Name())
             .c_str());
   }
   int io_index = itr->second;
