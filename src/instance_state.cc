@@ -1150,10 +1150,6 @@ ModelInstanceState::Run(
     } else {
       std::vector<int64_t> batchn_shape;
 
-      if (engine_->hasImplicitBatchDimension() && support_batching_) {
-        batchn_shape.push_back(payload_->total_batch_size_);
-      }
-
       for (int i = 0; i < dims.nbDims; ++i) {
         batchn_shape.push_back(dims.d[i]);
       }
@@ -1830,10 +1826,10 @@ ModelInstanceState::InitOptimizationProfiles()
   std::cerr << "\n**************** -- InitOptimizationProfiles() is called !"
             << std::endl;
   const int total_profiles = engine_->getNbOptimizationProfiles();
-  std::cerr //<< "\nengine_->getNbBindings(): " << engine_->getNbBindings()
-            << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
-            << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
-            << total_profiles << std::endl;
+  std::cerr  //<< "\nengine_->getNbBindings(): " << engine_->getNbBindings()
+      << "\nengine_->getNbIOTensors(): " << engine_->getNbIOTensors()
+      << "\ntotal_profiles = engine_->getNbOptimizationProfiles(): "
+      << total_profiles << std::endl;
 
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
@@ -1914,9 +1910,10 @@ ModelInstanceState::InitOptimizationProfiles()
       const auto binding_index = profile_index * total_io_tensors_ + io_index;
       std::cerr << "\n binding_index(" << binding_index << ") = profile_index("
                 << profile_index << ") * total_io_tensors_("
-                << total_io_tensors_ << ") + io_index(" << io_index << ")"
+                << total_io_tensors_ << ") + io_index(" << io_index
+                << ")"
                 //<< "\n engine_->bindingIsInput(binding_index) = "
-                //<< engine_->bindingIsInput(binding_index) 
+                //<< engine_->bindingIsInput(binding_index)
                 << std::endl;
 
       const std::string& tensor_name = engine_->getIOTensorName(io_index);
@@ -1947,7 +1944,7 @@ ModelInstanceState::ValidateIO()
       allowed_outputs.emplace(tensor_name);
     }
     // TODO isExecutionBinding
-    //if (engine_->isExecutionBinding(i)) {
+    // if (engine_->isExecutionBinding(i)) {
     //  LOG_MESSAGE(
     //      TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
     //                                 " as execution binding for " + Name())
@@ -2179,8 +2176,8 @@ ModelInstanceState::InitIOBindingBuffers()
             << model_state_->Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
-      //std::cerr << "\n-------------------\n engine_->isExecutionBinding(i): "
-      //          << engine_->isExecutionBinding(i) << std::endl;
+      // std::cerr << "\n-------------------\n engine_->isExecutionBinding(i): "
+      //           << engine_->isExecutionBinding(i) << std::endl;
       if (engine_->getTensorLocation(engine_->getIOTensorName(i)) ==
           nvinfer1::TensorLocation::kDEVICE) {
         std::cerr << "\n engine_->getTensorLocation(): GPU (kDEVICE)"
@@ -2530,7 +2527,8 @@ ModelInstanceState::InitializeBatchInputBindings(
       int io_index = io_index_map_[tensor_name];
 
       std::cerr << "**********\n"
-                << "\n io_index: " << io_index << "\n b-io_index: "
+                << "\n io_index: " << io_index
+                << "\n b-io_index: "
                 //<< engine_->getBindingIndex(tensor_name.c_str())
                 << "\n*************" << std::endl;
 
@@ -2579,7 +2577,8 @@ ModelInstanceState::InitializeBatchOutputBindings(
       // shape tensor
       int io_index = io_index_map_[name];
       std::cerr << "**********\n"
-                << "\n io_index: " << io_index
+                << "\n io_index: "
+                << io_index
                 //<< "\n b-io_index: " << engine_->getBindingIndex(name.c_str())
                 << "\n*************" << std::endl;
       auto& io_binding_info =
@@ -2640,18 +2639,21 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     }
 
     int io_index = io_index_map_[io_name];
-    std::cerr << "**********\n"
-              << "\n io_index: " << io_index
-              //<< "\n b-io_index: " << engine_->getBindingIndex(io_name.c_str())
-              << "\n*************" << std::endl;
+    std::cerr
+        << "**********\n"
+        << "\n io_index: "
+        << io_index
+        //<< "\n b-io_index: " << engine_->getBindingIndex(io_name.c_str())
+        << "\n*************" << std::endl;
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     io_binding_info.SetName(io_name);
 
     std::cerr << "\n----------"
-              << "\n io_index: " << io_index << "\n io_name: " << io_name
+              << "\n io_index: " << io_index << "\n io_name: "
+              << io_name
               //<< "\n engine_->getBindingIndex(io_name.c_str()): "
-              //<< engine_->getBindingIndex(io_name.c_str()) 
+              //<< engine_->getBindingIndex(io_name.c_str())
               << std::endl;
 
     std::cerr
@@ -2661,12 +2663,6 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       auto& profile_index = trt_context.first;
       auto& context = trt_context.second;
       int binding_index = total_io_tensors_ * profile_index + io_index;
-      if (binding_index < 0) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_NOT_FOUND,
-            (std::string("output '") + io_name + "' not found for " + Name())
-                .c_str());
-      }
 
       if (io_binding_info.IsBufferAllocated()) {
         return TRITONSERVER_ErrorNew(
@@ -2724,16 +2720,16 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       }
 
       nvinfer1::Dims engine_dims = engine_->getTensorShape(io_name.c_str());
-      std::cerr << "------------\n io_index: " << io_index
-                << "\n name: " << io_name
-                << "\n binding_index: " << binding_index
-                << "\n getBindingName(): "
-                //<< engine_->getBindingName(binding_index)
-                << "\n engine_->getBindingDimensions(binding_index): "
-                //<< DimsDebugString(engine_->getBindingDimensions(binding_index))
-                << "\n engine_->getTensorShape(name.c_str()): "
-                << DimsDebugString(engine_->getTensorShape(io_name.c_str()))
-                << std::endl;
+      std::cerr
+          << "------------\n io_index: " << io_index << "\n name: " << io_name
+          << "\n binding_index: " << binding_index
+          << "\n getBindingName(): "
+          //<< engine_->getBindingName(binding_index)
+          << "\n engine_->getBindingDimensions(binding_index): "
+          //<< DimsDebugString(engine_->getBindingDimensions(binding_index))
+          << "\n engine_->getTensorShape(name.c_str()): "
+          << DimsDebugString(engine_->getTensorShape(io_name.c_str()))
+          << std::endl;
 
       if (ContainsWildcard(engine_dims)) {
         context.is_dynamic_per_binding_[io_index] = true;
@@ -2749,8 +2745,10 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
         std::cerr
             << "####################\n io_index: " << io_index
-            << "\n name: " << io_name << "\n binding_index: " << binding_index
-            //<< "\n getBindingName(): " << engine_->getBindingName(binding_index)
+            << "\n name: " << io_name << "\n binding_index: "
+            << binding_index
+            //<< "\n getBindingName(): " <<
+            //engine_->getBindingName(binding_index)
             //<< "\n context.context_->getBindingDimensions(binding_index): "
             //<< DimsDebugString(
             //       context.context_->getBindingDimensions(binding_index))
@@ -2858,9 +2856,17 @@ ModelInstanceState::InitializeExecuteInputBinding(
     common::TritonJson::Value& input_dims, const bool is_control,
     const bool is_ragged, const bool is_state)
 {
+  auto itr = io_index_map_.find(input_name);
+  if (itr == io_index_map_.end()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("input '") + input_name + "' not found for " + Name())
+            .c_str());
+  }
+  int io_index = itr->second;
+
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-  int io_index = io_index_map_[input_name];
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
 
@@ -2874,15 +2880,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
                "********************\n"
             << std::endl;
   for (auto& trt_context : trt_contexts_) {
-    auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
-    int binding_index = total_io_tensors_ * profile_index + io_index;
-    if (io_index < 0) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_NOT_FOUND,
-          (std::string("input '") + input_name + "' not found for " + Name())
-              .c_str());
-    }
 
     // Skip if shape binding is encountered
     if (engine_->isShapeInferenceIO(input_name.c_str())) {
@@ -2925,7 +2923,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
     // Detect whether dynamic or not
     nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
-    std::cerr << "------------\n io_index: " << io_index << "\n b-io_index: "
+    std::cerr << "------------\n io_index: " << io_index
+              << "\n b-io_index: "
               //<< engine_->getBindingIndex(input_name.c_str())
               << "\n input_name: " << input_name
               << "\n binding_index: " << binding_index
@@ -3096,22 +3095,31 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     const std::string& output_name, const std::string& output_datatype,
     common::TritonJson::Value& output_dims, bool is_state)
 {
+  auto itr = io_index_map_.find(output_name);
+  if (itr == io_index_map_.end()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("output '") + output_name + "' not found for " + Name())
+            .c_str());
+  }
+  int io_index = itr->second;
+
+  // the maximum byte sizes across all profiles
+  int64_t max_byte_size = 0;
   std::cerr << "******************** InitializeExecuteOutputBinding() "
                "********************\n"
             << std::endl;
-  // the maximum byte sizes across all profiles
-  int64_t max_byte_size = 0;
-
-  int io_index = io_index_map_[output_name];
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(output_name);
 
-  std::cerr << "\n############"
-            << "\n io_index: " << io_index << "\n output_name: " << output_name
-            //<< "\n engine_->getBindingIndex(output_name.c_str()): "
-            //<< engine_->getBindingIndex(output_name.c_str()) << "\n############"
-            << std::endl;
+  std::cerr
+      << "\n############"
+      << "\n io_index: " << io_index << "\n output_name: "
+      << output_name
+      //<< "\n engine_->getBindingIndex(output_name.c_str()): "
+      //<< engine_->getBindingIndex(output_name.c_str()) << "\n############"
+      << std::endl;
 
   // State output is initialized before the requested output tensor.
   if (is_state) {
@@ -3131,10 +3139,11 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto& profile_index = trt_context.first;
     int binding_index = total_io_tensors_ * profile_index + io_index;
     std::cerr
-        << "------------\n io_index: " << io_index
+        << "------------\n io_index: "
+        << io_index
         //<< "\n b-io_index: " << engine_->getBindingIndex(output_name.c_str())
-        << "\n output_name: " << output_name
-        << "\n binding_index: " << binding_index
+        << "\n output_name: " << output_name << "\n binding_index: "
+        << binding_index
         //<< "\n getBindingName(): " << engine_->getBindingName(binding_index)
         << "\n "
            "trt_context.second.context_->getBindingDimensions(binding_index): "
@@ -3158,12 +3167,6 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     auto& context = trt_context.second;
     int binding_index = total_io_tensors_ * profile_index + io_index;
 
-    if (binding_index < 0) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_NOT_FOUND,
-          (std::string("output '") + output_name + "' not found for " + Name())
-              .c_str());
-    }
 
     if (IsInput(engine_.get(), output_name)) {
       return TRITONSERVER_ErrorNew(
@@ -3331,7 +3334,15 @@ ModelInstanceState::InitializeShapeInputBinding(
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-  int io_index = io_index_map_[input_name];
+
+  auto itr = io_index_map_.find(input_name);
+  if (itr == io_index_map_.end()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_NOT_FOUND,
+        (std::string("input '") + input_name + "' not found for " + Name())
+            .c_str());
+  }
+  int io_index = itr->second;
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
@@ -3361,7 +3372,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               //<< TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
               //       engine_->getBindingDataType(binding_index)))
               //<< "\n engine_->isExecutionBinding(binding_index): "
-              //<< engine_->isExecutionBinding(binding_index) 
+              //<< engine_->isExecutionBinding(binding_index)
               << std::endl;
 
     if (engine_->getTensorLocation(input_name.c_str()) ==
@@ -3369,13 +3380,6 @@ ModelInstanceState::InitializeShapeInputBinding(
       std::cerr << "\n engine_->getTensorLocation(): GPU" << std::endl;
     } else {
       std::cerr << "\n engine_->getTensorLocation(): CPU" << std::endl;
-    }
-
-    if (io_index < 0) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_NOT_FOUND,
-          (std::string("input '") + input_name + "' not found for " + Name())
-              .c_str());
     }
 
     if (io_binding_info.IsBufferAllocated()) {
@@ -3457,23 +3461,20 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-     context.max_shapes_[io_index] = engine_->getProfileTensorValues(
-         input_name.c_str(), profile_index,
-         nvinfer1::OptProfileSelector::kMAX);
-     context.min_shapes_[io_index] = engine_->getProfileTensorValues(
-         input_name.c_str(), profile_index,
-         nvinfer1::OptProfileSelector::kMIN);
-     context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
-         input_name.c_str(), profile_index,
-         nvinfer1::OptProfileSelector::kOPT);
+    context.max_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context.min_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
+        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // [FIXME] getProfileShapeValues() code needs to be replaced by the above
     // (getProfileTensorValues()) in TensorRT version 10
-    //context.max_shapes_[io_index] = engine_->getProfileShapeValues(
+    // context.max_shapes_[io_index] = engine_->getProfileShapeValues(
     //    binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
-    //context.min_shapes_[io_index] = engine_->getProfileShapeValues(
+    // context.min_shapes_[io_index] = engine_->getProfileShapeValues(
     //    binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
-    //context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
+    // context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
     //    binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
@@ -3503,19 +3504,20 @@ ModelInstanceState::InitializeShapeInputBinding(
     std::cerr
         << "@@@@@@@@@@@@@@@@@@@@ InitializeShapeInputBinding - Model name: "
         << model_state_->Name() << "@@@@@@@@@@@@@@@@@@@" << std::endl;
-    std::cerr << "\n input_name: " << input_name << "\n io_index" << io_index
-              << "\n engine_->bindingIsInput(binding_index) = "
-//              << engine_->bindingIsInput(binding_index)
-              << "\n engine_->isShapeBinding(binding_index): "
-//              << engine_->isShapeBinding(binding_index)
-              << "\n isShapeInferenceIO(): "
-              << engine_->isShapeInferenceIO(input_name.c_str())
-              << "\n engine_->getBindingDataType(binding_index): "
-//              << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
-//                     engine_->getBindingDataType(binding_index)))
-//              << "\n engine_->isExecutionBinding(binding_index): "
-//              << engine_->isExecutionBinding(binding_index) 
-<< std::endl;
+    std::cerr
+        << "\n input_name: " << input_name << "\n io_index" << io_index
+        << "\n engine_->bindingIsInput(binding_index) = "
+        //              << engine_->bindingIsInput(binding_index)
+        << "\n engine_->isShapeBinding(binding_index): "
+        //              << engine_->isShapeBinding(binding_index)
+        << "\n isShapeInferenceIO(): "
+        << engine_->isShapeInferenceIO(input_name.c_str())
+        << "\n engine_->getBindingDataType(binding_index): "
+        //              << TRITONSERVER_DataTypeString(ConvertTrtTypeToDataType(
+        //                     engine_->getBindingDataType(binding_index)))
+        //              << "\n engine_->isExecutionBinding(binding_index): "
+        //              << engine_->isExecutionBinding(binding_index)
+        << std::endl;
 
     if (engine_->getTensorLocation(input_name.c_str()) ==
         nvinfer1::TensorLocation::kDEVICE) {
@@ -3535,19 +3537,20 @@ ModelInstanceState::InitializeShapeInputBinding(
         DimsToDimVec(
             context.context_->getTensorShape(input_name.c_str()), &dim_vec);
 
-        std::cerr << "------------\n io_index: " << io_index
-                  << "\n input_name: " << input_name
-                  << "\n binding_index: " << binding_index
-                  << "\n getBindingName(): "
-                  //<< engine_->getBindingName(binding_index)
-                  //<< "\n "
-                  //   "context.context_->getBindingDimensions(binding_index): "
-                  //<< DimsDebugString(
-                  //       context.context_->getBindingDimensions(binding_index))
-                  << "\n context.context_->getTensorShape(input_name.c_str()): "
-                  << DimsDebugString(
-                         context.context_->getTensorShape(input_name.c_str()))
-                  << std::endl;
+        std::cerr
+            << "------------\n io_index: " << io_index
+            << "\n input_name: " << input_name
+            << "\n binding_index: " << binding_index
+            << "\n getBindingName(): "
+            //<< engine_->getBindingName(binding_index)
+            //<< "\n "
+            //   "context.context_->getBindingDimensions(binding_index): "
+            //<< DimsDebugString(
+            //       context.context_->getBindingDimensions(binding_index))
+            << "\n context.context_->getTensorShape(input_name.c_str()): "
+            << DimsDebugString(
+                   context.context_->getTensorShape(input_name.c_str()))
+            << std::endl;
 
         byte_size = GetByteSize(dt, dim_vec);
       } else {
@@ -3607,20 +3610,23 @@ ModelInstanceState::GetProfileDimensions(
   // TODO: getProfileDimensions()
   int io_index = io_index_map_[tensor_name];
   int binding_index = total_io_tensors_ * profile_index + io_index;
-  //std::cerr
-  //    << "\n binding_index: " << binding_index
-  //    << "\n engine_->getProfileDimensions(kMAX): "
-  //    << DimsDebugString(engine_->getProfileDimensions(
-  //           binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX))
-  //    << "\n engine_->getProfileDimensions(kMIN): "
-  //    << DimsDebugString(engine_->getProfileDimensions(
-  //           binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN))
-  //    << "\n engine_->getProfileDimensions(kOPT): "
-  //    << DimsDebugString(engine_->getProfileDimensions(
-  //           binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT))
-  //    << std::endl;
-//
-  //std::cerr << "\n ---------------------- " << std::endl;
+  // std::cerr
+  //     << "\n binding_index: " << binding_index
+  //     << "\n engine_->getProfileDimensions(kMAX): "
+  //     << DimsDebugString(engine_->getProfileDimensions(
+  //            binding_index, profile_index,
+  //            nvinfer1::OptProfileSelector::kMAX))
+  //     << "\n engine_->getProfileDimensions(kMIN): "
+  //     << DimsDebugString(engine_->getProfileDimensions(
+  //            binding_index, profile_index,
+  //            nvinfer1::OptProfileSelector::kMIN))
+  //     << "\n engine_->getProfileDimensions(kOPT): "
+  //     << DimsDebugString(engine_->getProfileDimensions(
+  //            binding_index, profile_index,
+  //            nvinfer1::OptProfileSelector::kOPT))
+  //     << std::endl;
+  //
+  // std::cerr << "\n ---------------------- " << std::endl;
 
   context->max_dims_[io_index] = engine_->getProfileShape(
       tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
@@ -3970,7 +3976,7 @@ TRTv3Interface::BuildCudaGraph(
   for (int set_idx = 0; set_idx < EVENT_SET_COUNT; set_idx++) {
     cudaGraph_t graph;
     instance_->next_buffer_binding_set_ =
-        instance_->num_copy_streams_ == 1 ? 0 : set_idx;
+        set_idx % instance_->num_copy_streams_;
     instance_->next_set_ = set_idx;
     // Using cudaStreamCaptureModeThreadLocal mode to confine the graph
     // capture to this thread and avoid interference from other potentially
