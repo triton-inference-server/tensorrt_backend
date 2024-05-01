@@ -2927,7 +2927,6 @@ ModelInstanceState::InitializeExecuteInputBinding(
               << "\n b-io_index: "
               //<< engine_->getBindingIndex(input_name.c_str())
               << "\n input_name: " << input_name
-              << "\n binding_index: " << binding_index
               << "\n getBindingName(): "
               //<< engine_->getBindingName(binding_index)
               << "\n engine_->getBindingDimensions(binding_index): "
