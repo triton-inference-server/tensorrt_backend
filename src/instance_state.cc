@@ -989,12 +989,26 @@ ModelInstanceState::Run(
       // Custom handling for shape tensors
       // Obtain the shape value
       if (dims.nbDims != 0) {
-        auto shape_value_ptr = reinterpret_cast<int32_t const*>(
+        TRITONSERVER_DataType dt =
+          ConvertTrtTypeToDataType(engine_->getTensorDataType(name.c_str()));
+        if (dt != TRITONSERVER_TYPE_INT64) {
+          FAIL_ALL_AND_RETURN_IF_ERROR(
+              payload_->requests_, payload_->request_count_,
+              payload_->responses_,
+              TRITONSERVER_ErrorNew(
+                  TRITONSERVER_ERROR_INTERNAL,
+                  (std::string("Expected data type of output shape tensor to be INT64 "
+                               "for binding '") +
+                   Name() + "', got " + TRITONSERVER_DataTypeString(dt))
+                      .c_str()),
+              "failed to run TRT response");
+        }
+        auto shape_value_ptr = reinterpret_cast<int64_t const*>(
             citr->second.context_->getTensorAddress(name.c_str()));
 
         // The first shape value must be equal to the total batch_size
         if (support_batching_ &&
-            payload_->total_batch_size_ != (uint32_t)*shape_value_ptr) {
+            payload_->total_batch_size_ != (uint64_t)*shape_value_ptr) {
           FAIL_ALL_AND_RETURN_IF_ERROR(
               payload_->requests_, payload_->request_count_,
               payload_->responses_,
@@ -1122,13 +1136,13 @@ ModelInstanceState::Run(
 
 bool
 ModelInstanceState::SetOutputShapeTensorBuffer(
-    const int32_t* content, TRITONBACKEND_Response** response,
+    const int64_t* content, TRITONBACKEND_Response** response,
     TRITONBACKEND_Output* response_output, const size_t tensor_element_count,
     const int64_t batch_size, cudaStream_t stream)
 {
   bool cuda_copy = false;
 
-  const size_t expected_byte_size = tensor_element_count * sizeof(int32_t);
+  const size_t expected_byte_size = tensor_element_count * sizeof(int64_t);
 
   // Allocate a buffer large enough to hold the serialized tensor.
   TRITONSERVER_MemoryType actual_memory_type = TRITONSERVER_MEMORY_CPU;
@@ -1153,10 +1167,10 @@ ModelInstanceState::SetOutputShapeTensorBuffer(
     err = CopyBuffer(
         "Shape tensor output", TRITONSERVER_MEMORY_CPU /* src_memory_type */,
         0 /* src_memory_type_id */, actual_memory_type, actual_memory_type_id,
-        nb_shape_values * sizeof(int32_t), (void*)(content + content_offset),
+        nb_shape_values * sizeof(int64_t), (void*)(content + content_offset),
         (void*)((char*)buffer + buffer_offset), stream_, &cuda_used);
     cuda_copy |= cuda_used;
-    buffer_offset += (nb_shape_values * sizeof(int32_t));
+    buffer_offset += (nb_shape_values * sizeof(int64_t));
   }
 
   if (err != nullptr) {
@@ -1340,7 +1354,10 @@ ModelInstanceState::GetRequestShapeValues(
                 .c_str());
       }
 
-      // Shape tensors datatype is INT32.
+      // FIXME DLIS-6653: With the support of INT64, shape tensors
+      // can also be of type INT64 and the assumptions that shape
+      // tensors might not always hold true.
+      // Assuming input shape tensors datatype as INT32.
       int64_t element_cnt = backend::GetElementCount(shape, dims_count);
       if (support_batching_) {
         element_cnt /= shape[0];

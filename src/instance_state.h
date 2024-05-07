@@ -346,7 +346,7 @@ class ModelInstanceState : public TensorRTModelInstance {
       int64_t* error_distance);
 
   bool SetOutputShapeTensorBuffer(
-      const int32_t* content, TRITONBACKEND_Response** response,
+      const int64_t* content, TRITONBACKEND_Response** response,
       TRITONBACKEND_Output* response_output, const size_t tensor_element_count,
       const int64_t batch_size, cudaStream_t stream);
   void ProcessResponse();
