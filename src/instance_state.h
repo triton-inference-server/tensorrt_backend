@@ -384,13 +384,13 @@ class ModelInstanceState : public TensorRTModelInstance {
   // Whether inexact match is allowed for finding CUDA graph
   bool allow_inexact_match_{false};
 
-  // The number of input and output tensors to the model. In case of dynamic
-  // shapes, it is the number of expected input and output tensors to the
-  // configured optimization profile.
+  // The number of input and output tensors for the network
+  // from which the engine was built.
   int total_io_tensors_{0};
 
   // Mapping from Input/Output Tensor Name to its corresponding Index
-  std::unordered_map<std::string, int> io_index_map_{};
+  std::map<std::string, int> io_index_map_{};
+  std::map<int, std::string> tensor_names_{};
 
   int cuda_stream_priority_{0};
 

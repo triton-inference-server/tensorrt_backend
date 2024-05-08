@@ -568,7 +568,7 @@ ModelInstanceState::Run(
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
-    const std::string& name = engine_->getIOTensorName(io_index);
+    const std::string& name = tensor_names_[io_index];
 
     if (io_binding_info.IsDynamicShapeOutput()) {
       citr->second.context_->setOutputAllocator(
@@ -790,7 +790,7 @@ ModelInstanceState::Run(
     for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
-      const std::string& tensor_name = engine_->getIOTensorName(io_index);
+      const std::string& tensor_name = tensor_names_[io_index];
       if (!IsInput(engine_.get(), tensor_name) ||
           engine_->isShapeInferenceIO(tensor_name.c_str())) {
         continue;
@@ -974,7 +974,7 @@ ModelInstanceState::Run(
   for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
-    const std::string& name = engine_->getIOTensorName(io_index);
+    const std::string& name = tensor_names_[io_index];
     if (IsInput(engine_.get(), name)) {
       continue;
     }
@@ -1701,6 +1701,7 @@ ModelInstanceState::InitIOIndexMap()
   total_io_tensors_ = engine_->getNbIOTensors();
   for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
     const std::string& tensor_name = engine_->getIOTensorName(io_index);
+    tensor_names_[io_index] = tensor_name;
     io_index_map_[tensor_name] = io_index;
   }
   return nullptr;
@@ -1779,7 +1780,7 @@ ModelInstanceState::InitOptimizationProfiles()
 
     // Store the profile dimensions for later initializing the input bindings
     for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
-      const std::string& tensor_name = engine_->getIOTensorName(io_index);
+      const std::string& tensor_name = tensor_names_[io_index];
       if (IsInput(engine_.get(), tensor_name)) {
         RETURN_IF_ERROR(GetProfileDimensions(
             tensor_name, profile_index, &res.first->second));
@@ -1797,7 +1798,7 @@ ModelInstanceState::ValidateIO()
   // and validate that the model configuration specifies only those.
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
   for (int i = 0; i < total_io_tensors_; ++i) {
-    const std::string& tensor_name = engine_->getIOTensorName(i);
+    const std::string& tensor_name = tensor_names_[i];
     if (IsInput(engine_.get(), tensor_name)) {
       allowed_inputs.emplace(tensor_name);
     } else {
@@ -1963,7 +1964,7 @@ ModelInstanceState::InitIOBindingBuffers()
   for (int s = 0; s < num_copy_streams_; ++s) {
     for (int i = 0; i < total_io_tensors_; ++i) {
       if (!io_binding_infos_[s][i].IsBufferAllocated()) {
-        const std::string& tensor_name = engine_->getIOTensorName(i);
+        const std::string& tensor_name = tensor_names_[i];
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("expected configuration for ") +
@@ -3397,8 +3398,8 @@ TRTv3Interface::BuildCudaGraph(
   // FIXME handle shape tensor properly, for now if model uses shape
   // tensor then cuda graph is not captured
   for (int i = 0; i < instance_->total_io_tensors_; ++i) {
-    auto tensor_name = instance_->engine_->getIOTensorName(i);
-    if (instance_->engine_->isShapeInferenceIO(tensor_name)) {
+    auto tensor_name = instance_->tensor_names_[i];
+    if (instance_->engine_->isShapeInferenceIO(tensor_name.c_str())) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("Detected shape tensor, CUDA graph is not "
@@ -3568,7 +3569,7 @@ TRTv3Interface::SetCudaGraphShape(
           : graph_spec.lower_bound_batch_size_);
   for (int io_index = 0; io_index < instance_->total_io_tensors_; io_index++) {
     auto& io_binding_info = instance_->io_binding_infos_[0][io_index];
-    const std::string& name = instance_->engine_->getIOTensorName(io_index);
+    const std::string& name = instance_->tensor_names_[io_index];
     if (!IsInput(instance_->engine_.get(), name)) {
       continue;
     }
@@ -3704,7 +3705,7 @@ TRTv3Interface::ConfigureInputDimensions(
   // a dynamic shape, setting it to fixed value will interfere with below
   // dimension checkings
   const auto batch_dim = full_config_dims[0];
-  const auto tensor_name = instance_->engine_->getIOTensorName(io_index);
+  const auto tensor_name = instance_->tensor_names_[io_index].c_str();
   if (instance_->support_batching_) {
     full_config_dims[0] = -1;
   }
@@ -3823,7 +3824,7 @@ TRTv3Interface::SetBindingDimensions(
   }
 
   if (!trt_context.context_->setInputShape(
-          instance_->engine_->getIOTensorName(io_index), this_dim)) {
+          instance_->tensor_names_[io_index].c_str(), this_dim)) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("trt failed to set binding dimension to ") +
