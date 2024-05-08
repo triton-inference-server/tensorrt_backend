@@ -1053,7 +1053,11 @@ ModelInstanceState::Run(
     }
 
     nvinfer1::Dims dims;
-    dims = citr->second.context_->getTensorShape(name.c_str());
+    if(!io_binding_info.IsDynamicShapeOutput()) {
+      dims = citr->second.context_->getTensorShape(name.c_str());
+    } else {
+      dims = io_binding_info.GetAllocator()->getShape();
+    }
     // std::cerr
     //     << "------------\n io_index: " << io_index << "\n name: " << name
     //     << "\n binding_index: " << binding_index
