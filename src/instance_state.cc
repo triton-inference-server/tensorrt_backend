@@ -980,7 +980,7 @@ ModelInstanceState::Run(
     }
 
     nvinfer1::Dims dims;
-    if(!io_binding_info.IsDynamicShapeOutput()) {
+    if (!io_binding_info.IsDynamicShapeOutput()) {
       dims = citr->second.context_->getTensorShape(name.c_str());
     } else {
       dims = io_binding_info.GetAllocator()->getShape();
@@ -994,15 +994,16 @@ ModelInstanceState::Run(
       // Obtain the shape value
       if (dims.nbDims != 0) {
         TRITONSERVER_DataType dt =
-          ConvertTrtTypeToDataType(engine_->getTensorDataType(name.c_str()));
+            ConvertTrtTypeToDataType(engine_->getTensorDataType(name.c_str()));
         if (dt != TRITONSERVER_TYPE_INT64) {
           FAIL_ALL_AND_RETURN_IF_ERROR(
               payload_->requests_, payload_->request_count_,
               payload_->responses_,
               TRITONSERVER_ErrorNew(
                   TRITONSERVER_ERROR_INTERNAL,
-                  (std::string("Expected data type of output shape tensor to be INT64 "
-                               "for binding '") +
+                  (std::string(
+                       "Expected data type of output shape tensor to be INT64 "
+                       "for binding '") +
                    Name() + "', got " + TRITONSERVER_DataTypeString(dt))
                       .c_str()),
               "failed to run TRT response");
