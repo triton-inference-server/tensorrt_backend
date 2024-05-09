@@ -102,13 +102,9 @@ if(${TRITON_ENABLE_NVTX})
   add_definitions(-DTRITON_ENABLE_NVTX=1)
 endif() # TRITON_ENABLE_NVTX
 
-string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
-       TENSORRT_VERSION_MATCH ${TRT_VERSION})
-set(TENSORT_VERSION_MAJOR ${CMAKE_MATCH_1})
-set(TENSORRT_VERSION_MINOR ${CMAKE_MATCH_2})
-set(TENSORRT_VERSION_PATCH ${CMAKE_MATCH_3})
-
-message(STATUS "The TRT major version is ${TENSORT_VERSION_MAJOR}")
+if(NOT DEFINED ENV{TRT_VERSION})
+  set(ENV{TRT_VERSION} 10.0.1.6)
+endif()
 
 #
 # FIXME: Update src folder to build with TRT8 and then remove
@@ -118,10 +114,10 @@ message(STATUS "The TRT major version is ${TENSORT_VERSION_MAJOR}")
 # been significant clean-ups when moving from TRT 8 to TRT 10
 # we are maintaining a previous version of backend for now.
 #
-if(NOT ${TENSORT_VERSION_MAJOR} STREQUAL "8")
- set(SOURCE_DIR "src")
+if(ENV{TRT_VERSION} VERSION_LESS 10)
+  set(SOURCE_DIR "src_trt8")
 else()
-set(SOURCE_DIR "src_trt8")
+  set(SOURCE_DIR "src")
 endif()
 
 
