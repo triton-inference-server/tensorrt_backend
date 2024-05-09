@@ -106,6 +106,8 @@ if(NOT DEFINED ENV{TRT_VERSION})
   set(ENV{TRT_VERSION} 10.0.1.6)
 endif()
 
+message(STATUS "TRT_VERSION envvar is $ENV{TRT_VERSION}")
+
 #
 # FIXME: Update src folder to build with TRT8 and then remove
 # src_trt8 folder.
@@ -114,7 +116,7 @@ endif()
 # been significant clean-ups when moving from TRT 8 to TRT 10
 # we are maintaining a previous version of backend for now.
 #
-if(ENV{TRT_VERSION} VERSION_LESS 10)
+if("$ENV{TRT_VERSION}" VERSION_LESS 10)
   set(SOURCE_DIR "src_trt8")
 else()
   set(SOURCE_DIR "src")
