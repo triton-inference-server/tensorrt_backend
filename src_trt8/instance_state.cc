@@ -159,11 +159,13 @@ ModelInstanceState::Create(
       (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
       (*state)->EnginePtr()));
 
-  // Create TRT API interface, all TRT operations must be done after the
-  // interface is instantiated.
-  (*state)->interface_.reset(new TRTv3Interface(*state));
-
-  RETURN_IF_ERROR((*state)->InitIOIndexMap());
+  // Create TRT API interface once able to obtain implicit batch info,
+  // all TRT operations must be done after the interface is instantiated.
+  if (UseTensorRTv1API((*state)->Engine())) {
+    (*state)->interface_.reset(new TRTv1Interface(*state));
+  } else {
+    (*state)->interface_.reset(new TRTv3Interface(*state));
+  }
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
@@ -197,8 +199,8 @@ ModelInstanceState::Create(
 ModelInstanceState::ModelInstanceState(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance)
     : TensorRTModelInstance(model_state, triton_model_instance),
-      total_io_tensors_(0), uses_implicit_state_(false),
-      model_state_(model_state)
+      total_bindings_(0), num_expected_bindings_(0),
+      uses_implicit_state_(false), model_state_(model_state)
 {
   // 'coalesce_request_input_' is set at backend level
   {
@@ -523,6 +525,8 @@ ModelInstanceState::Run(
     err = nullptr;
   }
 
+  int binding_offset = citr->first * num_expected_bindings_;
+
   // At this point we are committed to running inference with all
   // 'requests'. Create a response for each request. During input
   // processing if there is an error with any request that error will
@@ -551,7 +555,7 @@ ModelInstanceState::Run(
   // Calculate the set of event used with the current buffer set
   // in previous execution
   int prev_set = (EVENT_SET_COUNT -
-                  (io_binding_infos_.size() % EVENT_SET_COUNT) + next_set_) %
+                  (buffer_bindings_.size() % EVENT_SET_COUNT) + next_set_) %
                  EVENT_SET_COUNT;
   auto prev_input_ready_event = model_state_->EagerBatching()
                                     ? events_[prev_set].ready_for_input_
@@ -565,30 +569,32 @@ ModelInstanceState::Run(
       HostPolicyName().c_str(), zero_copy_support_, coalesce_request_input_));
   // For each input, concatenate input values from each request into
   // the corresponding binding.
-  for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
+  for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
-    const std::string& name = tensor_names_[io_index];
+    int binding_index = binding_offset + io_index;
 
     if (io_binding_info.IsDynamicShapeOutput()) {
       citr->second.context_->setOutputAllocator(
           io_binding_info.GetName().c_str(), io_binding_info.GetAllocator());
     }
 
-    if (!IsInput(engine_.get(), name)) {
+    if (!engine_->bindingIsInput(binding_index)) {
       continue;
     }
+
+    const std::string& name = engine_->getBindingName(io_index);
 
     TRITONSERVER_Error* err = nullptr;
     // Set the shape binding if needed. If unable to set the shape
     // binding then fail all requests.
-    if (engine_->isShapeInferenceIO(name.c_str())) {
+    if (engine_->isShapeBinding(binding_index)) {
       auto it = request_shape_values.find(io_index);
       if (it != request_shape_values.end()) {
         err = ValidateShapeValues(
-            it->second, citr->second.min_shapes_[io_index],
-            citr->second.max_shapes_[io_index], citr->second.nb_shape_values_,
-            support_batching_);
+            it->second, citr->second.min_shapes_[binding_index],
+            citr->second.max_shapes_[binding_index],
+            citr->second.nb_shape_values_, support_batching_);
       } else {
         err = TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -611,9 +617,16 @@ ModelInstanceState::Run(
             sizeof(int32_t) * it->second.size());
         citr->second.context_->setInputTensorAddress(
             name.c_str(), io_binding_info.GetBuffer());
+        // [FIXME] should be replaced by above, see another use of
+        // setInputShapeBinding for detail
+        citr->second.context_->setInputShapeBinding(
+            binding_index,
+            reinterpret_cast<int32_t*>(io_binding_info.GetBuffer()));
       }
+    }
 
-      // Skip the upcoming section if it is a shape tensor
+    // Skip the upcoming section if it is a shape tensor
+    if (engine_->isShapeInferenceIO(name.c_str())) {
       continue;
     }
 
@@ -633,7 +646,7 @@ ModelInstanceState::Run(
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           interface_->SetBindingDimensions(
-              name, shape, citr->second, io_index, &input_dims),
+              name, shape, citr->second, io_index, binding_index, &input_dims),
           "error setting the binding dimension");
 
       TRITONSERVER_DataType datatype = batch_input.DataType();
@@ -700,7 +713,8 @@ ModelInstanceState::Run(
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           interface_->SetBindingDimensions(
-              name, ragged_shape, citr->second, io_index, &input_dims),
+              name, ragged_shape, citr->second, io_index, binding_index,
+              &input_dims),
           "error setting the binding dimension");
 
       size_t total_byte_size = GetByteSize(datatype, ragged_shape);
@@ -739,7 +753,7 @@ ModelInstanceState::Run(
       uint64_t dim_idx = 0;
       batchn_shape.reserve(dims_count);
       if (support_batching_) {
-        if (!engine_->isShapeInferenceIO(name.c_str())) {
+        if (!engine_->isShapeBinding(binding_index)) {
           batchn_shape.push_back(payload_->total_batch_size_);
           dim_idx = 1;
         }
@@ -750,11 +764,12 @@ ModelInstanceState::Run(
 
       // Set the binding dimension so that output dimensions can be
       // obtained
-      if (!engine_->isShapeInferenceIO(name.c_str())) {
+      if (!engine_->isShapeBinding(binding_index)) {
         FAIL_ALL_AND_RETURN_IF_ERROR(
             payload_->requests_, payload_->request_count_, payload_->responses_,
             interface_->SetBindingDimensions(
-                name, batchn_shape, citr->second, io_index, &input_dims),
+                name, batchn_shape, citr->second, io_index, binding_index,
+                &input_dims),
             "error setting the binding dimension");
       }
 
@@ -787,19 +802,19 @@ ModelInstanceState::Run(
   // unless the below is something that must be changed based on selected graph
   if ((cuda_graph != nullptr) && !found_exact) {
     size_t input_idx = 0;
-    for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
+    for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
-      const std::string& tensor_name = tensor_names_[io_index];
-      if (!IsInput(engine_.get(), tensor_name) ||
-          engine_->isShapeInferenceIO(tensor_name.c_str())) {
+      int binding_index = binding_offset + io_index;
+      if (!engine_->bindingIsInput(binding_index) ||
+          engine_->isShapeBinding(binding_index)) {
         continue;
       }
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           interface_->SetBindingDimensions(
               "CUDA graph input", cuda_graph->input_dims_[input_idx],
-              citr->second, io_index, nullptr),
+              citr->second, io_index, binding_index, nullptr),
           "error setting the binding dimension");
 
       // Initialize additional entries in batch input
@@ -900,13 +915,22 @@ ModelInstanceState::Run(
          Name())
             .c_str());
 
-    if (citr->second.context_->inferShapes(0, nullptr) != 0) {
+    if (!citr->second.context_->allInputDimensionsSpecified()) {
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INTERNAL,
-              "failed to specify the dimensions of all input tensors or values "
-              "of all input shape tensors"),
+              "failed to specify the dimensions of all input "
+              "bindings"),
+          "failed to run TRT inference");
+    }
+    if (!citr->second.context_->allInputShapesSpecified()) {
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          TRITONSERVER_ErrorNew(
+              TRITONSERVER_ERROR_INTERNAL,
+              "failed to specify the values for all input shape "
+              "tensors"),
           "failed to run TRT inference");
     }
 
@@ -971,49 +995,32 @@ ModelInstanceState::Run(
       model_state_->TritonMemoryManager(), model_state_->MaxBatchSize() > 0,
       model_state_->EnablePinnedOutput(), output_stream,
       events_[next_set_].output_ready_, zero_copy_support_));
-  for (int io_index = 0; io_index < total_io_tensors_; ++io_index) {
+  for (int io_index = 0; io_index < num_expected_bindings_; ++io_index) {
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
-    const std::string& name = tensor_names_[io_index];
-    if (IsInput(engine_.get(), name)) {
+    int binding_index = binding_offset + io_index;
+    if (engine_->bindingIsInput(binding_index)) {
       continue;
     }
 
+    const std::string& name = engine_->getBindingName(io_index);
+
     nvinfer1::Dims dims;
-    if (!io_binding_info.IsDynamicShapeOutput()) {
-      dims = citr->second.context_->getTensorShape(name.c_str());
-    } else {
-      dims = io_binding_info.GetAllocator()->getShape();
-    }
+    dims = citr->second.context_->getBindingDimensions(binding_index);
 
     // Make sure each output is of the expected size and copy it into
     // the payload responses.
     bool cuda_copy = false;
-    if (engine_->isShapeInferenceIO(name.c_str())) {
+    if (engine_->isShapeBinding(binding_index)) {
       // Custom handling for shape tensors
       // Obtain the shape value
       if (dims.nbDims != 0) {
-        TRITONSERVER_DataType dt =
-            ConvertTrtTypeToDataType(engine_->getTensorDataType(name.c_str()));
-        if (dt != TRITONSERVER_TYPE_INT64) {
-          FAIL_ALL_AND_RETURN_IF_ERROR(
-              payload_->requests_, payload_->request_count_,
-              payload_->responses_,
-              TRITONSERVER_ErrorNew(
-                  TRITONSERVER_ERROR_INTERNAL,
-                  (std::string(
-                       "Expected data type of output shape tensor to be INT64 "
-                       "for binding '") +
-                   Name() + "', got " + TRITONSERVER_DataTypeString(dt))
-                      .c_str()),
-              "failed to run TRT response");
-        }
-        auto shape_value_ptr = reinterpret_cast<int64_t const*>(
+        auto shape_value_ptr = reinterpret_cast<int32_t const*>(
             citr->second.context_->getTensorAddress(name.c_str()));
 
         // The first shape value must be equal to the total batch_size
         if (support_batching_ &&
-            payload_->total_batch_size_ != (uint64_t)*shape_value_ptr) {
+            payload_->total_batch_size_ != (uint32_t)*shape_value_ptr) {
           FAIL_ALL_AND_RETURN_IF_ERROR(
               payload_->requests_, payload_->request_count_,
               payload_->responses_,
@@ -1053,7 +1060,7 @@ ModelInstanceState::Run(
               backend::GetElementCount(batchn_shape);
 
           TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
-              engine_->getTensorDataType(name.c_str()));
+              engine_->getBindingDataType(binding_index));
 
           // Only need an response tensor for requested outputs.
           if ((response != nullptr) &&
@@ -1084,12 +1091,16 @@ ModelInstanceState::Run(
     } else {
       std::vector<int64_t> batchn_shape;
 
+      if (engine_->hasImplicitBatchDimension() && support_batching_) {
+        batchn_shape.push_back(payload_->total_batch_size_);
+      }
+
       for (int i = 0; i < dims.nbDims; ++i) {
         batchn_shape.push_back(dims.d[i]);
       }
 
       TRITONSERVER_DataType dt =
-          ConvertTrtTypeToDataType(engine_->getTensorDataType(name.c_str()));
+          ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
 
       // FIXME process reformat-free output, need to update output
       // process code to accept batch1_byte_size and request batch
@@ -1141,13 +1152,13 @@ ModelInstanceState::Run(
 
 bool
 ModelInstanceState::SetOutputShapeTensorBuffer(
-    const int64_t* content, TRITONBACKEND_Response** response,
+    const int32_t* content, TRITONBACKEND_Response** response,
     TRITONBACKEND_Output* response_output, const size_t tensor_element_count,
     const int64_t batch_size, cudaStream_t stream)
 {
   bool cuda_copy = false;
 
-  const size_t expected_byte_size = tensor_element_count * sizeof(int64_t);
+  const size_t expected_byte_size = tensor_element_count * sizeof(int32_t);
 
   // Allocate a buffer large enough to hold the serialized tensor.
   TRITONSERVER_MemoryType actual_memory_type = TRITONSERVER_MEMORY_CPU;
@@ -1172,10 +1183,10 @@ ModelInstanceState::SetOutputShapeTensorBuffer(
     err = CopyBuffer(
         "Shape tensor output", TRITONSERVER_MEMORY_CPU /* src_memory_type */,
         0 /* src_memory_type_id */, actual_memory_type, actual_memory_type_id,
-        nb_shape_values * sizeof(int64_t), (void*)(content + content_offset),
+        nb_shape_values * sizeof(int32_t), (void*)(content + content_offset),
         (void*)((char*)buffer + buffer_offset), stream_, &cuda_used);
     cuda_copy |= cuda_used;
-    buffer_offset += (nb_shape_values * sizeof(int64_t));
+    buffer_offset += (nb_shape_values * sizeof(int32_t));
   }
 
   if (err != nullptr) {
@@ -1323,8 +1334,8 @@ ModelInstanceState::GetRequestShapeValues(
         input, &input_name, &datatype, &shape, &dims_count, &byte_size,
         &buffer_count));
 
-    int io_index = io_index_map_[input_name];
-    if (engine_->isShapeInferenceIO(input_name)) {
+    int io_index = engine_->getBindingIndex(input_name);
+    if (engine_->isShapeBinding(io_index)) {
       auto it =
           request_shape_values->emplace(io_index, std::vector<int32_t>()).first;
       if (support_batching_) {
@@ -1359,10 +1370,7 @@ ModelInstanceState::GetRequestShapeValues(
                 .c_str());
       }
 
-      // FIXME DLIS-6653: With the support of INT64, shape tensors
-      // can also be of type INT64 and the assumptions that shape
-      // tensors might not always hold true.
-      // Assuming input shape tensors datatype as INT32.
+      // Shape tensors datatype is INT32.
       int64_t element_cnt = backend::GetElementCount(shape, dims_count);
       if (support_batching_) {
         element_cnt /= shape[0];
@@ -1478,7 +1486,7 @@ ModelInstanceState::EvaluateTensorRTContext(
       input_shape_vec[0] = total_batch_size;
     }
 
-    int io_index = io_index_map_[input_name];
+    int io_index = engine_->getBindingIndex(input_name);
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     if (io_binding_info.IsBufferRagged()) {
@@ -1514,7 +1522,7 @@ ModelInstanceState::EvaluateTensorRTContext(
       bool valid_bs = true;
       TRITONSERVER_Error* shape_err = nullptr;
       bool missing_shape_values = false;
-      if (engine_->isShapeInferenceIO(input_name)) {
+      if (engine_->isShapeBinding(io_index)) {
         auto it = request_shape_values.find(io_index);
         if (it != request_shape_values.end()) {
           shape_err = ValidateShapeValues(
@@ -1548,7 +1556,7 @@ ModelInstanceState::EvaluateTensorRTContext(
           *error_distance +=
               std::abs(opt_dims.d[idx] - input_shape_vec[idx - 1]);
         }
-        if (engine_->isShapeInferenceIO(input_name)) {
+        if (engine_->isShapeBinding(io_index)) {
           const auto* opt_shape_values = citr->second.opt_shapes_[io_index];
           *error_distance +=
               std::abs(*opt_shape_values - (int64_t)total_batch_size);
@@ -1696,20 +1704,11 @@ ModelInstanceState::InitSemaphore()
 }
 
 TRITONSERVER_Error*
-ModelInstanceState::InitIOIndexMap()
-{
-  total_io_tensors_ = engine_->getNbIOTensors();
-  for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
-    const std::string& tensor_name = engine_->getIOTensorName(io_index);
-    tensor_names_[io_index] = tensor_name;
-    io_index_map_[tensor_name] = io_index;
-  }
-  return nullptr;
-}
-
-TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
+  total_bindings_ = engine_->getNbBindings();
+  const int total_profiles = engine_->getNbOptimizationProfiles();
+
   // TRT sets the optimization profile index to be 0 implicitly with
   // the first context creation. As currently triton supports one
   // context per engine, in order to set the specified profile_index,
@@ -1723,6 +1722,9 @@ ModelInstanceState::InitOptimizationProfiles()
          model_state_->GetTensorRTLogger().LastErrorMsg())
             .c_str());
   }
+
+  num_expected_bindings_ = total_bindings_ / total_profiles;
+
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
   if (ProfileNames().empty()) {
@@ -1740,9 +1742,9 @@ ModelInstanceState::InitOptimizationProfiles()
     const auto& profile_name = name_index.first;
     const int profile_index = name_index.second;
     auto res = trt_contexts_.emplace(
-        profile_index,
-        TensorRTContext(
-            profile_name, profile_index, total_io_tensors_, EVENT_SET_COUNT));
+        profile_index, TensorRTContext(
+                           profile_name, profile_index, num_expected_bindings_,
+                           EVENT_SET_COUNT));
     if (!res.second) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
@@ -1779,11 +1781,12 @@ ModelInstanceState::InitOptimizationProfiles()
     }
 
     // Store the profile dimensions for later initializing the input bindings
-    for (int io_index = 0; io_index < total_io_tensors_; io_index++) {
-      const std::string& tensor_name = tensor_names_[io_index];
-      if (IsInput(engine_.get(), tensor_name)) {
-        RETURN_IF_ERROR(GetProfileDimensions(
-            tensor_name, profile_index, &res.first->second));
+    for (int io_index = 0; io_index < num_expected_bindings_; io_index++) {
+      const auto binding_index =
+          profile_index * num_expected_bindings_ + io_index;
+      if (engine_->bindingIsInput(binding_index)) {
+        RETURN_IF_ERROR(
+            GetProfileDimensions(io_index, profile_index, &res.first->second));
       }
     }
   }
@@ -1797,19 +1800,26 @@ ModelInstanceState::ValidateIO()
   // Collect all the expected input and allowed output tensor names
   // and validate that the model configuration specifies only those.
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
-  for (int i = 0; i < total_io_tensors_; ++i) {
-    const std::string& tensor_name = tensor_names_[i];
-    if (IsInput(engine_.get(), tensor_name)) {
-      allowed_inputs.emplace(tensor_name);
+  for (int i = 0; i < num_expected_bindings_; ++i) {
+    if (engine_->bindingIsInput(i)) {
+      allowed_inputs.emplace(engine_->getBindingName(i));
     } else {
-      allowed_outputs.emplace(tensor_name);
+      allowed_outputs.emplace(engine_->getBindingName(i));
     }
-    if (engine_->isShapeInferenceIO(tensor_name.c_str())) {
-      allowed_shape_tensors.emplace(tensor_name);
+    if (engine_->isExecutionBinding(i)) {
       LOG_MESSAGE(
-          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
-                                     " as shape binding for " + Name())
-                                        .c_str());
+          TRITONSERVER_LOG_VERBOSE,
+          (std::string("Detected ") + engine_->getBindingName(i) +
+           " as execution binding for " + Name())
+              .c_str());
+    }
+    if (engine_->isShapeBinding(i)) {
+      allowed_shape_tensors.emplace(engine_->getBindingName(i));
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_VERBOSE,
+          (std::string("Detected ") + engine_->getBindingName(i) +
+           " as shape binding for " + Name())
+              .c_str());
     }
   }
 
@@ -1871,8 +1881,8 @@ ModelInstanceState::ValidateIOHelper(
              .first) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unsupported datatype ") + io_data_type + " for " +
-           type + " '" + io_name + "' for model '" + model_state_->Name() + "'")
+          (std::string("unsupported datatype") + io_data_type + " for " + type +
+           " '" + io_name + "' for model '" + model_state_->Name() + "'")
               .c_str());
     }
 
@@ -1919,12 +1929,16 @@ ModelInstanceState::InitIOBindingBuffers()
   // Initialize the inputs and outputs. Make sure the model matches
   // what is in the configuration. Allocate memory for the maximum
   // possible batch size: min(engine maximum, config maximum)
-  io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
+  io_binding_infos_.push_back(
+      std::vector<IOBindingInfo>(num_expected_bindings_));
+  buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
 
   // Use an additional set of buffers if a separate stream is used for
   // output
   if (model_state_->SeparateOutputStream()) {
-    io_binding_infos_.push_back(std::vector<IOBindingInfo>(total_io_tensors_));
+    io_binding_infos_.push_back(
+        std::vector<IOBindingInfo>(num_expected_bindings_));
+    buffer_bindings_.push_back(std::vector<void*>(total_bindings_, nullptr));
   }
 
   // Sequence State should be processed at the end.
@@ -1940,12 +1954,28 @@ ModelInstanceState::InitIOBindingBuffers()
   }
 
   for (const auto& trt_context : trt_contexts_) {
-    if (trt_context.second.context_->inferShapes(0, nullptr) != 0) {
+    if (!trt_context.second.context_->allInputDimensionsSpecified()) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
-          "failed to specify the dimensions of all input tensors or values of "
-          "all input shape tensors");
+          "failed to specify the dimensions of all input bindings");
     }
+    if (!trt_context.second.context_->allInputShapesSpecified()) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          "failed to specify the values of all input shape tensors");
+    }
+  }
+
+  // Validate the batch dimension against the implicit batch dimension
+  // if available.
+  if (engine_->hasImplicitBatchDimension() &&
+      (model_state_->MaxBatchSize() > engine_->getMaxBatchSize())) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("unexpected configuration maximum batch size ") +
+         std::to_string(model_state_->MaxBatchSize()) + " for '" + Name() +
+         "', model maximum is " + std::to_string(engine_->getMaxBatchSize()))
+            .c_str());
   }
 
   // Batch output must be processed before other outputs and sequence state
@@ -1962,15 +1992,14 @@ ModelInstanceState::InitIOBindingBuffers()
   // Make sure every index which corresponds to an execution binding
   // is initialized.
   for (int s = 0; s < num_copy_streams_; ++s) {
-    for (int i = 0; i < total_io_tensors_; ++i) {
-      if (!io_binding_infos_[s][i].IsBufferAllocated()) {
-        const std::string& tensor_name = tensor_names_[i];
+    for (int i = 0; i < num_expected_bindings_; ++i) {
+      if (!io_binding_infos_[s][i].IsBufferAllocated() &&
+          engine_->isExecutionBinding(i)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("expected configuration for ") +
-             std::string(
-                 (IsInput(engine_.get(), tensor_name) ? "input" : "output")) +
-             " '" + tensor_name + "' for " + Name())
+             std::string((engine_->bindingIsInput(i) ? "input" : "output")) +
+             " '" + engine_->getBindingName(i) + "' for " + Name())
                 .c_str());
       }
     }
@@ -2274,7 +2303,7 @@ ModelInstanceState::InitializeBatchInputBindings(
                     .c_str());
         }
       }
-      int io_index = io_index_map_[tensor_name];
+      int io_index = engine_->getBindingIndex(tensor_name.c_str());
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       io_binding_info.SetName(tensor_name);
@@ -2318,11 +2347,11 @@ ModelInstanceState::InitializeBatchOutputBindings(
     for (const auto& name : io.TargetNames()) {
       // FIXME Currently not handling the case that batch output is
       // shape tensor
-      int io_index = io_index_map_[name];
+      int io_index = engine_->getBindingIndex(name.c_str());
       auto& io_binding_info =
           io_binding_infos_[next_buffer_binding_set_][io_index];
       io_binding_info.SetName(name);
-      if (engine_->isShapeInferenceIO(name.c_str())) {
+      if (engine_->isShapeBinding(io_index)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string(
@@ -2372,12 +2401,20 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       continue;
     }
 
-    int io_index = io_index_map_[io_name];
+    int io_index = engine_->getBindingIndex(io_name.c_str());
     auto& io_binding_info =
         io_binding_infos_[next_buffer_binding_set_][io_index];
     io_binding_info.SetName(io_name);
     for (auto& trt_context : trt_contexts_) {
+      auto& profile_index = trt_context.first;
       auto& context = trt_context.second;
+      int binding_index = num_expected_bindings_ * profile_index + io_index;
+      if (binding_index < 0) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_NOT_FOUND,
+            (std::string("output '") + io_name + "' not found for " + Name())
+                .c_str());
+      }
 
       if (io_binding_info.IsBufferAllocated()) {
         return TRITONSERVER_ErrorNew(
@@ -2387,7 +2424,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
                 .c_str());
       }
 
-      if (IsInput(engine_.get(), io_name)) {
+      if (engine_->bindingIsInput(binding_index)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("output '") + io_name +
@@ -2398,17 +2435,17 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       std::string io_data_type;
       RETURN_IF_ERROR(io.MemberAsString("data_type", &io_data_type));
 
-      if (io_data_type.compare("TYPE_INT64") != 0) {
+      if (io_data_type.compare("TYPE_INT32") != 0) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             (std::string("unexpected datatype '") + io_data_type +
              " in model configuration for shape output '" + io_name +
-             "', expecting TYPE_INT64 for " + Name())
+             "', expecting TYPE_INT32 for " + Name())
                 .c_str());
       }
 
       TRITONSERVER_DataType dt =
-          ConvertTrtTypeToDataType(engine_->getTensorDataType(io_name.c_str()));
+          ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
       TRITONSERVER_DataType config_dt =
           ModelConfigDataTypeToTritonServerDataType(io_data_type);
       if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
@@ -2424,7 +2461,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
       // [DLIS-4283] Note that the initialize-binding functions are
       // configuring the binding infos, may be group in separate class?
       RETURN_IF_ERROR(
-          interface_->SetFormat(io_name, &io_binding_info.GetFormat()));
+          interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
       common::TritonJson::Value model_config_dims;
       common::TritonJson::Value reshape;
@@ -2434,7 +2471,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
         RETURN_IF_ERROR(io.MemberAsArray("dims", &model_config_dims));
       }
 
-      nvinfer1::Dims engine_dims = engine_->getTensorShape(io_name.c_str());
+      nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
       if (ContainsWildcard(engine_dims)) {
         context.is_dynamic_per_binding_[io_index] = true;
         io_binding_info.SetIsDynamicShapeOutput(true);
@@ -2445,7 +2482,7 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
 
       if (!io_binding_info.IsDynamicShapeOutput()) {
         const nvinfer1::Dims output_dim =
-            context.context_->getTensorShape(io_name.c_str());
+            context.context_->getBindingDimensions(binding_index);
         std::vector<int64_t> dim_vec;
         DimsToDimVec(output_dim, &dim_vec);
         int64_t byte_size = GetByteSize(dt, dim_vec);
@@ -2457,7 +2494,10 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     if (!io_binding_info.IsDynamicShapeOutput()) {
       // [DLIS-4283] review below comment
       // Allocate CUDA memory. Use cudaHostAlloc if zero copy
-      // supported.
+      // supported. For static output tensors, we rely on
+      // buffer_bindings_ being non-nullptr to indicate that the
+      // buffer has been correctly initialized so even for zero-sized
+      // tensors always allocate something.
       void* buffer = nullptr;
       cudaError_t err = cudaSuccess;
       // [DLIS-4283] by knowing that shape tensor should be on host, ideally
@@ -2483,7 +2523,15 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
     io_binding_info.SetMemoryType(TRITONSERVER_MEMORY_CPU_PINNED);
     io_binding_info.SetMemoryTypeId(0);
 
+    // [DLIS-4283] below is v1 handling and v1 doesn't support shape tensor,
+    // can be removed.
+    // Set buffer bindings of all optimization profile since buffer
+    // is allocated
     for (auto& trt_context : trt_contexts_) {
+      auto binding_index =
+          num_expected_bindings_ * trt_context.first + io_index;
+      buffer_bindings_[next_buffer_binding_set_][binding_index] =
+          io_binding_info.GetDeviceBuffer();
       if (!io_binding_info.IsDynamicShapeOutput()) {
         // [DLIS-4283] revisit below, note that 'device_buffer_' is actually
         // not on device for shape tensor, the name can be misleading, perhaps
@@ -2544,17 +2592,9 @@ ModelInstanceState::InitializeExecuteInputBinding(
     common::TritonJson::Value& input_dims, const bool is_control,
     const bool is_ragged, const bool is_state)
 {
-  auto itr = io_index_map_.find(input_name);
-  if (itr == io_index_map_.end()) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_NOT_FOUND,
-        (std::string("input '") + input_name + "' not found for " + Name())
-            .c_str());
-  }
-  int io_index = itr->second;
-
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
+  int io_index = engine_->getBindingIndex(input_name.c_str());
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
 
@@ -2565,10 +2605,18 @@ ModelInstanceState::InitializeExecuteInputBinding(
   }
 
   for (auto& trt_context : trt_contexts_) {
+    auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
+    int binding_index = num_expected_bindings_ * profile_index + io_index;
+    if (io_index < 0) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_NOT_FOUND,
+          (std::string("input '") + input_name + "' not found for " + Name())
+              .c_str());
+    }
 
     // Skip if shape binding is encountered
-    if (engine_->isShapeInferenceIO(input_name.c_str())) {
+    if (engine_->isShapeBinding(binding_index)) {
       return nullptr;
     }
 
@@ -2581,7 +2629,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
     }
 
 
-    if (!IsInput(engine_.get(), input_name)) {
+    if (!engine_->bindingIsInput(binding_index)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
@@ -2589,8 +2637,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
               .c_str());
     }
 
-    TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
-        engine_->getTensorDataType(input_name.c_str()));
+    TRITONSERVER_DataType dt =
+        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
     TRITONSERVER_DataType config_dt =
         ModelConfigDataTypeToTritonServerDataType(input_datatype);
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
@@ -2604,10 +2652,10 @@ ModelInstanceState::InitializeExecuteInputBinding(
     }
 
     RETURN_IF_ERROR(
-        interface_->SetFormat(input_name, &io_binding_info.GetFormat()));
+        interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
     // Detect whether dynamic or not
-    nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
+    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -2616,7 +2664,8 @@ ModelInstanceState::InitializeExecuteInputBinding(
       if (!is_ragged) {
         RETURN_IF_ERROR(CompareDimsSupported(
             StateForModel()->Name(), input_name, engine_dims, input_dims,
-            support_batching_, false /* compare_exact */));
+            support_batching_, (!engine_->hasImplicitBatchDimension()),
+            false /* compare_exact */));
       } else {
         // For ragged input, the input will be concatenated and
         // flatten, so expecting engine dims to be one dimensional.
@@ -2673,7 +2722,7 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
     std::vector<int64_t> maximum_dims;
     RETURN_IF_ERROR(interface_->ConfigureInputDimensions(
-        &context, io_index, full_config_dim, &maximum_dims));
+        &context, io_index, binding_index, full_config_dim, &maximum_dims));
 
     int64_t byte_size = 0;
     if (io_binding_info.GetFormat().is_linear_format_) {
@@ -2697,6 +2746,9 @@ ModelInstanceState::InitializeExecuteInputBinding(
   }
 
   // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
+  // We rely on buffer_bindings_ being non-nullptr to indicate that
+  // the buffer has been correctly initialized so even for zero-sized
+  // tensors always allocate something.
   void* buffer = nullptr;
   cudaError_t err = cudaSuccess;
   if (zero_copy_support_) {
@@ -2750,7 +2802,12 @@ ModelInstanceState::InitializeExecuteInputBinding(
             .c_str());
   }
 
+  // Set buffer bindings of all optimization profile since buffer is
+  // allocated
   for (auto& trt_context : trt_contexts_) {
+    auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
+    buffer_bindings_[next_buffer_binding_set_][binding_index] =
+        io_binding_info.GetDeviceBuffer();
     RETURN_ERROR_IF_FALSE(
         trt_context.second.context_->setTensorAddress(
             input_name.c_str(), io_binding_info.GetDeviceBuffer()),
@@ -2767,17 +2824,11 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     const std::string& output_name, const std::string& output_datatype,
     common::TritonJson::Value& output_dims, bool is_state)
 {
-  auto itr = io_index_map_.find(output_name);
-  if (itr == io_index_map_.end()) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_NOT_FOUND,
-        (std::string("output '") + output_name + "' not found for " + Name())
-            .c_str());
-  }
-  int io_index = itr->second;
-
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
+
+  int io_index = engine_->getBindingIndex(output_name.c_str());
+
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(output_name);
 
@@ -2804,9 +2855,18 @@ ModelInstanceState::InitializeExecuteOutputBinding(
   }
 
   for (auto& trt_context : trt_contexts_) {
+    auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
+    int binding_index = num_expected_bindings_ * profile_index + io_index;
 
-    if (IsInput(engine_.get(), output_name)) {
+    if (binding_index < 0) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_NOT_FOUND,
+          (std::string("output '") + output_name + "' not found for " + Name())
+              .c_str());
+    }
+
+    if (engine_->bindingIsInput(binding_index)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("output '") + output_name +
@@ -2822,13 +2882,13 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
 
-    nvinfer1::Dims engine_dims = engine_->getTensorShape(output_name.c_str());
+    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
 
-    TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
-        engine_->getTensorDataType(output_name.c_str()));
+    TRITONSERVER_DataType dt =
+        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
     TRITONSERVER_DataType config_dt =
         ModelConfigDataTypeToTritonServerDataType(output_datatype);
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != config_dt)) {
@@ -2842,14 +2902,15 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     }
 
     RETURN_IF_ERROR(
-        interface_->SetFormat(output_name, &io_binding_info.GetFormat()));
+        interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
     // Skip 'batch_output' validation as it is not exact match to
     // model dims
     if (!io_binding_info.IsBufferRagged()) {
       RETURN_IF_ERROR(CompareDimsSupported(
           StateForModel()->Name(), output_name, engine_dims, output_dims,
-          support_batching_, false /* compare_exact */));
+          support_batching_, (!engine_->hasImplicitBatchDimension()),
+          false /* compare_exact */));
     }
 
     if (io_binding_info.IsBufferRagged() &&
@@ -2861,8 +2922,8 @@ ModelInstanceState::InitializeExecuteOutputBinding(
               .c_str());
     }
     if (!io_binding_info.IsDynamicShapeOutput()) {
-      int64_t byte_size =
-          interface_->GetFullByteSize(context.context_.get(), output_name);
+      int64_t byte_size = interface_->GetFullByteSize(
+          context.context_.get(), output_name, binding_index);
       if (byte_size == -1) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -2878,6 +2939,9 @@ ModelInstanceState::InitializeExecuteOutputBinding(
 
   if (!io_binding_info.IsDynamicShapeOutput()) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
+    // For static output tensors, we rely on buffer_bindings_ being
+    // non-nullptr to indicate that the buffer has been correctly initialized
+    // so even for zero-sized tensors always allocate something.
     void* buffer = nullptr;
     if (zero_copy_support_) {
       err = cudaHostAlloc(
@@ -2938,7 +3002,12 @@ ModelInstanceState::InitializeExecuteOutputBinding(
     io_binding_info.SetMemoryTypeId(DeviceId());
   }
 
+  // Set buffer bindings of all optimization profile since buffer is
+  // allocated
   for (auto& trt_context : trt_contexts_) {
+    auto binding_index = num_expected_bindings_ * trt_context.first + io_index;
+    buffer_bindings_[next_buffer_binding_set_][binding_index] =
+        io_binding_info.GetDeviceBuffer();
     if (!io_binding_info.IsDynamicShapeOutput()) {
       RETURN_ERROR_IF_FALSE(
           trt_context.second.context_->setTensorAddress(
@@ -2959,21 +3028,20 @@ ModelInstanceState::InitializeShapeInputBinding(
 {
   // the maximum byte sizes across all profiles
   int64_t max_byte_size = 0;
-
-  auto itr = io_index_map_.find(input_name);
-  if (itr == io_index_map_.end()) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_NOT_FOUND,
-        (std::string("input '") + input_name + "' not found for " + Name())
-            .c_str());
-  }
-  int io_index = itr->second;
+  int io_index = engine_->getBindingIndex(input_name.c_str());
 
   auto& io_binding_info = io_binding_infos_[next_buffer_binding_set_][io_index];
   io_binding_info.SetName(input_name);
   for (auto& trt_context : trt_contexts_) {
     auto& profile_index = trt_context.first;
     auto& context = trt_context.second;
+    int binding_index = num_expected_bindings_ * profile_index + io_index;
+    if (io_index < 0) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_NOT_FOUND,
+          (std::string("input '") + input_name + "' not found for " + Name())
+              .c_str());
+    }
 
     if (io_binding_info.IsBufferAllocated()) {
       return TRITONSERVER_ErrorNew(
@@ -2983,7 +3051,7 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    if (!IsInput(engine_.get(), input_name)) {
+    if (!engine_->bindingIsInput(binding_index)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("input '") + input_name +
@@ -2992,7 +3060,7 @@ ModelInstanceState::InitializeShapeInputBinding(
     }
 
     // Skip if the binding is not a shape tensor
-    if (!engine_->isShapeInferenceIO(input_name.c_str())) {
+    if (!engine_->isShapeBinding(binding_index)) {
       return nullptr;
     }
 
@@ -3006,8 +3074,8 @@ ModelInstanceState::InitializeShapeInputBinding(
               .c_str());
     }
 
-    TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
-        engine_->getTensorDataType(input_name.c_str()));
+    TRITONSERVER_DataType dt =
+        ConvertTrtTypeToDataType(engine_->getBindingDataType(binding_index));
     if ((dt == TRITONSERVER_TYPE_INVALID) || (dt != input_datatype)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
@@ -3019,9 +3087,9 @@ ModelInstanceState::InitializeShapeInputBinding(
     }
 
     RETURN_IF_ERROR(
-        interface_->SetFormat(input_name, &io_binding_info.GetFormat()));
+        interface_->SetFormat(binding_index, &io_binding_info.GetFormat()));
 
-    nvinfer1::Dims engine_dims = engine_->getTensorShape(input_name.c_str());
+    nvinfer1::Dims engine_dims = engine_->getBindingDimensions(binding_index);
     if (ContainsWildcard(engine_dims)) {
       context.is_dynamic_per_binding_[io_index] = true;
     }
@@ -3029,8 +3097,8 @@ ModelInstanceState::InitializeShapeInputBinding(
     RETURN_IF_ERROR(CompareShapeDimsSupported(
         name_, input_name, engine_dims, model_config_dims, support_batching_));
 
-    if (!context.context_->setInputShape(
-            input_name.c_str(), context.max_dims_[io_index])) {
+    if (!context.context_->setBindingDimensions(
+            binding_index, context.max_dims_[io_index])) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("trt failed to set binding dimension to ") +
@@ -3042,12 +3110,12 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context.max_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
+    context.max_shapes_[io_index] = engine_->getProfileShapeValues(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
+    context.min_shapes_[io_index] = engine_->getProfileShapeValues(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
+    context.opt_shapes_[io_index] = engine_->getProfileShapeValues(
+        binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
@@ -3060,22 +3128,33 @@ ModelInstanceState::InitializeShapeInputBinding(
            input_name + "' for " + Name())
               .c_str());
     }
+    // [FIXME] setInputShapeBinding() is deprecated and
+    // setInputTensorAddress() above alone should be sufficient. There is bug
+    // in TRT that getMaxOutputSize() won't work without
+    // setInputShapeBinding() for shape tensor, ETA fix in 8.5.2
+    if (!context.context_->setInputShapeBinding(
+            binding_index, context.max_shapes_[io_index])) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("trt failed to set the input shape binding for '") +
+           input_name + "' for " + Name())
+              .c_str());
+    }
 
-    if (engine_->getTensorLocation(input_name.c_str()) ==
-        nvinfer1::TensorLocation::kHOST) {
+    if (engine_->isExecutionBinding(binding_index)) {
       int64_t byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
-            context.context_->getTensorShape(input_name.c_str()), &dim_vec);
+            context.context_->getBindingDimensions(binding_index), &dim_vec);
         byte_size = GetByteSize(dt, dim_vec);
       } else {
-        auto component_count = GetElementCount(
-            context.context_->getTensorStrides(input_name.c_str()));
+        auto component_count =
+            GetElementCount(context.context_->getStrides(binding_index));
         component_count *=
-            engine_->getTensorComponentsPerElement(input_name.c_str());
+            engine_->getBindingComponentsPerElement(binding_index);
         byte_size = component_count *
-                    engine_->getTensorBytesPerComponent(input_name.c_str());
+                    engine_->getBindingBytesPerComponent(binding_index);
       }
       max_byte_size = std::max(max_byte_size, byte_size);
     }
@@ -3083,6 +3162,9 @@ ModelInstanceState::InitializeShapeInputBinding(
 
   if (max_byte_size != 0) {
     // Allocate CUDA memory. Use cudaHostAlloc if zero copy supported.
+    // We rely on buffer_bindings_ being non-nullptr to indicate that
+    // the buffer has been correctly initialized so even for zero-sized
+    // tensors always allocate something.
     void* buffer = nullptr;
     cudaError_t err = cudaSuccess;
     // [DLIS-4283] by knowing that shape tensor should be on host, ideally
@@ -3111,23 +3193,32 @@ ModelInstanceState::InitializeShapeInputBinding(
     // above because the buffer content will affect the output shape
     // inference. We rely on Enqueue() function to make sure the correct
     // buffer is set during runtime.
+
+    // [DLIS-4283] below is v1 handling and v1 doesn't support shape tensor,
+    // can be removed.
+    // Set buffer bindings of all optimization profile since buffer is
+    // allocated
+    for (auto& trt_context : trt_contexts_) {
+      auto binding_index =
+          num_expected_bindings_ * trt_context.first + io_index;
+      buffer_bindings_[next_buffer_binding_set_][binding_index] =
+          io_binding_info.GetDeviceBuffer();
+    }
   }
   return nullptr;
 }
 
 TRITONSERVER_Error*
 ModelInstanceState::GetProfileDimensions(
-    const std::string& tensor_name, const int profile_index,
-    TensorRTContext* context)
+    const int io_index, const int profile_index, TensorRTContext* context)
 {
-  int io_index = io_index_map_[tensor_name];
-  context->max_dims_[io_index] = engine_->getProfileShape(
-      tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
-  context->min_dims_[io_index] = engine_->getProfileShape(
-      tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
-  context->opt_dims_[io_index] = engine_->getProfileShape(
-      tensor_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
-
+  int binding_index = (profile_index * num_expected_bindings_) + io_index;
+  context->max_dims_[io_index] = engine_->getProfileDimensions(
+      binding_index, profile_index, nvinfer1::OptProfileSelector::kMAX);
+  context->min_dims_[io_index] = engine_->getProfileDimensions(
+      binding_index, profile_index, nvinfer1::OptProfileSelector::kMIN);
+  context->opt_dims_[io_index] = engine_->getProfileDimensions(
+      binding_index, profile_index, nvinfer1::OptProfileSelector::kOPT);
   return nullptr;
 }
 
@@ -3392,14 +3483,174 @@ ModelInstanceState::ValidateGraphSpec(const GraphSpec& graph_spec)
 }
 
 bool
+TRTv1Interface::BuildCudaGraph(
+    TensorRTContext* trt_context, const GraphSpec& graph_spec)
+{
+  // 1 is special case as non-batching model has 'max_batch_size == 0'
+  int batch_size = (graph_spec.batch_size_ == 0) ? 1 : graph_spec.batch_size_;
+  std::vector<int64_t> cuda_graph_key{batch_size};
+  auto cuda_graph = TensorRTContext::CudaGraph();
+  int lower_bound_batch_size = (graph_spec.lower_bound_batch_size_ == 0)
+                                   ? 1
+                                   : graph_spec.lower_bound_batch_size_;
+  cuda_graph.lower_bound_key_ = {lower_bound_batch_size};
+  for (int io_index = 0; io_index < instance_->num_expected_bindings_;
+       ++io_index) {
+    // FIXME handle shape tensor properly, for now if model uses shape
+    // tensor then cuda graph is not captured
+    if (instance_->engine_->isShapeBinding(io_index)) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_WARN,
+          (std::string("Detected shape tensor, CUDA graph is not "
+                       "captured for ") +
+           instance_->Name())
+              .c_str());
+      return false;
+    }
+  }
+
+  // Enqueue to TRT to setup resources properly BEFORE capturing CUDA
+  // graph
+  for (int s = 0; s < instance_->num_copy_streams_; s++) {
+    if (!trt_context->context_->enqueue(
+            batch_size, instance_->buffer_bindings_[s].data(),
+            instance_->CudaStream(), nullptr)) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_WARN,
+          (std::string("unable to record CUDA graph for ") + instance_->Name())
+              .c_str());
+      return false;
+    }
+    cudaStreamSynchronize(instance_->CudaStream());
+  }
+
+  bool captured = true;
+  for (int set_idx = 0; set_idx < EVENT_SET_COUNT; set_idx++) {
+    // The same spec has been captured
+    if (trt_context->cuda_graph_execs_[set_idx].find(cuda_graph_key) !=
+        trt_context->cuda_graph_execs_[set_idx].end()) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_WARN,
+          (std::string("Detected duplicated CUDA graph specification for ") +
+           instance_->Name() + ", skipping the duplicated specification")
+              .c_str());
+
+      return true;
+    }
+    // Use second set of buffers to capture cuda graph if
+    // double-buffering
+    auto buffer_binding_index = set_idx % instance_->num_copy_streams_;
+    cudaGraph_t graph;
+    // Using cudaStreamCaptureModeThreadLocal mode to confine the graph
+    // capture to this thread and avoid interference from other potentially
+    // unsafe cuda calls.
+    auto cuerr = cudaStreamBeginCapture(
+        instance_->CudaStream(), cudaStreamCaptureModeThreadLocal);
+    if (cuerr != cudaSuccess) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_ERROR,
+          (std::string("unable to start CUDA graph for ") + instance_->Name() +
+           ": " + cudaGetErrorString(cuerr))
+              .c_str());
+      captured = false;
+    } else {
+      auto context = trt_context->context_;
+      if (!context->enqueue(
+              batch_size,
+              instance_->buffer_bindings_[buffer_binding_index].data(),
+              instance_->CudaStream(),
+              &instance_->events_[set_idx].ready_for_input_)) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            (std::string("unable to record CUDA graph for ") +
+             instance_->Name())
+                .c_str());
+        captured = false;
+      }
+
+      cuerr = cudaStreamEndCapture(instance_->CudaStream(), &graph);
+      if (captured == false) {
+        if (cuerr != cudaErrorStreamCaptureInvalidated) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("stream capture is not invalidated for ") +
+               instance_->Name() + ": " + cudaGetErrorString(cuerr))
+                  .c_str());
+        }
+        // There has been an error during graph capture. Below call resets the
+        // sticky error from the cuda runtime.
+        cudaGetLastError();
+        // Verify if the  error has been cleared successfully.
+        auto cuerr2 = cudaGetLastError();
+        if (cuerr2 != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to clear cuda runtime error for ") +
+               instance_->Name() + ": " + cudaGetErrorString(cuerr2))
+                  .c_str());
+        }
+      }
+      if (cuerr != cudaSuccess) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            (std::string("unable to finish CUDA graph for ") +
+             instance_->Name() + ": " + cudaGetErrorString(cuerr))
+                .c_str());
+        captured = false;
+      }
+
+      if (captured) {
+        cudaGraphExec_t graph_exec;
+#if CUDART_VERSION >= 12000
+        cuerr = cudaGraphInstantiate(&graph_exec, graph, 0);
+#else
+        cuerr = cudaGraphInstantiate(&graph_exec, graph, NULL, NULL, 0);
+#endif
+        if (cuerr != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to instantiate CUDA graph for ") +
+               instance_->Name() + ": " + cudaGetErrorString(cuerr))
+                  .c_str());
+          captured = false;
+        } else {
+          cuda_graph.cuda_graph_exec_ = graph_exec;
+
+          trt_context->cuda_graph_execs_[set_idx].insert(
+              std::make_pair(cuda_graph_key, cuda_graph));
+        }
+        cuerr = cudaGraphDestroy(graph);
+        if (cuerr != cudaSuccess) {
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_ERROR,
+              (std::string("unable to destroy graph for ") + instance_->Name() +
+               ": " + cudaGetErrorString(cuerr))
+                  .c_str());
+          captured = false;
+        }
+      }
+    }
+  }
+
+  if (captured) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_VERBOSE,
+        (std::string("captured CUDA graph for ") + instance_->Name() +
+         ", batch size " + std::to_string(batch_size))
+            .c_str());
+  }
+
+  return captured;
+}
+
+bool
 TRTv3Interface::BuildCudaGraph(
     TensorRTContext* trt_context, const GraphSpec& graph_spec)
 {
   // FIXME handle shape tensor properly, for now if model uses shape
   // tensor then cuda graph is not captured
-  for (int i = 0; i < instance_->total_io_tensors_; ++i) {
-    auto tensor_name = instance_->tensor_names_[i];
-    if (instance_->engine_->isShapeInferenceIO(tensor_name.c_str())) {
+  for (int i = 0; i < instance_->num_expected_bindings_; ++i) {
+    if (instance_->engine_->isShapeBinding(i)) {
       LOG_MESSAGE(
           TRITONSERVER_LOG_WARN,
           (std::string("Detected shape tensor, CUDA graph is not "
@@ -3561,16 +3812,19 @@ TRTv3Interface::SetCudaGraphShape(
     TensorRTContext::CudaGraph* cuda_graph)
 {
   int batch_size = graph_spec.batch_size_;
+  int binding_offset =
+      trt_context->profile_idx_ * instance_->num_expected_bindings_;
   *cuda_graph_key = std::vector<int64_t>{batch_size};
   auto& lower_bound_key = cuda_graph->lower_bound_key_;
   lower_bound_key.push_back(
       (graph_spec.lower_bound_batch_size_ == 0)
           ? 1
           : graph_spec.lower_bound_batch_size_);
-  for (int io_index = 0; io_index < instance_->total_io_tensors_; io_index++) {
+  for (int io_index = 0; io_index < instance_->num_expected_bindings_;
+       io_index++) {
     auto& io_binding_info = instance_->io_binding_infos_[0][io_index];
-    const std::string& name = instance_->tensor_names_[io_index];
-    if (!IsInput(instance_->engine_.get(), name)) {
+    auto binding_index = binding_offset + io_index;
+    if (!instance_->engine_->bindingIsInput(binding_index)) {
       continue;
     }
     // Empty shapes indicates the graph spec is added by default,
@@ -3580,12 +3834,12 @@ TRTv3Interface::SetCudaGraphShape(
       if (batch_size != 0) {
         shape.d[0] = batch_size;
       }
-      if (!trt_context->context_->setInputShape(name.c_str(), shape)) {
+      if (!trt_context->context_->setBindingDimensions(binding_index, shape)) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
-            (std::string("trt failed to set input shape to ") +
-             DimsDebugString(shape) + " for input " + name + " for " +
-             instance_->Name())
+            (std::string("trt failed to set binding dimension to ") +
+             DimsDebugString(shape) + " for binding " +
+             std::to_string(binding_index) + " for " + instance_->Name())
                 .c_str());
       }
       std::vector<int64_t> dims;
@@ -3594,6 +3848,7 @@ TRTv3Interface::SetCudaGraphShape(
       cuda_graph_key->insert(cuda_graph_key->end(), dims.begin(), dims.end());
       lower_bound_key.insert(lower_bound_key.end(), dims.begin(), dims.end());
     } else {
+      const std::string& name = instance_->engine_->getBindingName(io_index);
       auto it = graph_spec.shapes_.find(name);
       if (it != graph_spec.shapes_.end()) {
         // For ragged / batch input, assume the shape in graph spec is proper
@@ -3612,12 +3867,13 @@ TRTv3Interface::SetCudaGraphShape(
         shape.insert(shape.end(), it->second.begin(), it->second.end());
         nvinfer1::Dims trt_shape;
         DimVecToDims(shape, &trt_shape);
-        if (!trt_context->context_->setInputShape(name.c_str(), trt_shape)) {
+        if (!trt_context->context_->setBindingDimensions(
+                binding_index, trt_shape)) {
           return TRITONSERVER_ErrorNew(
               TRITONSERVER_ERROR_INTERNAL,
-              (std::string("trt failed to set input shape to ") +
-               DimsDebugString(trt_shape) + " for input " + name + " for " +
-               instance_->Name())
+              (std::string("trt failed to set binding dimension to ") +
+               DimsDebugString(trt_shape) + " for binding " +
+               std::to_string(binding_index) + " for " + instance_->Name())
                   .c_str());
         }
         cuda_graph_key->insert(
@@ -3628,7 +3884,7 @@ TRTv3Interface::SetCudaGraphShape(
       } else {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("trt failed to set input shape for "
+            (std::string("trt failed to set binding dimension for "
                          "unknown input '") +
              name + "' for " + instance_->Name())
                 .c_str());
@@ -3639,6 +3895,107 @@ TRTv3Interface::SetCudaGraphShape(
 }
 
 #endif  // TRITON_ENABLE_CUDA_GRAPH
+
+bool
+TRTv1Interface::Enqueue(nvinfer1::IExecutionContext* context)
+{
+  return context->enqueue(
+      instance_->payload_->total_batch_size_,
+      instance_->buffer_bindings_[instance_->next_buffer_binding_set_].data(),
+      instance_->stream_,
+      &instance_->events_[instance_->next_set_].ready_for_input_);
+}
+
+int64_t
+TRTv1Interface::GetFullByteSize(
+    nvinfer1::IExecutionContext* context, const std::string& tensor_name,
+    int32_t binding_index)
+{
+  auto dt = ConvertTrtTypeToDataType(
+      instance_->engine_->getBindingDataType(binding_index));
+  const nvinfer1::Dims output_dim =
+      context->getBindingDimensions(binding_index);
+  std::vector<int64_t> dim_vec;
+  DimsToDimVec(output_dim, &dim_vec);
+
+  std::vector<int64_t> dim_vec_with_mbs;
+  if (instance_->support_batching_) {
+    dim_vec_with_mbs.push_back(instance_->model_state_->MaxBatchSize());
+  }
+  dim_vec_with_mbs.insert(
+      dim_vec_with_mbs.end(), dim_vec.begin(), dim_vec.end());
+  return GetByteSize(dt, dim_vec_with_mbs);
+}
+
+TRITONSERVER_Error*
+TRTv1Interface::SetFormat(int binding_index, TensorFormat* format)
+{
+  format->is_linear_format_ =
+      (instance_->engine_->getBindingFormat(binding_index) ==
+       nvinfer1::TensorFormat::kLINEAR);
+  if (!format->is_linear_format_) {
+    format->vectorized_dim_ =
+        instance_->engine_->getBindingVectorizedDim(binding_index);
+    format->components_per_element_ =
+        instance_->engine_->getBindingComponentsPerElement(binding_index);
+    if (format->vectorized_dim_ == -1) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unexpected vectorized dim is -1 for non-linear "
+                       "tensor '") +
+           instance_->engine_->getBindingName(binding_index) + "' for " +
+           instance_->Name())
+              .c_str());
+    }
+    // +1 for implicit batch dimension to take full shape dim as reference
+    if (instance_->support_batching_) {
+      format->vectorized_dim_++;
+    }
+  }
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv1Interface::ConfigureInputDimensions(
+    TensorRTContext* context, int io_index, int binding_index,
+    std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
+{
+  // Below is more of a sanity check, v1 only support fixed shape tensor so
+  // config shape must be exact match of engine shape.
+
+  // v1 slightly different that TRT dim doesn't contain batch dimension
+  TRITONSERVER_Error* err = ValidateDimension(
+      full_config_dims, context->min_dims_[io_index],
+      context->max_dims_[io_index],
+      instance_->support_batching_ /* skip_first_dimension */);
+  if (err != nullptr) {
+    TRITONSERVER_Error* full_err = TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("model configuration specified invalid shape for "
+                     "input '") +
+         instance_->engine_->getBindingName(io_index) + "' for model " +
+         instance_->model_state_->Name() +
+         ". Error details: " + TRITONSERVER_ErrorMessage(err))
+            .c_str());
+
+    TRITONSERVER_ErrorDelete(err);
+    return full_err;
+  }
+  *maximum_dims = full_config_dims;
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+TRTv1Interface::SetBindingDimensions(
+    const std::string& input_name, const std::vector<int64_t>& shape,
+    const TensorRTContext& trt_context, const size_t io_index,
+    const size_t binding_index, std::vector<int64_t>* cuda_graph_key)
+{
+  // NO-OP, v1 engine doesn't support dynamic shape, so input shape won't
+  // need to be set at runtime, for the same reason 'cuda_graph_key' won't
+  // be changed at runtime as long as the batch size has set.
+  return nullptr;
+}
 
 bool
 TRTv3Interface::Enqueue(nvinfer1::IExecutionContext* context)
@@ -3668,28 +4025,30 @@ TRTv3Interface::SetTensorAddress(nvinfer1::IExecutionContext* context)
 
 int64_t
 TRTv3Interface::GetFullByteSize(
-    nvinfer1::IExecutionContext* context, const std::string& tensor_name)
+    nvinfer1::IExecutionContext* context, const std::string& tensor_name,
+    int32_t binding_index)
 {
   return context->getMaxOutputSize(tensor_name.c_str());
 }
 
 TRITONSERVER_Error*
-TRTv3Interface::SetFormat(const std::string& tensor_name, TensorFormat* format)
+TRTv3Interface::SetFormat(int binding_index, TensorFormat* format)
 {
   format->is_linear_format_ =
-      (instance_->engine_->getTensorFormat(tensor_name.c_str()) ==
+      (instance_->engine_->getBindingFormat(binding_index) ==
        nvinfer1::TensorFormat::kLINEAR);
   if (!format->is_linear_format_) {
     format->vectorized_dim_ =
-        instance_->engine_->getTensorVectorizedDim(tensor_name.c_str());
+        instance_->engine_->getBindingVectorizedDim(binding_index);
     format->components_per_element_ =
-        instance_->engine_->getTensorComponentsPerElement(tensor_name.c_str());
+        instance_->engine_->getBindingComponentsPerElement(binding_index);
     if (format->vectorized_dim_ == -1) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("unexpected vectorized dim is -1 for non-linear "
                        "tensor '") +
-           tensor_name + "' for " + instance_->Name())
+           instance_->engine_->getBindingName(binding_index) + "' for " +
+           instance_->Name())
               .c_str());
     }
   }
@@ -3698,14 +4057,13 @@ TRTv3Interface::SetFormat(const std::string& tensor_name, TensorFormat* format)
 
 TRITONSERVER_Error*
 TRTv3Interface::ConfigureInputDimensions(
-    TensorRTContext* context, int io_index,
+    TensorRTContext* context, int io_index, int binding_index,
     std::vector<int64_t> full_config_dims, std::vector<int64_t>* maximum_dims)
 {
   // [FIXME] WAR: max batch size needs to be special handled as it is really
   // a dynamic shape, setting it to fixed value will interfere with below
   // dimension checkings
   const auto batch_dim = full_config_dims[0];
-  const auto tensor_name = instance_->tensor_names_[io_index].c_str();
   if (instance_->support_batching_) {
     full_config_dims[0] = -1;
   }
@@ -3717,7 +4075,8 @@ TRTv3Interface::ConfigureInputDimensions(
         TRITONSERVER_ERROR_INVALID_ARG,
         (std::string("model configuration specified invalid shape for "
                      "input '") +
-         tensor_name + "' for model " + instance_->model_state_->Name() +
+         instance_->engine_->getBindingName(io_index) + "' for model " +
+         instance_->model_state_->Name() +
          ". Error details: " + TRITONSERVER_ErrorMessage(err))
             .c_str());
 
@@ -3736,13 +4095,14 @@ TRTv3Interface::ConfigureInputDimensions(
   }
   DimVecToDims(*maximum_dims, &context->max_dims_[io_index]);
 
-  if (!context->context_->setInputShape(
-          tensor_name, context->max_dims_[io_index])) {
+  if (!context->context_->setBindingDimensions(
+          binding_index, context->max_dims_[io_index])) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("trt failed to set binding dimension to ") +
          DimsDebugString(context->max_dims_[io_index]) + " for input '" +
-         tensor_name + "' for " + instance_->Name())
+         instance_->engine_->getBindingName(io_index) + "' for " +
+         instance_->Name())
             .c_str());
   }
 
@@ -3786,7 +4146,7 @@ TRITONSERVER_Error*
 TRTv3Interface::SetBindingDimensions(
     const std::string& input_name, const std::vector<int64_t>& shape,
     const TensorRTContext& trt_context, const size_t io_index,
-    std::vector<int64_t>* cuda_graph_key)
+    const size_t binding_index, std::vector<int64_t>* cuda_graph_key)
 {
   if (cuda_graph_key != nullptr) {
     cuda_graph_key->insert(cuda_graph_key->end(), shape.begin(), shape.end());
@@ -3823,8 +4183,7 @@ TRTv3Interface::SetBindingDimensions(
     return nullptr;
   }
 
-  if (!trt_context.context_->setInputShape(
-          instance_->tensor_names_[io_index].c_str(), this_dim)) {
+  if (!trt_context.context_->setBindingDimensions(binding_index, this_dim)) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("trt failed to set binding dimension to ") +

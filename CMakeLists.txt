@@ -102,35 +102,56 @@ if(${TRITON_ENABLE_NVTX})
   add_definitions(-DTRITON_ENABLE_NVTX=1)
 endif() # TRITON_ENABLE_NVTX
 
+if(NOT DEFINED ENV{TRT_VERSION})
+  set(ENV{TRT_VERSION} 10.0.1.6)
+endif()
+
+message(STATUS "TRT_VERSION envvar is $ENV{TRT_VERSION}")
+
+#
+# FIXME: Update src folder to build with TRT8 and then remove
+# src_trt8 folder.
+# Currently the iGPU builds are still using TensorRT 8. This means
+# we need to keep supporting TRT 8 for this backend. As there has
+# been significant clean-ups when moving from TRT 8 to TRT 10
+# we are maintaining a previous version of backend for now.
+#
+if("$ENV{TRT_VERSION}" VERSION_LESS 10)
+  set(SOURCE_DIR "src_trt8")
+else()
+  set(SOURCE_DIR "src")
+endif()
+
+
 #
 # Shared library implementing the Triton Backend API
 #
-configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
+configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
 
 add_library(
   triton-tensorrt-backend SHARED
-  src/tensorrt.cc
-  src/model_state.cc
-  src/tensorrt_model.cc
-  src/tensorrt_model.h
-  src/instance_state.cc
-  src/tensorrt_model_instance.cc
-  src/tensorrt_model_instance.h
-  src/tensorrt_utils.cc
-  src/tensorrt_utils.h
-  src/filesystem.h
-  src/filesystem.cc
-  src/semaphore.h
-  src/shared_library.h
-  src/shared_library.cc
-  src/loader.cc
-  src/loader.h
-  src/logging.cc
-  src/logging.h
-  src/output_allocator.cc
-  src/output_allocator.h
-  src/io_binding_info.cc
-  src/io_binding_info.h
+  ${SOURCE_DIR}/tensorrt.cc
+  ${SOURCE_DIR}/model_state.cc
+  ${SOURCE_DIR}/tensorrt_model.cc
+  ${SOURCE_DIR}/tensorrt_model.h
+  ${SOURCE_DIR}/instance_state.cc
+  ${SOURCE_DIR}/tensorrt_model_instance.cc
+  ${SOURCE_DIR}/tensorrt_model_instance.h
+  ${SOURCE_DIR}/tensorrt_utils.cc
+  ${SOURCE_DIR}/tensorrt_utils.h
+  ${SOURCE_DIR}/filesystem.h
+  ${SOURCE_DIR}/filesystem.cc
+  ${SOURCE_DIR}/semaphore.h
+  ${SOURCE_DIR}/shared_library.h
+  ${SOURCE_DIR}/shared_library.cc
+  ${SOURCE_DIR}/loader.cc
+  ${SOURCE_DIR}/loader.h
+  ${SOURCE_DIR}/logging.cc
+  ${SOURCE_DIR}/logging.h
+  ${SOURCE_DIR}/output_allocator.cc
+  ${SOURCE_DIR}/output_allocator.h
+  ${SOURCE_DIR}/io_binding_info.cc
+  ${SOURCE_DIR}/io_binding_info.h
 )
 
 add_library(
@@ -139,7 +160,7 @@ add_library(
 
 target_include_directories(
   triton-tensorrt-backend
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
 )
 
 target_include_directories(
