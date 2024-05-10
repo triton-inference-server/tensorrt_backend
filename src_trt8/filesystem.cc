@@ -1,4 +1,4 @@
-// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -24,50 +24,48 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#pragma once
+#include "logging.h"
+#include "mutex"
+#include "shared_library.h"
 
-#include <NvInfer.h>
-#include <malloc.h>
+/// FIXME: Duplication of core/src/shared_library.cc
+/// Separate shared_library to common library and delete this
+
+#ifdef _WIN32
+// suppress the min and max definitions in Windef.h.
+#define NOMINMAX
+#include <Windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends nvinfer1::IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all of its
-  // functions use camel case.
- public:
-  OutputAllocator(bool zero_copy_support)
-      : zero_copy_support_(zero_copy_support)
-  {
+std::string
+DirName(const std::string& path)
+{
+  if (path.empty()) {
+    return path;
   }
-  // Allocates output dimensions
-  void* reallocateOutput(
-      char const* tensor_name, void* current_memory, uint64_t size,
-      uint64_t alignment) noexcept override;
 
-  // Updates output dimensions
-  void notifyShape(
-      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
+  size_t last = path.size() - 1;
+  while ((last > 0) && (path[last] == '/')) {
+    last -= 1;
+  }
 
-  nvinfer1::Dims getShape() { return output_dims_; }
+  if (path[last] == '/') {
+    return std::string("/");
+  }
 
-  void* getBuffer() { return output_ptr_; };
-  void** getBufferAddr() { return &output_ptr_; };
+  const size_t idx = path.find_last_of("/", last);
+  if (idx == std::string::npos) {
+    return std::string(".");
+  }
+  if (idx == 0) {
+    return std::string("/");
+  }
 
-  ~OutputAllocator() override;
-
- private:
-  // Saved dimensions of the output tensor
-  nvinfer1::Dims output_dims_{};
-
-  // Pointer to output, nullptr if memory could not be allocated
-  void* output_ptr_{nullptr};
-
-  // Size of allocation pointed to by output
-  uint64_t output_size_{0};
-
-  // Boolean flag indicating if zero copy support is enabled
-  bool zero_copy_support_{false};
-};
+  return path.substr(0, idx);
+}
 
 }}}  // namespace triton::backend::tensorrt

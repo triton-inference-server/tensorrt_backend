@@ -1,4 +1,4 @@
-// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -23,51 +23,38 @@
 // OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 #pragma once
 
 #include <NvInfer.h>
-#include <malloc.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "logging.h"
+#include "model_state.h"
+#include "triton/core/tritonserver.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends nvinfer1::IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all of its
-  // functions use camel case.
- public:
-  OutputAllocator(bool zero_copy_support)
-      : zero_copy_support_(zero_copy_support)
-  {
-  }
-  // Allocates output dimensions
-  void* reallocateOutput(
-      char const* tensor_name, void* current_memory, uint64_t size,
-      uint64_t alignment) noexcept override;
-
-  // Updates output dimensions
-  void notifyShape(
-      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
-
-  nvinfer1::Dims getShape() { return output_dims_; }
-
-  void* getBuffer() { return output_ptr_; };
-  void** getBufferAddr() { return &output_ptr_; };
-
-  ~OutputAllocator() override;
-
- private:
-  // Saved dimensions of the output tensor
-  nvinfer1::Dims output_dims_{};
-
-  // Pointer to output, nullptr if memory could not be allocated
-  void* output_ptr_{nullptr};
-
-  // Size of allocation pointed to by output
-  uint64_t output_size_{0};
-
-  // Boolean flag indicating if zero copy support is enabled
-  bool zero_copy_support_{false};
-};
+/// Load a TensorRT plan from a serialized plan file and return the
+/// corresponding runtime and engine. It is the caller's
+/// responsibility to destroy any returned runtime or engine object
+/// even if an error is returned.
+///
+/// \param plan_path The path to the model plan file.
+/// \param dla_core_id The DLA core to use for this runtime. Does not
+/// use DLA when set to -1.
+/// \param tensorrt_logger The logger to be used by this TensorRT plan.
+/// \param runtime Returns the IRuntime object, or nullptr if failed
+/// to create.
+/// \param engine Returns the ICudaEngine object, or nullptr if failed
+/// to create.
+/// \return Error status.
+TRITONSERVER_Error* LoadPlan(
+    const std::string& plan_path, const int64_t dla_core_id,
+    std::shared_ptr<nvinfer1::IRuntime>* runtime,
+    std::shared_ptr<nvinfer1::ICudaEngine>* engine,
+    TensorRTLogger* tensorrt_logger);
 
 }}}  // namespace triton::backend::tensorrt

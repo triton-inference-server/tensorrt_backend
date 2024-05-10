@@ -1,4 +1,4 @@
-// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -24,50 +24,45 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#pragma once
+#include "logging.h"
 
-#include <NvInfer.h>
-#include <malloc.h>
+#include "triton/backend/backend_common.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends nvinfer1::IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all of its
-  // functions use camel case.
- public:
-  OutputAllocator(bool zero_copy_support)
-      : zero_copy_support_(zero_copy_support)
-  {
+void
+TensorRTLogger::log(Severity severity, const char* msg) noexcept
+{
+  switch (severity) {
+    case Severity::kINTERNAL_ERROR:  // fall-through to 'Severity::kERROR'
+    case Severity::kERROR:
+      RecordErrorMsg(msg);
+      LOG_MESSAGE(TRITONSERVER_LOG_ERROR, msg);
+      break;
+    case Severity::kWARNING:
+      LOG_MESSAGE(TRITONSERVER_LOG_WARN, msg);
+      break;
+    case Severity::kINFO:
+      LOG_MESSAGE(TRITONSERVER_LOG_INFO, msg);
+      break;
+    case Severity::kVERBOSE:
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, msg);
+      break;
   }
-  // Allocates output dimensions
-  void* reallocateOutput(
-      char const* tensor_name, void* current_memory, uint64_t size,
-      uint64_t alignment) noexcept override;
+}
 
-  // Updates output dimensions
-  void notifyShape(
-      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
+void
+TensorRTLogger::RecordErrorMsg(const char* msg) noexcept
+{
+  std::lock_guard<std::mutex> lock(last_error_msg_mu_);
+  last_error_msg_ = std::string(msg);
+}
 
-  nvinfer1::Dims getShape() { return output_dims_; }
-
-  void* getBuffer() { return output_ptr_; };
-  void** getBufferAddr() { return &output_ptr_; };
-
-  ~OutputAllocator() override;
-
- private:
-  // Saved dimensions of the output tensor
-  nvinfer1::Dims output_dims_{};
-
-  // Pointer to output, nullptr if memory could not be allocated
-  void* output_ptr_{nullptr};
-
-  // Size of allocation pointed to by output
-  uint64_t output_size_{0};
-
-  // Boolean flag indicating if zero copy support is enabled
-  bool zero_copy_support_{false};
-};
+std::string
+TensorRTLogger::LastErrorMsg()
+{
+  std::lock_guard<std::mutex> lock(last_error_msg_mu_);
+  return last_error_msg_;
+}
 
 }}}  // namespace triton::backend::tensorrt

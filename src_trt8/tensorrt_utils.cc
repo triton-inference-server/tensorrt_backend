@@ -1,4 +1,4 @@
-// Copyright 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -46,8 +46,6 @@ ConvertTrtTypeToDataType(nvinfer1::DataType trt_type)
       return TRITONSERVER_TYPE_UINT8;
     case nvinfer1::DataType::kINT32:
       return TRITONSERVER_TYPE_INT32;
-    case nvinfer1::DataType::kINT64:
-      return TRITONSERVER_TYPE_INT64;
     case nvinfer1::DataType::kBOOL:
       return TRITONSERVER_TYPE_BOOL;
     default:
@@ -69,13 +67,19 @@ ConvertTrtTypeToConfigDataType(nvinfer1::DataType trt_type)
       return "TYPE_UINT8";
     case nvinfer1::DataType::kINT32:
       return "TYPE_INT32";
-    case nvinfer1::DataType::kINT64:
-      return "TYPE_INT64";
     case nvinfer1::DataType::kBOOL:
       return "TYPE_BOOL";
     default:
       return "TYPE_INVALID";
   }
+}
+
+bool
+UseTensorRTv1API(const std::shared_ptr<nvinfer1::ICudaEngine>& engine)
+{
+  // If the engine still uses implicit batch dimension (deprecated),
+  // TensorRT V1 API must be used to serve the model.
+  return engine->hasImplicitBatchDimension();
 }
 
 TRITONSERVER_Error*
@@ -118,9 +122,6 @@ ConvertDataTypeToTrtType(const TRITONSERVER_DataType& dtype)
       break;
     case TRITONSERVER_TYPE_INT32:
       trt_type = nvinfer1::DataType::kINT32;
-      break;
-    case TRITONSERVER_TYPE_INT64:
-      trt_type = nvinfer1::DataType::kINT64;
       break;
     case TRITONSERVER_TYPE_BOOL:
       trt_type = nvinfer1::DataType::kBOOL;
@@ -167,7 +168,8 @@ TRITONSERVER_Error*
 CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, common::TritonJson::Value& dims,
-    const bool supports_batching, const bool compare_exact)
+    const bool supports_batching, const bool contains_explicit_batch,
+    const bool compare_exact)
 {
   std::vector<int64_t> dims_vec;
   for (size_t i = 0; i < dims.ArraySize(); i++) {
@@ -178,7 +180,7 @@ CompareDimsSupported(
 
   RETURN_IF_ERROR(CompareDimsSupported(
       model_name, tensor_name, model_dims, dims_vec, supports_batching,
-      compare_exact));
+      contains_explicit_batch, compare_exact));
   return nullptr;
 }
 
@@ -186,11 +188,12 @@ TRITONSERVER_Error*
 CompareDimsSupported(
     const std::string& model_name, const std::string& tensor_name,
     const nvinfer1::Dims& model_dims, const std::vector<int64_t>& dims,
-    const bool supports_batching, const bool compare_exact)
+    const bool supports_batching, const bool contains_explicit_batch,
+    const bool compare_exact)
 {
   // If the model configuration expects batching support in the model,
   // then the first dimension must be -1.
-  if (supports_batching) {
+  if (supports_batching && contains_explicit_batch) {
     if ((model_dims.nbDims == 0)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
@@ -501,13 +504,6 @@ SupportsIntegratedZeroCopy(const int gpu_id, bool* zero_copy_support)
   }
 
   return nullptr;
-}
-
-bool
-IsInput(nvinfer1::ICudaEngine* engine, const std::string& tensor_name)
-{
-  return engine->getTensorIOMode(tensor_name.c_str()) ==
-         nvinfer1::TensorIOMode::kINPUT;
 }
 
 }}}  // namespace triton::backend::tensorrt
