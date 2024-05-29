@@ -81,6 +81,50 @@ struct BackendConfiguration {
   bool enable_memory_tracker_{false};
 };
 
+enum class ShapeTensorDataType { INT32, INT64 };
+
+class ShapeTensor {
+ public:
+  ShapeTensor()
+      : size_(0), element_cnt_(0), datatype_(ShapeTensorDataType::INT32),
+        data_(nullptr)
+  {
+  }
+
+  TRITONSERVER_Error* SetDataFromBuffer(
+      const char* data, const TRITONSERVER_DataType datatype,
+      const size_t element_cnt, const bool support_batching,
+      const size_t total_batch_size);
+
+  TRITONSERVER_Error* SetDataFromShapeValues(
+      const int32_t* shape_values, const TRITONSERVER_DataType datatype,
+      const size_t element_cnt);
+
+  size_t GetSize() const { return size_; }
+  size_t GetElementCount() const { return element_cnt_; }
+  ShapeTensorDataType GetDataType() const { return datatype_; }
+  const void* GetData() const { return static_cast<const void*>(data_.get()); }
+
+  const char* GetDataTypeString() const
+  {
+    switch (datatype_) {
+      case ShapeTensorDataType::INT32:
+        return "INT32";
+      case ShapeTensorDataType::INT64:
+        return "INT64";
+      default:
+        break;
+    }
+    return nullptr;
+  }
+
+ private:
+  size_t size_;
+  size_t element_cnt_;
+  ShapeTensorDataType datatype_;
+  std::unique_ptr<char[]> data_;
+};
+
 class ModelInstanceState;
 // A struct to hold TensorRT execution context and its meta data, a
 // backend context can have multiple of this struct if multiple
@@ -136,13 +180,13 @@ struct TensorRTContext {
   std::vector<nvinfer1::Dims> opt_dims_{};
 
   // Min shape values per bindings
-  std::vector<const int32_t*> min_shapes_{};
+  std::vector<ShapeTensor> min_shapes_{};
 
   // Max shape values per bindings
-  std::vector<const int32_t*> max_shapes_{};
+  std::vector<ShapeTensor> max_shapes_{};
 
   // Optimized shape values per bindings
-  std::vector<const int32_t*> opt_shapes_{};
+  std::vector<ShapeTensor> opt_shapes_{};
 
   // The number of shape values
   size_t nb_shape_values_{0};
@@ -241,6 +285,7 @@ class TRTv3Interface : public TRTInterface {
 #endif  // TRITON_ENABLE_CUDA_GRAPH
 };
 
+
 //
 // ModelInstanceState
 //
@@ -333,16 +378,16 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   TRITONSERVER_Error* GetRequestShapeValues(
       size_t total_batch_size, TRITONBACKEND_Request* request,
-      std::map<int, std::vector<int32_t>>* request_shape_values);
+      std::map<int, ShapeTensor>* request_shape_values);
   TRITONSERVER_Error* GetMostOptimizedProfile(
       size_t total_batch_size, TRITONBACKEND_Request** requests,
       uint32_t request_count,
-      const std::map<int, std::vector<int32_t>>& request_shape_values,
+      const std::map<int, ShapeTensor>& request_shape_values,
       std::map<int, TensorRTContext>::iterator* citr);
   TRITONSERVER_Error* EvaluateTensorRTContext(
       std::map<int, TensorRTContext>::iterator& citr, size_t total_batch_size,
       TRITONBACKEND_Request** requests, uint32_t request_count,
-      const std::map<int, std::vector<int32_t>>& request_shape_values,
+      const std::map<int, ShapeTensor>& request_shape_values,
       int64_t* error_distance);
 
   bool SetOutputShapeTensorBuffer(

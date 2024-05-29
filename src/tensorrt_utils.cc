@@ -360,34 +360,40 @@ ValidateControlDimsDynamic(
 
 TRITONSERVER_Error*
 ValidateShapeValues(
-    const std::vector<int32_t>& request_shape_values,
-    const int32_t* min_shape_values, const int32_t* max_shape_values,
-    size_t nb_shape_values, const bool support_batching)
+    const ShapeTensor& request_shape_values,
+    const ShapeTensor& min_shape_values, const ShapeTensor& max_shape_values,
+    size_t nb_shape_values)
 {
-  if (request_shape_values.size() != nb_shape_values) {
+  if (request_shape_values.GetElementCount() != nb_shape_values) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INVALID_ARG,
         (std::string(
              "mismatch between the number of shape values. Expecting ") +
          std::to_string(nb_shape_values) + ". Got " +
-         std::to_string(request_shape_values.size()))
+         std::to_string(request_shape_values.GetElementCount()))
             .c_str());
   }
 
-  for (size_t i = 0; i < nb_shape_values; i++) {
-    if (request_shape_values[i] < *(min_shape_values + i) ||
-        request_shape_values[i] > *(max_shape_values + i)) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("The shape value at index ") + std::to_string(i) +
-           " is expected to be in range from " +
-           std::to_string(*(min_shape_values + i)) + " to " +
-           std::to_string(*(max_shape_values + i)) +
-           ", Got: " + std::to_string(request_shape_values[i]))
-              .c_str());
-    }
+  if (request_shape_values.GetDataType() != min_shape_values.GetDataType() ||
+      request_shape_values.GetDataType() != max_shape_values.GetDataType()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string(
+             "mismatch between the datatypes of shape values. Expecting ") +
+         std::string(min_shape_values.GetDataTypeString()) + ". Got " +
+         std::string(request_shape_values.GetDataTypeString()))
+            .c_str());
   }
-  return nullptr;
+
+  if (request_shape_values.GetDataType() == ShapeTensorDataType::INT32) {
+    return CheckShapeTensorInRange<int32_t>(
+        request_shape_values, min_shape_values, max_shape_values,
+        nb_shape_values);
+  } else {
+    return CheckShapeTensorInRange<int64_t>(
+        request_shape_values, min_shape_values, max_shape_values,
+        nb_shape_values);
+  }
 }
 
 void
@@ -508,6 +514,33 @@ IsInput(nvinfer1::ICudaEngine* engine, const std::string& tensor_name)
 {
   return engine->getTensorIOMode(tensor_name.c_str()) ==
          nvinfer1::TensorIOMode::kINPUT;
+}
+
+bool
+ValidateBatchSize(
+    const size_t total_batch_size, const ShapeTensor& min_shape_values,
+    const ShapeTensor& max_shape_values)
+{
+  ShapeTensorDataType datatype = min_shape_values.GetDataType();
+
+  if (datatype == ShapeTensorDataType::INT32) {
+    const int32_t* min_values =
+        static_cast<const int32_t*>(min_shape_values.GetData());
+    const int32_t* max_values =
+        static_cast<const int32_t*>(max_shape_values.GetData());
+    return (
+        (int32_t)total_batch_size >= *min_values &&
+        (int32_t)total_batch_size <= *max_values);
+  } else if (datatype == ShapeTensorDataType::INT64) {
+    const int64_t* min_values =
+        static_cast<const int64_t*>(min_shape_values.GetData());
+    const int64_t* max_values =
+        static_cast<const int64_t*>(max_shape_values.GetData());
+    return (
+        (int64_t)total_batch_size >= *min_values &&
+        (int64_t)total_batch_size <= *max_values);
+  }
+  return false;
 }
 
 }}}  // namespace triton::backend::tensorrt

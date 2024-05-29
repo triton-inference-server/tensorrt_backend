@@ -500,7 +500,7 @@ ModelInstanceState::Run(
     return;
   }
 
-  std::map<int32_t, std::vector<int32_t>> request_shape_values;
+  std::map<int32_t, ShapeTensor> request_shape_values;
   // Scheduler ensures all the requests have identical shape values so
   // use values from first shape tensor
   TRITONSERVER_Error* err = GetRequestShapeValues(
@@ -587,8 +587,7 @@ ModelInstanceState::Run(
       if (it != request_shape_values.end()) {
         err = ValidateShapeValues(
             it->second, citr->second.min_shapes_[io_index],
-            citr->second.max_shapes_[io_index], citr->second.nb_shape_values_,
-            support_batching_);
+            citr->second.max_shapes_[io_index], citr->second.nb_shape_values_);
       } else {
         err = TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
@@ -607,8 +606,8 @@ ModelInstanceState::Run(
         // [FIXME] formalize it, the 'buffer_' may be set directly while forming
         // the shape value
         memcpy(
-            io_binding_info.GetBuffer(), &(it->second[0]),
-            sizeof(int32_t) * it->second.size());
+            io_binding_info.GetBuffer(), it->second.GetData(),
+            it->second.GetSize());
         citr->second.context_->setInputTensorAddress(
             name.c_str(), io_binding_info.GetBuffer());
       }
@@ -1304,7 +1303,7 @@ ModelInstanceState::ProcessResponse()
 TRITONSERVER_Error*
 ModelInstanceState::GetRequestShapeValues(
     size_t total_batch_size, TRITONBACKEND_Request* request,
-    std::map<int, std::vector<int32_t>>* request_shape_values)
+    std::map<int, ShapeTensor>* request_shape_values)
 {
   // Visit all the inputs and extract the shape values present in the
   // request
@@ -1325,12 +1324,6 @@ ModelInstanceState::GetRequestShapeValues(
 
     int io_index = io_index_map_[input_name];
     if (engine_->isShapeInferenceIO(input_name)) {
-      auto it =
-          request_shape_values->emplace(io_index, std::vector<int32_t>()).first;
-      if (support_batching_) {
-        it->second.push_back((int32_t)total_batch_size);
-      }
-
       // For now being conservative and requiring that shape tensors
       // be in a single buffer on the CPU. We can handle more cases in
       // future if necessary.
@@ -1359,38 +1352,39 @@ ModelInstanceState::GetRequestShapeValues(
                 .c_str());
       }
 
-      // FIXME DLIS-6653: With the support of INT64, shape tensors
-      // can also be of type INT64 and the assumptions that shape
-      // tensors might not always hold true.
-      // Assuming input shape tensors datatype as INT32.
       int64_t element_cnt = backend::GetElementCount(shape, dims_count);
       if (support_batching_) {
         element_cnt /= shape[0];
       }
-      const size_t expected_byte_size =
-          element_cnt * GetByteSize(TRITONSERVER_TYPE_INT32, {1});
 
-      bool includes_batch_shape_value = false;
-      if (expected_byte_size != data_byte_size) {
-        if (expected_byte_size == (data_byte_size - sizeof(int32_t))) {
-          includes_batch_shape_value = true;
-        } else {
-          return TRITONSERVER_ErrorNew(
-              TRITONSERVER_ERROR_INVALID_ARG,
-              (std::string("shape tensor for input '") + input_name +
-               "' expected byte size is " + std::to_string(expected_byte_size) +
-               " [ or " + std::to_string(expected_byte_size + sizeof(int32_t)) +
-               " if input includes batch shape value] " + ", got " +
-               std::to_string(data_byte_size))
-                  .c_str());
-        }
+      size_t datatype_size;
+      if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
+        datatype_size = TRITONSERVER_DataTypeByteSize(TRITONSERVER_TYPE_INT32);
+      } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
+        datatype_size = TRITONSERVER_DataTypeByteSize(TRITONSERVER_TYPE_INT64);
+      } else {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            "Un supported shape tensor data type");
+      }
+      const size_t expected_byte_size = element_cnt * datatype_size;
+
+      if ((expected_byte_size != data_byte_size) &&
+          (expected_byte_size != (data_byte_size - datatype_size))) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string("shape tensor for input '") + input_name +
+             "' expected byte size is " + std::to_string(expected_byte_size) +
+             " [ or " + std::to_string(expected_byte_size + datatype_size) +
+             " if input includes batch shape value] " + ", got " +
+             std::to_string(data_byte_size))
+                .c_str());
       }
 
-      const int32_t* dims = reinterpret_cast<const int32_t*>(data_buffer);
-      int64_t offset = includes_batch_shape_value ? 1 : 0;
-      for (int64_t i = offset; i < element_cnt; ++i) {
-        it->second.push_back(dims[i]);
-      }
+      auto it = request_shape_values->emplace(io_index, ShapeTensor()).first;
+      RETURN_IF_ERROR(it->second.SetDataFromBuffer(
+          data_buffer, datatype, element_cnt, support_batching_,
+          total_batch_size));
     }
   }
 
@@ -1401,7 +1395,7 @@ TRITONSERVER_Error*
 ModelInstanceState::GetMostOptimizedProfile(
     size_t total_batch_size, TRITONBACKEND_Request** requests,
     uint32_t request_count,
-    const std::map<int, std::vector<int32_t>>& request_shape_values,
+    const std::map<int, ShapeTensor>& request_shape_values,
     std::map<int, TensorRTContext>::iterator* citr)
 {
   // Returns the TensorRT context that uses profile with shortest
@@ -1452,7 +1446,7 @@ TRITONSERVER_Error*
 ModelInstanceState::EvaluateTensorRTContext(
     std::map<int, TensorRTContext>::iterator& citr, size_t total_batch_size,
     TRITONBACKEND_Request** requests, uint32_t request_count,
-    const std::map<int, std::vector<int32_t>>& request_shape_values,
+    const std::map<int, ShapeTensor>& request_shape_values,
     int64_t* error_distance)
 {
   *error_distance = 0;
@@ -1519,13 +1513,12 @@ ModelInstanceState::EvaluateTensorRTContext(
         if (it != request_shape_values.end()) {
           shape_err = ValidateShapeValues(
               it->second, citr->second.min_shapes_[io_index],
-              citr->second.max_shapes_[io_index], citr->second.nb_shape_values_,
-              support_batching_);
-          valid_bs =
-              (!support_batching_) || (((int32_t)total_batch_size >=
-                                        *citr->second.min_shapes_[io_index]) &&
-                                       ((int64_t)total_batch_size <=
-                                        *citr->second.max_shapes_[io_index]));
+              citr->second.max_shapes_[io_index],
+              citr->second.nb_shape_values_);
+          valid_bs = (!support_batching_) ||
+                     ValidateBatchSize(
+                         total_batch_size, citr->second.min_shapes_[io_index],
+                         citr->second.max_shapes_[io_index]);
         } else {
           missing_shape_values = true;
         }
@@ -1549,13 +1542,29 @@ ModelInstanceState::EvaluateTensorRTContext(
               std::abs(opt_dims.d[idx] - input_shape_vec[idx - 1]);
         }
         if (engine_->isShapeInferenceIO(input_name)) {
-          const auto* opt_shape_values = citr->second.opt_shapes_[io_index];
-          *error_distance +=
-              std::abs(*opt_shape_values - (int64_t)total_batch_size);
           auto it = request_shape_values.find(io_index);
-          for (size_t idx = 1; idx < citr->second.nb_shape_values_; idx++) {
+          if (it->second.GetDataType() == ShapeTensorDataType::INT32) {
+            const auto* shape_values =
+                reinterpret_cast<const int32_t*>(it->second.GetData());
+            const auto* opt_shape_values = reinterpret_cast<const int32_t*>(
+                citr->second.opt_shapes_[io_index].GetData());
             *error_distance +=
-                std::abs(*(opt_shape_values + idx) - it->second[idx - 1]);
+                std::abs(*opt_shape_values - (int64_t)total_batch_size);
+            for (size_t idx = 1; idx < citr->second.nb_shape_values_; idx++) {
+              *error_distance +=
+                  std::abs(*(opt_shape_values + idx) - shape_values[idx - 1]);
+            }
+          } else {
+            const auto* shape_values =
+                reinterpret_cast<const int64_t*>(it->second.GetData());
+            const auto* opt_shape_values = reinterpret_cast<const int64_t*>(
+                citr->second.opt_shapes_[io_index].GetData());
+            *error_distance +=
+                std::abs(*opt_shape_values - (int64_t)total_batch_size);
+            for (size_t idx = 1; idx < citr->second.nb_shape_values_; idx++) {
+              *error_distance +=
+                  std::abs(*(opt_shape_values + idx) - shape_values[idx - 1]);
+            }
           }
         }
       }
@@ -2996,13 +3005,14 @@ ModelInstanceState::InitializeShapeInputBinding(
       return nullptr;
     }
 
-    if (input_datatype != TRITONSERVER_TYPE_INT32) {
+    if ((input_datatype != TRITONSERVER_TYPE_INT32) &&
+        (input_datatype != TRITONSERVER_TYPE_INT64)) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
           (std::string("unexpected datatype TYPE_") +
            TRITONSERVER_DataTypeString(input_datatype) +
-           "  in model configuration for shape input '" + input_name +
-           "', expecting TYPE_INT32 for " + Name())
+           " in model configuration for shape input '" + input_name +
+           "', expecting TYPE_INT32 or TYPE_INT64 for " + Name())
               .c_str());
     }
 
@@ -3042,18 +3052,32 @@ ModelInstanceState::InitializeShapeInputBinding(
     context.nb_shape_values_ = (context.max_dims_[io_index].nbDims == 0)
                                    ? 1
                                    : context.max_dims_[io_index].d[0];
-    context.max_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMAX);
-    context.min_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kMIN);
-    context.opt_shapes_[io_index] = engine_->getProfileTensorValues(
-        input_name.c_str(), profile_index, nvinfer1::OptProfileSelector::kOPT);
+    context.max_shapes_[io_index] = ShapeTensor();
+    context.max_shapes_[io_index].SetDataFromShapeValues(
+        engine_->getProfileTensorValues(
+            input_name.c_str(), profile_index,
+            nvinfer1::OptProfileSelector::kMAX),
+        input_datatype, context.nb_shape_values_);
+
+    context.min_shapes_[io_index] = ShapeTensor();
+    context.min_shapes_[io_index].SetDataFromShapeValues(
+        engine_->getProfileTensorValues(
+            input_name.c_str(), profile_index,
+            nvinfer1::OptProfileSelector::kMIN),
+        input_datatype, context.nb_shape_values_);
+
+    context.opt_shapes_[io_index] = ShapeTensor();
+    context.opt_shapes_[io_index].SetDataFromShapeValues(
+        engine_->getProfileTensorValues(
+            input_name.c_str(), profile_index,
+            nvinfer1::OptProfileSelector::kOPT),
+        input_datatype, context.nb_shape_values_);
 
     // Set shape tensor address to buffer that contains max allowed value so
     // later shape inference will return max output shape / size for
     // pre-allocation.
     if (!context.context_->setInputTensorAddress(
-            input_name.c_str(), context.max_shapes_[io_index])) {
+            input_name.c_str(), context.max_shapes_[io_index].GetData())) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("trt failed to set the input shape binding for '") +
@@ -3835,4 +3859,87 @@ TRTv3Interface::SetBindingDimensions(
 
   return nullptr;
 }
+
+TRITONSERVER_Error*
+ShapeTensor::SetDataFromBuffer(
+    const char* data, const TRITONSERVER_DataType datatype,
+    const size_t element_cnt, const bool support_batching,
+    const size_t total_batch_size)
+{
+  if (data == nullptr) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        "Null data pointer received for Shape tensor");
+  }
+
+  element_cnt_ = element_cnt;
+  size_t datatype_size;
+
+  if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
+    datatype_size = sizeof(int32_t);
+    datatype_ = ShapeTensorDataType::INT32;
+  } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
+    datatype_size = sizeof(int64_t);
+    datatype_ = ShapeTensorDataType::INT64;
+  } else {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        "Unsupported data type received for Shape tensor");
+  }
+
+  if (support_batching) {
+    element_cnt_++;  // Account for batch size
+    size_ = element_cnt_ * datatype_size;
+    data_.reset(new char[size_]);
+
+    if (datatype_ == ShapeTensorDataType::INT32) {
+      *reinterpret_cast<int32_t*>(data_.get()) =
+          static_cast<int32_t>(total_batch_size);
+    } else if (datatype_ == ShapeTensorDataType::INT64) {
+      *reinterpret_cast<int64_t*>(data_.get()) =
+          static_cast<int64_t>(total_batch_size);
+    }
+    std::memcpy(data_.get() + datatype_size, data, (size_ - datatype_size));
+  } else {
+    size_ = element_cnt_ * datatype_size;
+    data_.reset(new char[size_]);
+    std::memcpy(data_.get(), data, size_);
+  }
+
+  return nullptr;
+}
+
+TRITONSERVER_Error*
+ShapeTensor::SetDataFromShapeValues(
+    const int32_t* shape_values, const TRITONSERVER_DataType datatype,
+    const size_t element_cnt)
+{
+  element_cnt_ = element_cnt;
+  size_t datatype_size;
+
+  if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
+    datatype_size = sizeof(int32_t);
+    datatype_ = ShapeTensorDataType::INT32;
+    size_ = element_cnt_ * datatype_size;
+    data_.reset(new char[size_]);
+    int32_t* data_ptr = reinterpret_cast<int32_t*>(data_.get());
+    std::memcpy(data_ptr, shape_values, size_);
+  } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
+    datatype_size = sizeof(int64_t);
+    datatype_ = ShapeTensorDataType::INT64;
+    size_ = element_cnt_ * datatype_size;
+    data_.reset(new char[size_]);
+    int64_t* data_ptr = reinterpret_cast<int64_t*>(data_.get());
+    for (size_t i = 0; i < element_cnt_; ++i) {
+      data_ptr[i] = static_cast<int64_t>(shape_values[i]);
+    }
+  } else {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        "Unsupported data type received for Shape tensor");
+  }
+
+  return nullptr;
+}
+
 }}}  // namespace triton::backend::tensorrt
