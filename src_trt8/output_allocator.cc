@@ -1,4 +1,4 @@
-// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -24,50 +24,54 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#pragma once
-
-#include <NvInfer.h>
-#include <malloc.h>
+#include "output_allocator.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends nvinfer1::IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all of its
-  // functions use camel case.
- public:
-  OutputAllocator(bool zero_copy_support)
-      : zero_copy_support_(zero_copy_support)
-  {
+void*
+OutputAllocator::reallocateOutput(
+    char const* tensor_name, void* current_memory, uint64_t size,
+    uint64_t alignment) noexcept
+{
+  // When the requested output size is larger than the current size,
+  // free the allocated memory and attempt to allocate the larger size
+  // for the underlying output buffer.
+  if (size > output_size_) {
+    cudaFree(output_ptr_);
+    output_ptr_ = nullptr;
+    output_size_ = 0;
+    if (zero_copy_support_) {
+      cudaHostAlloc(&output_ptr_, size, cudaHostAllocMapped);
+      // If zero copy support is enabled, need to set the buffer to the device
+      // pointer.
+      void* device_buffer;
+      auto err = cudaHostGetDevicePointer(&device_buffer, &output_ptr_, 0);
+      if (err == cudaSuccess) {
+        output_ptr_ = device_buffer;
+      }
+    } else {
+      cudaMalloc(&output_ptr_, size);
+    }
+
+    // If the memory allocation fails, output_ptr_=nullptr and engine
+    // gracefully fails.
+    if (output_ptr_ != nullptr) {
+      output_size_ = size;
+    }
   }
-  // Allocates output dimensions
-  void* reallocateOutput(
-      char const* tensor_name, void* current_memory, uint64_t size,
-      uint64_t alignment) noexcept override;
+  return output_ptr_;
+}
 
-  // Updates output dimensions
-  void notifyShape(
-      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
+void
+OutputAllocator::notifyShape(
+    char const* tensor_name, nvinfer1::Dims const& dims) noexcept
+{
+  output_dims_ = dims;
+}
 
-  nvinfer1::Dims getShape() { return output_dims_; }
-
-  void* getBuffer() { return output_ptr_; };
-  void** getBufferAddr() { return &output_ptr_; };
-
-  ~OutputAllocator() override;
-
- private:
-  // Saved dimensions of the output tensor
-  nvinfer1::Dims output_dims_{};
-
-  // Pointer to output, nullptr if memory could not be allocated
-  void* output_ptr_{nullptr};
-
-  // Size of allocation pointed to by output
-  uint64_t output_size_{0};
-
-  // Boolean flag indicating if zero copy support is enabled
-  bool zero_copy_support_{false};
-};
+OutputAllocator::~OutputAllocator()
+{
+  cudaFree(output_ptr_);
+}
 
 }}}  // namespace triton::backend::tensorrt

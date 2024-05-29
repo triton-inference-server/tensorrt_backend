@@ -1,4 +1,4 @@
-// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -24,50 +24,16 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#pragma once
+#include <string>
 
-#include <NvInfer.h>
-#include <malloc.h>
+/// FIXME: Duplication of core/src/filesystem.h
+/// Separate filesystem to common library and delete this
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends nvinfer1::IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all of its
-  // functions use camel case.
- public:
-  OutputAllocator(bool zero_copy_support)
-      : zero_copy_support_(zero_copy_support)
-  {
-  }
-  // Allocates output dimensions
-  void* reallocateOutput(
-      char const* tensor_name, void* current_memory, uint64_t size,
-      uint64_t alignment) noexcept override;
-
-  // Updates output dimensions
-  void notifyShape(
-      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
-
-  nvinfer1::Dims getShape() { return output_dims_; }
-
-  void* getBuffer() { return output_ptr_; };
-  void** getBufferAddr() { return &output_ptr_; };
-
-  ~OutputAllocator() override;
-
- private:
-  // Saved dimensions of the output tensor
-  nvinfer1::Dims output_dims_{};
-
-  // Pointer to output, nullptr if memory could not be allocated
-  void* output_ptr_{nullptr};
-
-  // Size of allocation pointed to by output
-  uint64_t output_size_{0};
-
-  // Boolean flag indicating if zero copy support is enabled
-  bool zero_copy_support_{false};
-};
+/// Get the dirname of a path.
+/// \param path The path.
+/// \return all but the last segment of the path.
+std::string DirName(const std::string& path);
 
 }}}  // namespace triton::backend::tensorrt

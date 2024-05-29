@@ -1,4 +1,4 @@
-// Copyright 2023-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -23,51 +23,30 @@
 // OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 #pragma once
 
 #include <NvInfer.h>
-#include <malloc.h>
+
+#include <mutex>
+#include <string>
 
 namespace triton { namespace backend { namespace tensorrt {
 
-class OutputAllocator : public nvinfer1::IOutputAllocator {
-  // This class extends nvinfer1::IOutputAllocator and its functions
-  // reallocateOutput and notifyShape. For consistency, all of its
-  // functions use camel case.
+// Logger for TensorRT API
+class TensorRTLogger : public nvinfer1::ILogger {
+  // Called by TensorRT to log messages
+  void log(Severity severity, const char* msg) noexcept override;
+
  public:
-  OutputAllocator(bool zero_copy_support)
-      : zero_copy_support_(zero_copy_support)
-  {
-  }
-  // Allocates output dimensions
-  void* reallocateOutput(
-      char const* tensor_name, void* current_memory, uint64_t size,
-      uint64_t alignment) noexcept override;
-
-  // Updates output dimensions
-  void notifyShape(
-      char const* tensor_name, nvinfer1::Dims const& dims) noexcept override;
-
-  nvinfer1::Dims getShape() { return output_dims_; }
-
-  void* getBuffer() { return output_ptr_; };
-  void** getBufferAddr() { return &output_ptr_; };
-
-  ~OutputAllocator() override;
+  // Return the last 'Severity::kERROR' message logged by TensorRT
+  std::string LastErrorMsg();
 
  private:
-  // Saved dimensions of the output tensor
-  nvinfer1::Dims output_dims_{};
+  // Record error messages logged by TensorRT
+  void RecordErrorMsg(const char* msg) noexcept;
 
-  // Pointer to output, nullptr if memory could not be allocated
-  void* output_ptr_{nullptr};
-
-  // Size of allocation pointed to by output
-  uint64_t output_size_{0};
-
-  // Boolean flag indicating if zero copy support is enabled
-  bool zero_copy_support_{false};
+  std::mutex last_error_msg_mu_;  // Protect the last error message string.
+  std::string last_error_msg_;
 };
 
 }}}  // namespace triton::backend::tensorrt
