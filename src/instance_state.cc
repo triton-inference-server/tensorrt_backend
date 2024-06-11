@@ -1357,16 +1357,7 @@ ModelInstanceState::GetRequestShapeValues(
         element_cnt /= shape[0];
       }
 
-      size_t datatype_size;
-      if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
-        datatype_size = TRITONSERVER_DataTypeByteSize(TRITONSERVER_TYPE_INT32);
-      } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
-        datatype_size = TRITONSERVER_DataTypeByteSize(TRITONSERVER_TYPE_INT64);
-      } else {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            "Un supported shape tensor data type");
-      }
+      const size_t datatype_size = TRITONSERVER_DataTypeByteSize(datatype);
       const size_t expected_byte_size = element_cnt * datatype_size;
 
       if ((expected_byte_size != data_byte_size) &&
@@ -1543,29 +1534,8 @@ ModelInstanceState::EvaluateTensorRTContext(
         }
         if (engine_->isShapeInferenceIO(input_name)) {
           auto it = request_shape_values.find(io_index);
-          if (it->second.GetDataType() == ShapeTensorDataType::INT32) {
-            const auto* shape_values =
-                reinterpret_cast<const int32_t*>(it->second.GetData());
-            const auto* opt_shape_values = reinterpret_cast<const int32_t*>(
-                citr->second.opt_shapes_[io_index].GetData());
-            *error_distance +=
-                std::abs(*opt_shape_values - (int64_t)total_batch_size);
-            for (size_t idx = 1; idx < citr->second.nb_shape_values_; idx++) {
-              *error_distance +=
-                  std::abs(*(opt_shape_values + idx) - shape_values[idx - 1]);
-            }
-          } else {
-            const auto* shape_values =
-                reinterpret_cast<const int64_t*>(it->second.GetData());
-            const auto* opt_shape_values = reinterpret_cast<const int64_t*>(
-                citr->second.opt_shapes_[io_index].GetData());
-            *error_distance +=
-                std::abs(*opt_shape_values - (int64_t)total_batch_size);
-            for (size_t idx = 1; idx < citr->second.nb_shape_values_; idx++) {
-              *error_distance +=
-                  std::abs(*(opt_shape_values + idx) - shape_values[idx - 1]);
-            }
-          }
+          *error_distance += it->second.GetDistance(
+              citr->second.opt_shapes_[io_index], total_batch_size);
         }
       }
     }
@@ -3855,88 +3825,6 @@ TRTv3Interface::SetBindingDimensions(
          DimsDebugString(this_dim) + " for input '" + input_name + "' for " +
          instance_->Name())
             .c_str());
-  }
-
-  return nullptr;
-}
-
-TRITONSERVER_Error*
-ShapeTensor::SetDataFromBuffer(
-    const char* data, const TRITONSERVER_DataType datatype,
-    const size_t element_cnt, const bool support_batching,
-    const size_t total_batch_size)
-{
-  if (data == nullptr) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "Null data pointer received for Shape tensor");
-  }
-
-  element_cnt_ = element_cnt;
-  size_t datatype_size;
-
-  if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
-    datatype_size = sizeof(int32_t);
-    datatype_ = ShapeTensorDataType::INT32;
-  } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
-    datatype_size = sizeof(int64_t);
-    datatype_ = ShapeTensorDataType::INT64;
-  } else {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "Unsupported data type received for Shape tensor");
-  }
-
-  if (support_batching) {
-    element_cnt_++;  // Account for batch size
-    size_ = element_cnt_ * datatype_size;
-    data_.reset(new char[size_]);
-
-    if (datatype_ == ShapeTensorDataType::INT32) {
-      *reinterpret_cast<int32_t*>(data_.get()) =
-          static_cast<int32_t>(total_batch_size);
-    } else if (datatype_ == ShapeTensorDataType::INT64) {
-      *reinterpret_cast<int64_t*>(data_.get()) =
-          static_cast<int64_t>(total_batch_size);
-    }
-    std::memcpy(data_.get() + datatype_size, data, (size_ - datatype_size));
-  } else {
-    size_ = element_cnt_ * datatype_size;
-    data_.reset(new char[size_]);
-    std::memcpy(data_.get(), data, size_);
-  }
-
-  return nullptr;
-}
-
-TRITONSERVER_Error*
-ShapeTensor::SetDataFromShapeValues(
-    const int32_t* shape_values, const TRITONSERVER_DataType datatype,
-    const size_t element_cnt)
-{
-  element_cnt_ = element_cnt;
-  size_t datatype_size;
-
-  if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
-    datatype_size = sizeof(int32_t);
-    datatype_ = ShapeTensorDataType::INT32;
-    size_ = element_cnt_ * datatype_size;
-    data_.reset(new char[size_]);
-    int32_t* data_ptr = reinterpret_cast<int32_t*>(data_.get());
-    std::memcpy(data_ptr, shape_values, size_);
-  } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
-    datatype_size = sizeof(int64_t);
-    datatype_ = ShapeTensorDataType::INT64;
-    size_ = element_cnt_ * datatype_size;
-    data_.reset(new char[size_]);
-    int64_t* data_ptr = reinterpret_cast<int64_t*>(data_.get());
-    for (size_t i = 0; i < element_cnt_; ++i) {
-      data_ptr[i] = static_cast<int64_t>(shape_values[i]);
-    }
-  } else {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "Unsupported data type received for Shape tensor");
   }
 
   return nullptr;

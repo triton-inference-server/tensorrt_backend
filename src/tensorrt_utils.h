@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-#include "instance_state.h"
+#include "shape_tensor.h"
 #include "triton/backend/backend_common.h"
 #include "triton/core/tritonserver.h"
 
