@@ -242,7 +242,6 @@ class TRTv3Interface : public TRTInterface {
 #endif  // TRITON_ENABLE_CUDA_GRAPH
 };
 
-
 //
 // ModelInstanceState
 //
