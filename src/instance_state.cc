@@ -1357,24 +1357,9 @@ ModelInstanceState::GetRequestShapeValues(
         element_cnt /= shape[0];
       }
 
-      const size_t datatype_size = TRITONSERVER_DataTypeByteSize(datatype);
-      const size_t expected_byte_size = element_cnt * datatype_size;
-
-      if ((expected_byte_size != data_byte_size) &&
-          (expected_byte_size != (data_byte_size - datatype_size))) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            (std::string("shape tensor for input '") + input_name +
-             "' expected byte size is " + std::to_string(expected_byte_size) +
-             " [ or " + std::to_string(expected_byte_size + datatype_size) +
-             " if input includes batch shape value] " + ", got " +
-             std::to_string(data_byte_size))
-                .c_str());
-      }
-
       auto it = request_shape_values->emplace(io_index, ShapeTensor()).first;
       RETURN_IF_ERROR(it->second.SetDataFromBuffer(
-          data_buffer, datatype, element_cnt, support_batching_,
+          data_buffer, data_byte_size, datatype, element_cnt, input_name, support_batching_,
           total_batch_size));
     }
   }

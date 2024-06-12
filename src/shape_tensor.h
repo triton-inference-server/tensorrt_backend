@@ -41,34 +41,37 @@ enum class ShapeTensorDataType { INT32, INT64 };
 class ShapeTensor {
  public:
   ShapeTensor()
-      : size_(0), element_cnt_(0), datatype_(ShapeTensorDataType::INT32),
-        data_(nullptr)
+      : size_(0), nb_shape_values_(0), datatype_(ShapeTensorDataType::INT32)
   {
   }
 
   TRITONSERVER_Error* SetDataFromBuffer(
-      const char* data, const TRITONSERVER_DataType datatype,
-      const size_t element_cnt, const bool support_batching,
-      const size_t total_batch_size);
+      const char* data_buffer, size_t data_byte_size,
+      TRITONSERVER_DataType datatype, size_t nb_shape_values,
+      const char* input_name, bool support_batching, size_t total_batch_size);
 
   TRITONSERVER_Error* SetDataFromShapeValues(
-      const int32_t* shape_values, const TRITONSERVER_DataType datatype,
-      const size_t element_cnt);
+      const int32_t* shape_values, TRITONSERVER_DataType datatype,
+      size_t nb_shape_values);
 
-  int64_t GetDistance(
-      const ShapeTensor& other, const int64_t total_batch_size) const;
+  int64_t GetDistance(const ShapeTensor& other, int64_t total_batch_size) const;
+
   const char* GetDataTypeString() const;
 
   size_t GetSize() const { return size_; }
-  size_t GetElementCount() const { return element_cnt_; }
+  size_t GetNbShapeValues() const { return nb_shape_values_; }
   ShapeTensorDataType GetDataType() const { return datatype_; }
   const void* GetData() const { return static_cast<const void*>(data_.get()); }
 
  private:
   size_t size_;
-  size_t element_cnt_;
+  size_t nb_shape_values_;
   ShapeTensorDataType datatype_;
   std::unique_ptr<char[]> data_;
+
+  TRITONSERVER_Error* ValidateDataByteSize(
+      size_t expected_byte_size, const char* input_name,
+      size_t datatype_size) const;
 };
 
 }}}  // namespace triton::backend::tensorrt

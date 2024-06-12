@@ -371,13 +371,13 @@ ValidateShapeValues(
     const ShapeTensor& min_shape_values, const ShapeTensor& max_shape_values,
     size_t nb_shape_values)
 {
-  if (request_shape_values.GetElementCount() != nb_shape_values) {
+  if (request_shape_values.GetNbShapeValues() != nb_shape_values) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INVALID_ARG,
         (std::string(
              "mismatch between the number of shape values. Expecting ") +
          std::to_string(nb_shape_values) + ". Got " +
-         std::to_string(request_shape_values.GetElementCount()))
+         std::to_string(request_shape_values.GetNbShapeValues()))
             .c_str());
   }
 
