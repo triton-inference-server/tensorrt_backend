@@ -1359,8 +1359,8 @@ ModelInstanceState::GetRequestShapeValues(
 
       auto it = request_shape_values->emplace(io_index, ShapeTensor()).first;
       RETURN_IF_ERROR(it->second.SetDataFromBuffer(
-          data_buffer, data_byte_size, datatype, element_cnt, input_name, support_batching_,
-          total_batch_size));
+          data_buffer, data_byte_size, datatype, element_cnt, input_name,
+          support_batching_, total_batch_size));
     }
   }
 
