@@ -216,8 +216,9 @@ FOREACH(p ${TRITON_TENSORRT_LIB_PATHS})
     set(TRITON_TENSORRT_LDFLAGS ${TRITON_TENSORRT_LDFLAGS} "-L${p}")
 ENDFOREACH(p)
 
-find_library(NVINFER_LIBRARY NAMES nvinfer)
-find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin)
+# FIXME: TRT 10 appears to have differently named libraries with "_10" suffix
+find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10)
+find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10)
 target_link_libraries(
   triton-tensorrt-backend
   PRIVATE
