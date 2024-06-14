@@ -87,19 +87,16 @@ ShapeTensor::SetDataFromShapeValues(
     size_t nb_shape_values)
 {
   nb_shape_values_ = nb_shape_values;
-  size_t datatype_size;
+  const size_t datatype_size = TRITONSERVER_DataTypeByteSize(datatype);
+  size_ = nb_shape_values_ * datatype_size;
 
   if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT32) {
-    datatype_size = sizeof(int32_t);
     datatype_ = ShapeTensorDataType::INT32;
-    size_ = nb_shape_values_ * datatype_size;
     data_.reset(new char[size_]);
     int32_t* data_ptr = reinterpret_cast<int32_t*>(data_.get());
     std::memcpy(data_ptr, shape_values, size_);
   } else if (datatype == TRITONSERVER_DataType::TRITONSERVER_TYPE_INT64) {
-    datatype_size = sizeof(int64_t);
     datatype_ = ShapeTensorDataType::INT64;
-    size_ = nb_shape_values_ * datatype_size;
     data_.reset(new char[size_]);
     int64_t* data_ptr = reinterpret_cast<int64_t*>(data_.get());
     for (size_t i = 0; i < nb_shape_values_; ++i) {
