@@ -35,6 +35,7 @@
 #include "io_binding_info.h"
 #include "model_state.h"
 #include "semaphore.h"
+#include "shape_tensor.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
@@ -136,13 +137,13 @@ struct TensorRTContext {
   std::vector<nvinfer1::Dims> opt_dims_{};
 
   // Min shape values per bindings
-  std::vector<const int32_t*> min_shapes_{};
+  std::vector<ShapeTensor> min_shapes_{};
 
   // Max shape values per bindings
-  std::vector<const int32_t*> max_shapes_{};
+  std::vector<ShapeTensor> max_shapes_{};
 
   // Optimized shape values per bindings
-  std::vector<const int32_t*> opt_shapes_{};
+  std::vector<ShapeTensor> opt_shapes_{};
 
   // The number of shape values
   size_t nb_shape_values_{0};
@@ -333,16 +334,16 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   TRITONSERVER_Error* GetRequestShapeValues(
       size_t total_batch_size, TRITONBACKEND_Request* request,
-      std::map<int, std::vector<int32_t>>* request_shape_values);
+      std::map<int, ShapeTensor>* request_shape_values);
   TRITONSERVER_Error* GetMostOptimizedProfile(
       size_t total_batch_size, TRITONBACKEND_Request** requests,
       uint32_t request_count,
-      const std::map<int, std::vector<int32_t>>& request_shape_values,
+      const std::map<int, ShapeTensor>& request_shape_values,
       std::map<int, TensorRTContext>::iterator* citr);
   TRITONSERVER_Error* EvaluateTensorRTContext(
       std::map<int, TensorRTContext>::iterator& citr, size_t total_batch_size,
       TRITONBACKEND_Request** requests, uint32_t request_count,
-      const std::map<int, std::vector<int32_t>>& request_shape_values,
+      const std::map<int, ShapeTensor>& request_shape_values,
       int64_t* error_distance);
 
   bool SetOutputShapeTensorBuffer(

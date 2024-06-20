@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "shape_tensor.h"
 #include "triton/backend/backend_common.h"
 #include "triton/core/tritonserver.h"
 
@@ -80,9 +81,15 @@ TRITONSERVER_Error* ValidateControlDimsDynamic(
     const nvinfer1::Dims& dims, const bool support_batching);
 
 TRITONSERVER_Error* ValidateShapeValues(
-    const std::vector<int32_t>& request_shape_values,
-    const int32_t* min_shape_values, const int32_t* max_shape_values,
-    size_t nb_shape_values, const bool support_batching);
+    const ShapeTensor& request_shape_values,
+    const ShapeTensor& min_shape_values, const ShapeTensor& max_shape_values,
+    size_t nb_shape_values);
+
+template <typename T>
+TRITONSERVER_Error* CheckShapeTensorInRange(
+    const ShapeTensor& request_shape_values,
+    const ShapeTensor& min_shape_values, const ShapeTensor& max_shape_values,
+    size_t nb_shape_values);
 
 void DimsToDimVec(const nvinfer1::Dims& model_dims, std::vector<int64_t>* dims);
 
@@ -105,6 +112,10 @@ TRITONSERVER_Error* SupportsIntegratedZeroCopy(
     const int gpu_id, bool* zero_copy_support);
 
 bool IsInput(nvinfer1::ICudaEngine* engine, const std::string& tensor_name);
+
+bool ValidateBatchSize(
+    const size_t total_batch_size, const ShapeTensor& min_shape_values,
+    const ShapeTensor& max_shape_values);
 
 //
 // Templates
@@ -140,6 +151,31 @@ ValidateDimension(
            std::to_string(min_dims.d[i]) + " and " +
            std::to_string(max_dims.d[i]) + " but received " +
            std::to_string(this_dims[i + nonbatch_start_idx]))
+              .c_str());
+    }
+  }
+  return nullptr;
+}
+
+template <typename T>
+TRITONSERVER_Error*
+CheckShapeTensorInRange(
+    const ShapeTensor& request_shape_values,
+    const ShapeTensor& min_shape_values, const ShapeTensor& max_shape_values,
+    size_t nb_shape_values)
+{
+  const T* request_data =
+      reinterpret_cast<const T*>(request_shape_values.GetData());
+  const T* min_data = reinterpret_cast<const T*>(min_shape_values.GetData());
+  const T* max_data = reinterpret_cast<const T*>(max_shape_values.GetData());
+  for (size_t i = 0; i < nb_shape_values; i++) {
+    if (request_data[i] < min_data[i] || request_data[i] > max_data[i]) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("The shape value at index ") + std::to_string(i) +
+           " is expected to be in range from " + std::to_string(min_data[i]) +
+           " to " + std::to_string(max_data[i]) +
+           ", Got: " + std::to_string(request_data[i]))
               .c_str());
     }
   }

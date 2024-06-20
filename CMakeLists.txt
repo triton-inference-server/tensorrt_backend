@@ -141,6 +141,8 @@ add_library(
   ${SOURCE_DIR}/instance_state.cc
   ${SOURCE_DIR}/tensorrt_model_instance.cc
   ${SOURCE_DIR}/tensorrt_model_instance.h
+  ${SOURCE_DIR}/shape_tensor.cc
+  ${SOURCE_DIR}/shape_tensor.h
   ${SOURCE_DIR}/tensorrt_utils.cc
   ${SOURCE_DIR}/tensorrt_utils.h
   ${SOURCE_DIR}/filesystem.h
