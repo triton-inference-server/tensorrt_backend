@@ -151,8 +151,8 @@ if("$ENV{TRT_VERSION}" VERSION_LESS 10)
   configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
 
   target_include_directories(
-  triton-tensorrt-backend
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+    triton-tensorrt-backend
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
   )
 else()
   set(SOURCE_DIR "src")
@@ -187,8 +187,8 @@ else()
   configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
 
   target_include_directories(
-  triton-tensorrt-backend
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+    triton-tensorrt-backend
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
   )
 endif()
 
