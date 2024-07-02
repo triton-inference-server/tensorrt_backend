@@ -122,17 +122,6 @@ message(STATUS "TRT_VERSION envvar is $ENV{TRT_VERSION}")
 #
 if("$ENV{TRT_VERSION}" VERSION_LESS 10)
   set(SOURCE_DIR "src_trt8")
-else()
-  set(SOURCE_DIR "src")
-endif()
-
-
-#
-# Shared library implementing the Triton Backend API
-#
-configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
-
-if("$ENV{TRT_VERSION}" VERSION_LESS 10)
   add_library(
     triton-tensorrt-backend SHARED
     ${SOURCE_DIR}/tensorrt.cc
@@ -159,6 +148,7 @@ if("$ENV{TRT_VERSION}" VERSION_LESS 10)
     ${SOURCE_DIR}/io_binding_info.h
   )
 else()
+  set(SOURCE_DIR "src")
   add_library(
     triton-tensorrt-backend SHARED
     ${SOURCE_DIR}/tensorrt.cc
@@ -187,6 +177,11 @@ else()
     ${SOURCE_DIR}/io_binding_info.h
   )
 endif()
+
+#
+# Shared library implementing the Triton Backend API
+#
+configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
 
 add_library(
   TritonTensorRTBackend::triton-tensorrt-backend ALIAS triton-tensorrt-backend
