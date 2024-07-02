@@ -147,6 +147,13 @@ if("$ENV{TRT_VERSION}" VERSION_LESS 10)
     ${SOURCE_DIR}/io_binding_info.cc
     ${SOURCE_DIR}/io_binding_info.h
   )
+  # Shared library implementing the Triton Backend API
+  configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
+
+  target_include_directories(
+  triton-tensorrt-backend
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+  )
 else()
   set(SOURCE_DIR "src")
   add_library(
@@ -176,20 +183,17 @@ else()
     ${SOURCE_DIR}/io_binding_info.cc
     ${SOURCE_DIR}/io_binding_info.h
   )
-endif()
+  # Shared library implementing the Triton Backend API
+  configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
 
-#
-# Shared library implementing the Triton Backend API
-#
-configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
+  target_include_directories(
+  triton-tensorrt-backend
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+  )
+endif()
 
 add_library(
   TritonTensorRTBackend::triton-tensorrt-backend ALIAS triton-tensorrt-backend
-)
-
-target_include_directories(
-  triton-tensorrt-backend
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
 )
 
 target_include_directories(
