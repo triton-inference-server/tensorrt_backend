@@ -122,51 +122,78 @@ message(STATUS "TRT_VERSION envvar is $ENV{TRT_VERSION}")
 #
 if("$ENV{TRT_VERSION}" VERSION_LESS 10)
   set(SOURCE_DIR "src_trt8")
+  add_library(
+    triton-tensorrt-backend SHARED
+    ${SOURCE_DIR}/tensorrt.cc
+    ${SOURCE_DIR}/model_state.cc
+    ${SOURCE_DIR}/tensorrt_model.cc
+    ${SOURCE_DIR}/tensorrt_model.h
+    ${SOURCE_DIR}/instance_state.cc
+    ${SOURCE_DIR}/tensorrt_model_instance.cc
+    ${SOURCE_DIR}/tensorrt_model_instance.h
+    ${SOURCE_DIR}/tensorrt_utils.cc
+    ${SOURCE_DIR}/tensorrt_utils.h
+    ${SOURCE_DIR}/filesystem.h
+    ${SOURCE_DIR}/filesystem.cc
+    ${SOURCE_DIR}/semaphore.h
+    ${SOURCE_DIR}/shared_library.h
+    ${SOURCE_DIR}/shared_library.cc
+    ${SOURCE_DIR}/loader.cc
+    ${SOURCE_DIR}/loader.h
+    ${SOURCE_DIR}/logging.cc
+    ${SOURCE_DIR}/logging.h
+    ${SOURCE_DIR}/output_allocator.cc
+    ${SOURCE_DIR}/output_allocator.h
+    ${SOURCE_DIR}/io_binding_info.cc
+    ${SOURCE_DIR}/io_binding_info.h
+  )
+  # Shared library implementing the Triton Backend API
+  configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
+
+  target_include_directories(
+    triton-tensorrt-backend
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+  )
 else()
   set(SOURCE_DIR "src")
+  add_library(
+    triton-tensorrt-backend SHARED
+    ${SOURCE_DIR}/tensorrt.cc
+    ${SOURCE_DIR}/model_state.cc
+    ${SOURCE_DIR}/tensorrt_model.cc
+    ${SOURCE_DIR}/tensorrt_model.h
+    ${SOURCE_DIR}/instance_state.cc
+    ${SOURCE_DIR}/tensorrt_model_instance.cc
+    ${SOURCE_DIR}/tensorrt_model_instance.h
+    ${SOURCE_DIR}/shape_tensor.cc
+    ${SOURCE_DIR}/shape_tensor.h
+    ${SOURCE_DIR}/tensorrt_utils.cc
+    ${SOURCE_DIR}/tensorrt_utils.h
+    ${SOURCE_DIR}/filesystem.h
+    ${SOURCE_DIR}/filesystem.cc
+    ${SOURCE_DIR}/semaphore.h
+    ${SOURCE_DIR}/shared_library.h
+    ${SOURCE_DIR}/shared_library.cc
+    ${SOURCE_DIR}/loader.cc
+    ${SOURCE_DIR}/loader.h
+    ${SOURCE_DIR}/logging.cc
+    ${SOURCE_DIR}/logging.h
+    ${SOURCE_DIR}/output_allocator.cc
+    ${SOURCE_DIR}/output_allocator.h
+    ${SOURCE_DIR}/io_binding_info.cc
+    ${SOURCE_DIR}/io_binding_info.h
+  )
+  # Shared library implementing the Triton Backend API
+  configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
+
+  target_include_directories(
+    triton-tensorrt-backend
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+  )
 endif()
-
-
-#
-# Shared library implementing the Triton Backend API
-#
-configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
-
-add_library(
-  triton-tensorrt-backend SHARED
-  ${SOURCE_DIR}/tensorrt.cc
-  ${SOURCE_DIR}/model_state.cc
-  ${SOURCE_DIR}/tensorrt_model.cc
-  ${SOURCE_DIR}/tensorrt_model.h
-  ${SOURCE_DIR}/instance_state.cc
-  ${SOURCE_DIR}/tensorrt_model_instance.cc
-  ${SOURCE_DIR}/tensorrt_model_instance.h
-  ${SOURCE_DIR}/shape_tensor.cc
-  ${SOURCE_DIR}/shape_tensor.h
-  ${SOURCE_DIR}/tensorrt_utils.cc
-  ${SOURCE_DIR}/tensorrt_utils.h
-  ${SOURCE_DIR}/filesystem.h
-  ${SOURCE_DIR}/filesystem.cc
-  ${SOURCE_DIR}/semaphore.h
-  ${SOURCE_DIR}/shared_library.h
-  ${SOURCE_DIR}/shared_library.cc
-  ${SOURCE_DIR}/loader.cc
-  ${SOURCE_DIR}/loader.h
-  ${SOURCE_DIR}/logging.cc
-  ${SOURCE_DIR}/logging.h
-  ${SOURCE_DIR}/output_allocator.cc
-  ${SOURCE_DIR}/output_allocator.h
-  ${SOURCE_DIR}/io_binding_info.cc
-  ${SOURCE_DIR}/io_binding_info.h
-)
 
 add_library(
   TritonTensorRTBackend::triton-tensorrt-backend ALIAS triton-tensorrt-backend
-)
-
-target_include_directories(
-  triton-tensorrt-backend
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
 )
 
 target_include_directories(
