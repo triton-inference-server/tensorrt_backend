@@ -754,7 +754,10 @@ ModelState::GetRefIO(
   for (int i = 0; i < num_io_tensors; ++i) {
     const std::string& tensor_name = engine->getIOTensorName(i);
     nvinfer1::Dims dims = engine->getTensorShape(tensor_name.c_str());
-    bool is_shape_binding = engine->isShapeInferenceIO(tensor_name.c_str());
+    bool is_shape_tensor = engine->isShapeInferenceIO(tensor_name.c_str());
+    bool is_reformat_free_tensor =
+        (engine->getTensorFormat(tensor_name.c_str()) !=
+         nvinfer1::TensorFormat::kLINEAR);
     if ((is_input && (!IsInput(engine, tensor_name))) ||
         ((!is_input) && (IsInput(engine, tensor_name)))) {
       continue;
@@ -766,8 +769,10 @@ ModelState::GetRefIO(
     RETURN_IF_ERROR(io.AddString(
         "data_type", ConvertTrtTypeToConfigDataType(
                          engine->getTensorDataType(tensor_name.c_str()))));
-    RETURN_IF_ERROR(InitIODims(engine, dims, is_shape_binding, &io));
-    RETURN_IF_ERROR(io.AddBool("is_shape_tensor", is_shape_binding));
+    RETURN_IF_ERROR(InitIODims(engine, dims, is_shape_tensor, &io));
+    RETURN_IF_ERROR(io.AddBool("is_shape_tensor", is_shape_tensor));
+    RETURN_IF_ERROR(
+        io.AddBool("is_reformat_free_tensor", is_reformat_free_tensor));
 
     RETURN_IF_ERROR(ref_io->Append(std::move(io)));
   }
@@ -777,13 +782,13 @@ ModelState::GetRefIO(
 
 TRITONSERVER_Error*
 ModelState::InitIODims(
-    nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims, bool is_shape_binding,
+    nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims, bool is_shape_tensor,
     triton::common::TritonJson::Value* io)
 {
   bool skip_first = (MaxBatchSize() != 0);
   triton::common::TritonJson::Value config_dims(
       ModelConfig(), triton::common::TritonJson::ValueType::ARRAY);
-  if (!is_shape_binding) {
+  if (!is_shape_tensor) {
     for (int didx = (skip_first ? 1 : 0); didx < dims.nbDims; ++didx) {
       RETURN_IF_ERROR(config_dims.AppendInt(dims.d[didx]));
     }
@@ -871,8 +876,7 @@ ModelState::FixIO(
           }
 
           // Check if the IO is a shape tensor.
-          bool is_shape_tensor = false;
-          is_shape_tensor = engine->isShapeInferenceIO(io_name.c_str());
+          bool is_shape_tensor = engine->isShapeInferenceIO(io_name.c_str());
 
           common::TritonJson::Value shape_tensor;
           if (mutable_io.Find("is_shape_tensor", &shape_tensor)) {
@@ -885,15 +889,37 @@ ModelState::FixIO(
                    "' is incorrectly specified as a shape tensor.")
                       .c_str());
             } else if (!shape_tensor_val && is_shape_tensor) {
-              return TRITONSERVER_ErrorNew(
-                  TRITONSERVER_ERROR_INVALID_ARG,
-                  (std::string("'") + io_name +
-                   "' is incorrectly specified as an execution tensor.")
-                      .c_str());
+              RETURN_IF_ERROR(shape_tensor.SetBool(is_shape_tensor));
             }
           } else {
             RETURN_IF_ERROR(
                 mutable_io.AddBool("is_shape_tensor", is_shape_tensor));
+          }
+
+          // Check if the IO is a reformat free tensor.
+          bool is_reformat_free_tensor =
+              (engine->getTensorFormat(io_name.c_str()) !=
+               nvinfer1::TensorFormat::kLINEAR);
+
+          common::TritonJson::Value reformat_free_tensor;
+          if (mutable_io.Find(
+                  "is_reformat_free_tensor", &reformat_free_tensor)) {
+            bool reformat_free_tensor_val = false;
+            RETURN_IF_ERROR(
+                reformat_free_tensor.AsBool(&reformat_free_tensor_val));
+            if (reformat_free_tensor_val && (!is_reformat_free_tensor)) {
+              return TRITONSERVER_ErrorNew(
+                  TRITONSERVER_ERROR_INVALID_ARG,
+                  (std::string("'") + io_name +
+                   "' is incorrectly specified as a reformat free tensor.")
+                      .c_str());
+            } else if (!reformat_free_tensor_val && is_reformat_free_tensor) {
+              RETURN_IF_ERROR(
+                  reformat_free_tensor.SetBool(is_reformat_free_tensor));
+            }
+          } else {
+            RETURN_IF_ERROR(mutable_io.AddBool(
+                "is_reformat_free_tensor", is_reformat_free_tensor));
           }
           break;
         }

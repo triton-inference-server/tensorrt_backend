@@ -723,11 +723,12 @@ ModelInstanceState::Run(
       TRITONSERVER_DataType datatype;
       const int64_t* shape;
       uint32_t dims_count;
+      size_t req_data_byte_size;
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           TRITONBACKEND_InputProperties(
-              repr_input, nullptr, &datatype, &shape, &dims_count, nullptr,
-              nullptr),
+              repr_input, nullptr, &datatype, &shape, &dims_count,
+              &req_data_byte_size, nullptr),
           (std::string("failed to obtain the representative input "
                        "properties for '") +
            name + "'")
@@ -766,6 +767,19 @@ ModelInstanceState::Run(
              (batchn_shape[io_binding_info.GetFormat().vectorized_dim_] %
               io_binding_info.GetFormat().components_per_element_));
         total_byte_size = GetByteSize(datatype, batchn_shape);
+        if (req_data_byte_size != total_byte_size) {
+          FAIL_ALL_AND_RETURN_IF_ERROR(
+              payload_->requests_, payload_->request_count_,
+              payload_->responses_,
+              TRITONSERVER_ErrorNew(
+                  TRITONSERVER_ERROR_INVALID_ARG,
+                  (std::string("tensor for input '") + name +
+                   "' expected byte size is " +
+                   std::to_string(total_byte_size) + ", got " +
+                   std::to_string(req_data_byte_size))
+                      .c_str()),
+              "failed to run TRT inference");
+        }
       }
 
       payload_->collector_->ProcessTensor(
@@ -1760,7 +1774,8 @@ ModelInstanceState::ValidateIO()
 {
   // Collect all the expected input and allowed output tensor names
   // and validate that the model configuration specifies only those.
-  std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
+  std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors,
+      allowed_reformat_free_tensors;
   for (int i = 0; i < total_io_tensors_; ++i) {
     const std::string& tensor_name = tensor_names_[i];
     if (IsInput(engine_.get(), tensor_name)) {
@@ -1773,6 +1788,14 @@ ModelInstanceState::ValidateIO()
       LOG_MESSAGE(
           TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
                                      " as shape binding for " + Name())
+                                        .c_str());
+    }
+    if (engine_->getTensorFormat(tensor_name.c_str()) !=
+        nvinfer1::TensorFormat::kLINEAR) {
+      allowed_reformat_free_tensors.emplace(tensor_name);
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
+                                     " as a reformat free tensor for " + Name())
                                         .c_str());
     }
   }
@@ -1808,9 +1831,11 @@ ModelInstanceState::ValidateIO()
   }
 
   RETURN_IF_ERROR(ValidateIOHelper(
-      config_inputs, allowed_shape_tensors, true /* is_input */));
+      config_inputs, allowed_shape_tensors, allowed_reformat_free_tensors,
+      true /* is_input */));
   RETURN_IF_ERROR(ValidateIOHelper(
-      config_outputs, allowed_shape_tensors, false /* is_input */));
+      config_outputs, allowed_shape_tensors, allowed_reformat_free_tensors,
+      false /* is_input */));
 
   return nullptr;
 }
@@ -1818,7 +1843,9 @@ ModelInstanceState::ValidateIO()
 TRITONSERVER_Error*
 ModelInstanceState::ValidateIOHelper(
     common::TritonJson::Value& ios,
-    const std::set<std::string>& allowed_shape_tensors, const bool is_input)
+    const std::set<std::string>& allowed_shape_tensors,
+    const std::set<std::string>& allowed_reformat_free_tensors,
+    const bool is_input)
 {
   std::string type = is_input ? "input" : "output";
   for (size_t i = 0; i < ios.ArraySize(); i++) {
@@ -1861,6 +1888,37 @@ ModelInstanceState::ValidateIOHelper(
             TRITONSERVER_ERROR_INTERNAL,
             (type + " '" + io_name + "' for model '" + model_state_->Name() +
              "' is incorrectly marked as a shape tensor in the model "
+             "configuration.")
+                .c_str());
+      }
+    }
+
+    // Check the reformat free tensor specification
+    if (allowed_reformat_free_tensors.find(io_name) !=
+        allowed_reformat_free_tensors.end()) {
+      bool is_reformat_free_tensor = false;
+      RETURN_IF_ERROR(
+          io.MemberAsBool("is_reformat_free_tensor", &is_reformat_free_tensor));
+      if (!is_reformat_free_tensor) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (type + " '" + io_name + "' for model '" + model_state_->Name() +
+             "' is a reformat free tensor but the model configuration "
+             "doesn't mark it as a reformat free tensor. Set "
+             "'is_reformat_free_tensor' to "
+             "true for " +
+             type + " '" + io_name + "'.")
+                .c_str());
+      }
+    } else {
+      bool is_reformat_free_tensor = false;
+      RETURN_IF_ERROR(
+          io.MemberAsBool("is_reformat_free_tensor", &is_reformat_free_tensor));
+      if (is_reformat_free_tensor) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (type + " '" + io_name + "' for model '" + model_state_->Name() +
+             "' is incorrectly marked as a reformat free tensor in the model "
              "configuration.")
                 .c_str());
       }
