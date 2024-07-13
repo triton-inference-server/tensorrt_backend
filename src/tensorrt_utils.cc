@@ -501,26 +501,26 @@ TensorFormatToString(const nvinfer1::TensorFormat& io_format)
       return "CHW2";
     case nvinfer1::TensorFormat::kCHW4:
       return "CHW4";
-    case nvinfer1::TensorFormat::kHWC8:
-      return "HWC8";
     case nvinfer1::TensorFormat::kCHW16:
       return "CHW16";
     case nvinfer1::TensorFormat::kCHW32:
       return "CHW32";
+    case nvinfer1::TensorFormat::kDHWC:
+      return "DHWC";
     case nvinfer1::TensorFormat::kDHWC8:
       return "DHWC8";
-    case nvinfer1::TensorFormat::kCDHW32:
-      return "CDHW32";
     case nvinfer1::TensorFormat::kHWC:
       return "HWC";
+    case nvinfer1::TensorFormat::kHWC8:
+      return "HWC8";
+    case nvinfer1::TensorFormat::kHWC16:
+      return "HWC16";
+    case nvinfer1::TensorFormat::kCDHW32:
+      return "CDHW32";
     case nvinfer1::TensorFormat::kDLA_LINEAR:
       return "DLA_LINEAR";
     case nvinfer1::TensorFormat::kDLA_HWC4:
       return "DLA_HWC4";
-    case nvinfer1::TensorFormat::kHWC16:
-      return "HWC16";
-    case nvinfer1::TensorFormat::kDHWC:
-      return "DHWC";
     default:
       return "INVALID";
   }
