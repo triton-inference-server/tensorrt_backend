@@ -108,6 +108,8 @@ const std::string DimsDebugString(const nvinfer1::Dims& dims);
 
 const std::string DimsJsonToString(common::TritonJson::Value& dims);
 
+const std::string TensorFormatToString(const nvinfer1::TensorFormat& io_format);
+
 TRITONSERVER_Error* SupportsIntegratedZeroCopy(
     const int gpu_id, bool* zero_copy_support);
 

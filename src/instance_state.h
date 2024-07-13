@@ -296,7 +296,7 @@ class ModelInstanceState : public TensorRTModelInstance {
   TRITONSERVER_Error* ValidateIOHelper(
       common::TritonJson::Value& ios,
       const std::set<std::string>& allowed_shape_tensors,
-      const std::set<std::string>& allowed_reformat_free_tensors,
+      const std::set<std::string>& allowed_non_linear_format_io,
       const bool is_input);
 
   TRITONSERVER_Error* InitIOBindingBuffers();

@@ -761,12 +761,17 @@ ModelInstanceState::Run(
       size_t total_byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
         total_byte_size = GetByteSize(datatype, batchn_shape);
+        // For input tensors with a linear IO format, the request has already
+        // verified the byte size, so no further validation is needed here.
       } else {
         batchn_shape[io_binding_info.GetFormat().vectorized_dim_] +=
             (io_binding_info.GetFormat().components_per_element_ -
              (batchn_shape[io_binding_info.GetFormat().vectorized_dim_] %
               io_binding_info.GetFormat().components_per_element_));
         total_byte_size = GetByteSize(datatype, batchn_shape);
+
+        // Ensure the request data byte size matches the expected byte size for
+        // non-linear IO format tensors
         if (req_data_byte_size != total_byte_size) {
           FAIL_ALL_AND_RETURN_IF_ERROR(
               payload_->requests_, payload_->request_count_,
@@ -1775,7 +1780,7 @@ ModelInstanceState::ValidateIO()
   // Collect all the expected input and allowed output tensor names
   // and validate that the model configuration specifies only those.
   std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors,
-      allowed_reformat_free_tensors;
+      allowed_non_linear_format_io;
   for (int i = 0; i < total_io_tensors_; ++i) {
     const std::string& tensor_name = tensor_names_[i];
     if (IsInput(engine_.get(), tensor_name)) {
@@ -1790,13 +1795,14 @@ ModelInstanceState::ValidateIO()
                                      " as shape binding for " + Name())
                                         .c_str());
     }
-    if (engine_->getTensorFormat(tensor_name.c_str()) !=
-        nvinfer1::TensorFormat::kLINEAR) {
-      allowed_reformat_free_tensors.emplace(tensor_name);
+    auto detected_io_format = engine_->getTensorFormat(tensor_name.c_str());
+    if (detected_io_format != nvinfer1::TensorFormat::kLINEAR) {
+      allowed_non_linear_format_io.emplace(tensor_name);
       LOG_MESSAGE(
-          TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
-                                     " as a reformat free tensor for " + Name())
-                                        .c_str());
+          TRITONSERVER_LOG_VERBOSE,
+          (std::string("Detected ") + tensor_name + " using IO format " +
+           TensorFormatToString(detected_io_format) + " for " + Name())
+              .c_str());
     }
   }
 
@@ -1831,10 +1837,10 @@ ModelInstanceState::ValidateIO()
   }
 
   RETURN_IF_ERROR(ValidateIOHelper(
-      config_inputs, allowed_shape_tensors, allowed_reformat_free_tensors,
+      config_inputs, allowed_shape_tensors, allowed_non_linear_format_io,
       true /* is_input */));
   RETURN_IF_ERROR(ValidateIOHelper(
-      config_outputs, allowed_shape_tensors, allowed_reformat_free_tensors,
+      config_outputs, allowed_shape_tensors, allowed_non_linear_format_io,
       false /* is_input */));
 
   return nullptr;
@@ -1844,7 +1850,7 @@ TRITONSERVER_Error*
 ModelInstanceState::ValidateIOHelper(
     common::TritonJson::Value& ios,
     const std::set<std::string>& allowed_shape_tensors,
-    const std::set<std::string>& allowed_reformat_free_tensors,
+    const std::set<std::string>& allowed_non_linear_format_io,
     const bool is_input)
 {
   std::string type = is_input ? "input" : "output";
@@ -1893,33 +1899,34 @@ ModelInstanceState::ValidateIOHelper(
       }
     }
 
-    // Check the reformat free tensor specification
-    if (allowed_reformat_free_tensors.find(io_name) !=
-        allowed_reformat_free_tensors.end()) {
-      bool is_reformat_free_tensor = false;
+    // Check the tensor IO format specification
+    if (allowed_non_linear_format_io.find(io_name) !=
+        allowed_non_linear_format_io.end()) {
+      bool is_non_linear_format_io = false;
       RETURN_IF_ERROR(
-          io.MemberAsBool("is_reformat_free_tensor", &is_reformat_free_tensor));
-      if (!is_reformat_free_tensor) {
+          io.MemberAsBool("is_non_linear_format_io", &is_non_linear_format_io));
+      if (!is_non_linear_format_io) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
             (type + " '" + io_name + "' for model '" + model_state_->Name() +
-             "' is a reformat free tensor but the model configuration "
-             "doesn't mark it as a reformat free tensor. Set "
-             "'is_reformat_free_tensor' to "
-             "true for " +
+             "' uses a non-linear IO format, but the model configuration "
+             "does not specify it as such. Set "
+             "'is_non_linear_format_io' to true for " +
              type + " '" + io_name + "'.")
                 .c_str());
       }
     } else {
-      bool is_reformat_free_tensor = false;
+      bool is_non_linear_format_io = false;
       RETURN_IF_ERROR(
-          io.MemberAsBool("is_reformat_free_tensor", &is_reformat_free_tensor));
-      if (is_reformat_free_tensor) {
+          io.MemberAsBool("is_non_linear_format_io", &is_non_linear_format_io));
+      if (is_non_linear_format_io) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
             (type + " '" + io_name + "' for model '" + model_state_->Name() +
-             "' is incorrectly marked as a reformat free tensor in the model "
-             "configuration.")
+             "' uses a linear IO format, but 'is_non_linear_format_io' is "
+             "incorrectly set to true. Set "
+             "'is_non_linear_format_io' to false for " +
+             type + " '" + io_name + "'.")
                 .c_str());
       }
     }

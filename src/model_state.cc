@@ -755,7 +755,7 @@ ModelState::GetRefIO(
     const std::string& tensor_name = engine->getIOTensorName(i);
     nvinfer1::Dims dims = engine->getTensorShape(tensor_name.c_str());
     bool is_shape_tensor = engine->isShapeInferenceIO(tensor_name.c_str());
-    bool is_reformat_free_tensor =
+    bool is_non_linear_format_io =
         (engine->getTensorFormat(tensor_name.c_str()) !=
          nvinfer1::TensorFormat::kLINEAR);
     if ((is_input && (!IsInput(engine, tensor_name))) ||
@@ -772,7 +772,7 @@ ModelState::GetRefIO(
     RETURN_IF_ERROR(InitIODims(engine, dims, is_shape_tensor, &io));
     RETURN_IF_ERROR(io.AddBool("is_shape_tensor", is_shape_tensor));
     RETURN_IF_ERROR(
-        io.AddBool("is_reformat_free_tensor", is_reformat_free_tensor));
+        io.AddBool("is_non_linear_format_io", is_non_linear_format_io));
 
     RETURN_IF_ERROR(ref_io->Append(std::move(io)));
   }
@@ -896,30 +896,31 @@ ModelState::FixIO(
                 mutable_io.AddBool("is_shape_tensor", is_shape_tensor));
           }
 
-          // Check if the IO is a reformat free tensor.
-          bool is_reformat_free_tensor =
+          // Verify if the IO format is non-linear.
+          bool is_non_linear_format_io =
               (engine->getTensorFormat(io_name.c_str()) !=
                nvinfer1::TensorFormat::kLINEAR);
 
-          common::TritonJson::Value reformat_free_tensor;
+          common::TritonJson::Value non_linear_format_io;
           if (mutable_io.Find(
-                  "is_reformat_free_tensor", &reformat_free_tensor)) {
-            bool reformat_free_tensor_val = false;
+                  "is_non_linear_format_io", &non_linear_format_io)) {
+            bool non_linear_format_io_val = false;
             RETURN_IF_ERROR(
-                reformat_free_tensor.AsBool(&reformat_free_tensor_val));
-            if (reformat_free_tensor_val && (!is_reformat_free_tensor)) {
+                non_linear_format_io.AsBool(&non_linear_format_io_val));
+            if (non_linear_format_io_val && (!is_non_linear_format_io)) {
               return TRITONSERVER_ErrorNew(
                   TRITONSERVER_ERROR_INVALID_ARG,
                   (std::string("'") + io_name +
-                   "' is incorrectly specified as a reformat free tensor.")
+                   "' uses a linear IO format, but 'is_non_linear_format_io' "
+                   "is incorrectly set to true.")
                       .c_str());
-            } else if (!reformat_free_tensor_val && is_reformat_free_tensor) {
+            } else if (!non_linear_format_io_val && is_non_linear_format_io) {
               RETURN_IF_ERROR(
-                  reformat_free_tensor.SetBool(is_reformat_free_tensor));
+                  non_linear_format_io.SetBool(is_non_linear_format_io));
             }
           } else {
             RETURN_IF_ERROR(mutable_io.AddBool(
-                "is_reformat_free_tensor", is_reformat_free_tensor));
+                "is_non_linear_format_io", is_non_linear_format_io));
           }
           break;
         }
