@@ -522,7 +522,7 @@ TensorFormatToString(const nvinfer1::TensorFormat& io_format)
     case nvinfer1::TensorFormat::kDLA_HWC4:
       return "DLA_HWC4";
     default:
-      return "INVALID";
+      return "UNKNOWN";
   }
 }
 
