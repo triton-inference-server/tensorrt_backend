@@ -1909,10 +1909,8 @@ ModelInstanceState::ValidateIOHelper(
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
             (type + " '" + io_name + "' for model '" + model_state_->Name() +
-             "' uses a non-linear IO format, but the model configuration "
-             "does not specify it as such. Set "
-             "'is_non_linear_format_io' to true for " +
-             type + " '" + io_name + "'.")
+             "' uses a non-linear IO format, but 'is_non_linear_format_io' is "
+             "incorrectly set to false in the model configuration.")
                 .c_str());
       }
     } else {
@@ -1924,9 +1922,7 @@ ModelInstanceState::ValidateIOHelper(
             TRITONSERVER_ERROR_INTERNAL,
             (type + " '" + io_name + "' for model '" + model_state_->Name() +
              "' uses a linear IO format, but 'is_non_linear_format_io' is "
-             "incorrectly set to true. Set "
-             "'is_non_linear_format_io' to false for " +
-             type + " '" + io_name + "'.")
+             "incorrectly set to true in the model configuration.")
                 .c_str());
       }
     }

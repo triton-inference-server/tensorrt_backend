@@ -912,7 +912,7 @@ ModelState::FixIO(
                   TRITONSERVER_ERROR_INVALID_ARG,
                   (std::string("'") + io_name +
                    "' uses a linear IO format, but 'is_non_linear_format_io' "
-                   "is incorrectly set to true.")
+                   "is incorrectly set to true in the model configuration.")
                       .c_str());
             } else if (!non_linear_format_io_val && is_non_linear_format_io) {
               RETURN_IF_ERROR(
