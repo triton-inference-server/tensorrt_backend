@@ -505,6 +505,8 @@ TensorFormatToString(const nvinfer1::TensorFormat& io_format)
       return "HWC8";
     case nvinfer1::TensorFormat::kCHW16:
       return "CHW16";
+    case nvinfer1::TensorFormat::kCHW32:
+      return "CHW32";
     case nvinfer1::TensorFormat::kDHWC8:
       return "DHWC8";
     case nvinfer1::TensorFormat::kCDHW32:
