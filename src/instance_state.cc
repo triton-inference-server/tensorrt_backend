@@ -778,9 +778,9 @@ ModelInstanceState::Run(
               payload_->responses_,
               TRITONSERVER_ErrorNew(
                   TRITONSERVER_ERROR_INVALID_ARG,
-                  (std::string("tensor for input '") + name +
-                   "' expected byte size is " +
-                   std::to_string(total_byte_size) + ", got " +
+                  (std::string("input byte size mismatch for input '") + name +
+                   "'" + " for model '" + model_state_->Name() +
+                   "'. Expected " + std::to_string(total_byte_size) + ", got " +
                    std::to_string(req_data_byte_size))
                       .c_str()),
               "failed to run TRT inference");
