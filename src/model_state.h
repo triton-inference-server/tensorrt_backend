@@ -109,8 +109,8 @@ class ModelState : public TensorRTModel {
       const bool is_input, nvinfer1::ICudaEngine* engine,
       triton::common::TritonJson::Value* ref_io);
   TRITONSERVER_Error* InitIODims(
-      nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims,
-      bool is_shape_binding, triton::common::TritonJson::Value* io);
+      nvinfer1::ICudaEngine* engine, nvinfer1::Dims& dims, bool is_shape_tensor,
+      triton::common::TritonJson::Value* io);
   TRITONSERVER_Error* FixIO(
       nvinfer1::ICudaEngine* engine,
       triton::common::TritonJson::Value& reference_ios,

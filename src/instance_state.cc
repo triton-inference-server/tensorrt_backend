@@ -723,11 +723,12 @@ ModelInstanceState::Run(
       TRITONSERVER_DataType datatype;
       const int64_t* shape;
       uint32_t dims_count;
+      size_t req_data_byte_size;
       FAIL_ALL_AND_RETURN_IF_ERROR(
           payload_->requests_, payload_->request_count_, payload_->responses_,
           TRITONBACKEND_InputProperties(
-              repr_input, nullptr, &datatype, &shape, &dims_count, nullptr,
-              nullptr),
+              repr_input, nullptr, &datatype, &shape, &dims_count,
+              &req_data_byte_size, nullptr),
           (std::string("failed to obtain the representative input "
                        "properties for '") +
            name + "'")
@@ -760,12 +761,30 @@ ModelInstanceState::Run(
       size_t total_byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
         total_byte_size = GetByteSize(datatype, batchn_shape);
+        // For input tensors with a linear IO format, the request has already
+        // verified the byte size, so no further validation is needed here.
       } else {
         batchn_shape[io_binding_info.GetFormat().vectorized_dim_] +=
             (io_binding_info.GetFormat().components_per_element_ -
              (batchn_shape[io_binding_info.GetFormat().vectorized_dim_] %
               io_binding_info.GetFormat().components_per_element_));
         total_byte_size = GetByteSize(datatype, batchn_shape);
+
+        // Ensure the request data byte size matches the expected byte size for
+        // non-linear IO format tensors
+        if (req_data_byte_size != total_byte_size) {
+          FAIL_ALL_AND_RETURN_IF_ERROR(
+              payload_->requests_, payload_->request_count_,
+              payload_->responses_,
+              TRITONSERVER_ErrorNew(
+                  TRITONSERVER_ERROR_INVALID_ARG,
+                  (std::string("input byte size mismatch for input '") + name +
+                   "'" + " for model '" + model_state_->Name() +
+                   "'. Expected " + std::to_string(total_byte_size) + ", got " +
+                   std::to_string(req_data_byte_size))
+                      .c_str()),
+              "failed to run TRT inference");
+        }
       }
 
       payload_->collector_->ProcessTensor(
@@ -1760,7 +1779,8 @@ ModelInstanceState::ValidateIO()
 {
   // Collect all the expected input and allowed output tensor names
   // and validate that the model configuration specifies only those.
-  std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors;
+  std::set<std::string> allowed_inputs, allowed_outputs, allowed_shape_tensors,
+      allowed_non_linear_format_io;
   for (int i = 0; i < total_io_tensors_; ++i) {
     const std::string& tensor_name = tensor_names_[i];
     if (IsInput(engine_.get(), tensor_name)) {
@@ -1774,6 +1794,15 @@ ModelInstanceState::ValidateIO()
           TRITONSERVER_LOG_VERBOSE, (std::string("Detected ") + tensor_name +
                                      " as shape binding for " + Name())
                                         .c_str());
+    }
+    auto detected_io_format = engine_->getTensorFormat(tensor_name.c_str());
+    if (detected_io_format != nvinfer1::TensorFormat::kLINEAR) {
+      allowed_non_linear_format_io.emplace(tensor_name);
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_VERBOSE,
+          (std::string("Detected ") + tensor_name + " using IO format " +
+           TensorFormatToString(detected_io_format) + " for " + Name())
+              .c_str());
     }
   }
 
@@ -1808,9 +1837,11 @@ ModelInstanceState::ValidateIO()
   }
 
   RETURN_IF_ERROR(ValidateIOHelper(
-      config_inputs, allowed_shape_tensors, true /* is_input */));
+      config_inputs, allowed_shape_tensors, allowed_non_linear_format_io,
+      true /* is_input */));
   RETURN_IF_ERROR(ValidateIOHelper(
-      config_outputs, allowed_shape_tensors, false /* is_input */));
+      config_outputs, allowed_shape_tensors, allowed_non_linear_format_io,
+      false /* is_input */));
 
   return nullptr;
 }
@@ -1818,7 +1849,9 @@ ModelInstanceState::ValidateIO()
 TRITONSERVER_Error*
 ModelInstanceState::ValidateIOHelper(
     common::TritonJson::Value& ios,
-    const std::set<std::string>& allowed_shape_tensors, const bool is_input)
+    const std::set<std::string>& allowed_shape_tensors,
+    const std::set<std::string>& allowed_non_linear_format_io,
+    const bool is_input)
 {
   std::string type = is_input ? "input" : "output";
   for (size_t i = 0; i < ios.ArraySize(); i++) {
@@ -1862,6 +1895,34 @@ ModelInstanceState::ValidateIOHelper(
             (type + " '" + io_name + "' for model '" + model_state_->Name() +
              "' is incorrectly marked as a shape tensor in the model "
              "configuration.")
+                .c_str());
+      }
+    }
+
+    // Check the tensor IO format specification
+    if (allowed_non_linear_format_io.find(io_name) !=
+        allowed_non_linear_format_io.end()) {
+      bool is_non_linear_format_io = false;
+      RETURN_IF_ERROR(
+          io.MemberAsBool("is_non_linear_format_io", &is_non_linear_format_io));
+      if (!is_non_linear_format_io) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (type + " '" + io_name + "' for model '" + model_state_->Name() +
+             "' uses a non-linear IO format, but 'is_non_linear_format_io' is "
+             "incorrectly set to false in the model configuration.")
+                .c_str());
+      }
+    } else {
+      bool is_non_linear_format_io = false;
+      RETURN_IF_ERROR(
+          io.MemberAsBool("is_non_linear_format_io", &is_non_linear_format_io));
+      if (is_non_linear_format_io) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (type + " '" + io_name + "' for model '" + model_state_->Name() +
+             "' uses a linear IO format, but 'is_non_linear_format_io' is "
+             "incorrectly set to true in the model configuration.")
                 .c_str());
       }
     }
