@@ -247,8 +247,8 @@ ENDFOREACH(p)
 
 # NOTE: TRT 10 for Windows added the version suffix to the library names. See the release notes:
 # https://docs.nvidia.com/deeplearning/tensorrt/release-notes/index.html#tensorrt-10
-find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10)
-find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10)
+find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10 HINTS "/usr/local/cuda/targets/x86_64-linux/lib")
+find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10 HINTS "/usr/local/cuda/targets/x86_64-linux/lib")
 target_link_libraries(
   triton-tensorrt-backend
   PRIVATE
