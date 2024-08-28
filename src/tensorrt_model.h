@@ -54,8 +54,37 @@ class TensorRTModel : public BackendModel {
   bool EagerBatching() { return eager_batching_; }
   bool BusyWaitEvents() { return busy_wait_events_; }
 
+
+  //! Following functions are related to CiG (Cuda in Graphics) context sharing for
+  //! gaming use case. Creating a shared contexts reduces context switching overhead
+  //! and leads to better performance of model execution along side Graphics workload.
   CUcontext GetCiGContext() { return cig_ctx_; }
   bool isCiGEnabled() { return cig_ctx_ != nullptr; }
+
+  inline TRITONSERVER_Error* PushCiGContext()
+  {
+    if (CUDA_SUCCESS != cuCtxPushCurrent(cig_ctx_)) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to push CiG context for ") + Name()).c_str());
+    }
+    return nullptr;
+  }
+
+  inline TRITONSERVER_Error* PopCiGContext()
+  {
+    CUcontext oldCtx{};
+    if (CUDA_SUCCESS != cuCtxPopCurrent(&oldCtx)) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to [pop CiG context for ") + Name()).c_str());
+    }
+    if (oldCtx != cig_ctx_) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("popping the wrong CiG context for ") + Name()).c_str());
+    }
+  }
 
  protected:
   common::TritonJson::Value graph_specs_;
@@ -66,6 +95,23 @@ class TensorRTModel : public BackendModel {
   bool eager_batching_;
   bool busy_wait_events_;
   CUcontext cig_ctx_;
+};
+
+struct ScopedRuntimeCiGContext {
+  ScopedRuntimeCiGContext(TensorRTModel* model_state)
+      : model_state_(model_state)
+  {
+    if (model_state_->isCiGEnabled()) {
+      THROW_IF_BACKEND_MODEL_ERROR(model_state_->PushCiGContext());
+    }
+  }
+  ~ScopedRuntimeCiGContext()
+  { 
+    if (model_state_->isCiGEnabled()) {
+      THROW_IF_BACKEND_MODEL_ERROR(model_state_->PopCiGContext());
+    }
+  }
+  TensorRTModel* model_state_;
 };
 
 }}}  // namespace triton::backend::tensorrt

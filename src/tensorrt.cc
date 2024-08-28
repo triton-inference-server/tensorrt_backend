@@ -318,13 +318,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
     DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
   }
 
-  CUcontext cig_ctx = model_state->GetCiGContext();
-  if (cig_ctx != nullptr) {
-    auto result = cuCtxPushCurrent(cig_ctx);
-    RETURN_ERROR_IF_FALSE(
-        result == CUDA_SUCCESS, TRITONSERVER_ERROR_INTERNAL,
-        std::string("Error while setting cig context"));
-  }
+  ScopedRuntimeCiGContext cig_scope(model_state);
 
   // With each instance we create a ModelInstanceState object and
   // associate it with the TRITONBACKEND_ModelInstance.
@@ -343,10 +337,6 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         instance, ba_array, ba_len));
   }
 
-  if (cig_ctx != nullptr) {
-    cuCtxPopCurrent(&cig_ctx);
-  }
-
   return nullptr;  // success
 }
 
@@ -361,23 +351,13 @@ TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
   ModelInstanceState* instance_state =
       reinterpret_cast<ModelInstanceState*>(vstate);
 
-  CUcontext cig_ctx = instance_state->StateForModel()->GetCiGContext();
-  if (cig_ctx != nullptr) {
-    auto result = cuCtxPushCurrent(cig_ctx);
-    RETURN_ERROR_IF_FALSE(
-        result == CUDA_SUCCESS, TRITONSERVER_ERROR_INTERNAL,
-        std::string("Error while setting cig context"));
-  }
-
+  ScopedRuntimeCiGContext cig_scope(instance_state->StateForModel());
+  
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       "TRITONBACKEND_ModelInstanceFinalize: delete instance state");
 
   delete instance_state;
-
-  if (cig_ctx != nullptr) {
-    cuCtxPopCurrent(&cig_ctx);
-  }
 
   return nullptr;  // success
 }
@@ -400,13 +380,7 @@ TRITONBACKEND_ModelInstanceExecute(
       instance, reinterpret_cast<void**>(&instance_state)));
   ModelState* model_state = instance_state->StateForModel();
 
-  CUcontext cig_ctx = instance_state->StateForModel()->GetCiGContext();
-  if (cig_ctx != nullptr) {
-    auto result = cuCtxPushCurrent(cig_ctx);
-    RETURN_ERROR_IF_FALSE(
-        result == CUDA_SUCCESS, TRITONSERVER_ERROR_INTERNAL,
-        std::string("Error while setting cig context"));
-  }
+  ScopedRuntimeCiGContext cig_scope(instance_state->StateForModel());
 
   // For TensorRT backend, the executing instance may not closely tie to
   // TRITONBACKEND_ModelInstance, the instance will be assigned based on
@@ -441,10 +415,6 @@ TRITONBACKEND_ModelInstanceExecute(
   // as possible, otherwise we may get a smaller batch while more requests may
   // arrive between when the batch is formed and when batch is executed.
   semaphore->Acquire();
-
-  if (cig_ctx != nullptr) {
-    cuCtxPopCurrent(&cig_ctx);
-  }
 
   return nullptr;  // success
 }
