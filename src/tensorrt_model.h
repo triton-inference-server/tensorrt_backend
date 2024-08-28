@@ -26,6 +26,7 @@
 #pragma once
 
 #include "triton/backend/backend_model.h"
+#include <cuda.h>
 
 namespace triton { namespace backend { namespace tensorrt {
 
@@ -53,6 +54,9 @@ class TensorRTModel : public BackendModel {
   bool EagerBatching() { return eager_batching_; }
   bool BusyWaitEvents() { return busy_wait_events_; }
 
+  CUcontext GetCiGContext() { return cig_ctx_; }
+  bool isCiGEnabled() { return cig_ctx_ != nullptr; }
+
  protected:
   common::TritonJson::Value graph_specs_;
   Priority priority_;
@@ -61,6 +65,7 @@ class TensorRTModel : public BackendModel {
   bool separate_output_stream_;
   bool eager_batching_;
   bool busy_wait_events_;
+  CUcontext cig_ctx_;
 };
 
 }}}  // namespace triton::backend::tensorrt

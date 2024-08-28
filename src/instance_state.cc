@@ -257,7 +257,10 @@ ModelInstanceState::ModelInstanceState(
 
 ModelInstanceState::~ModelInstanceState()
 {
-  cudaSetDevice(DeviceId());
+  // Set device if CiG is disabled
+  if (!model_state_->isCiGEnabled()) {
+    cudaSetDevice(DeviceId());
+  }
   for (auto& io_binding_infos : io_binding_infos_) {
     for (auto& io_binding_info : io_binding_infos) {
       if (!io_binding_info.IsDynamicShapeOutput() &&
@@ -424,7 +427,10 @@ ModelInstanceState::Run(
   payload_.reset(new Payload(next_set_, requests, request_count));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
-  cudaSetDevice(DeviceId());
+  // Set device if CiG is disabled
+  if (!model_state_->isCiGEnabled()) {
+    cudaSetDevice(DeviceId());
+  }
 #ifdef TRITON_ENABLE_STATS
   {
     SET_TIMESTAMP(payload_->compute_start_ns_);
@@ -1551,13 +1557,17 @@ ModelInstanceState::EvaluateTensorRTContext(
 TRITONSERVER_Error*
 ModelInstanceState::InitStreamsAndEvents()
 {
-  // Set the device before preparing the context.
-  auto cuerr = cudaSetDevice(DeviceId());
-  if (cuerr != cudaSuccess) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL, (std::string("unable to set device for ") +
-                                      Name() + ": " + cudaGetErrorString(cuerr))
-                                         .c_str());
+  // Set device if CiG is disabled
+  if (!model_state_->isCiGEnabled()) {
+    // Set the device before preparing the context.
+    auto cuerr = cudaSetDevice(DeviceId());
+    if (cuerr != cudaSuccess) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to set device for ") + Name() + ": " +
+           cudaGetErrorString(cuerr))
+              .c_str());
+    }
   }
 
   // Create CUDA streams associated with the instance
