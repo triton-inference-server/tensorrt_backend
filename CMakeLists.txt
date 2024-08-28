@@ -269,6 +269,7 @@ target_link_libraries(
     triton-tensorrt-backend
     PRIVATE
       CUDA::cudart
+      CUDA::cuda_driver
 )
 
 
