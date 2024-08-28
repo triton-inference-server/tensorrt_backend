@@ -350,12 +350,15 @@ TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
   ModelInstanceState* instance_state =
       reinterpret_cast<ModelInstanceState*>(vstate);
-
-  ScopedRuntimeCiGContext cig_scope(instance_state->StateForModel());
   
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       "TRITONBACKEND_ModelInstanceFinalize: delete instance state");
+  if (!instance_state)
+  {
+      return nullptr;
+  }
+  ScopedRuntimeCiGContext cig_scope(instance_state->StateForModel());
 
   delete instance_state;
 
