@@ -52,6 +52,18 @@ endif()
 set(TRITON_TENSORRT_BACKEND_LIBNAME triton_tensorrt)
 set(TRITON_TENSORRT_BACKEND_INSTALLDIR ${CMAKE_INSTALL_PREFIX}/backends/tensorrt)
 
+set(RHEL_NVINFER_PATH "")
+if(LINUX)
+  file(STRINGS "/etc/os-release" DISTRO_ID_LIKE REGEX "ID_LIKE")
+  if(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+      set(RHEL_NVINFER_PATH "/usr/local/cuda/targets/sbsa-linux/lib")
+    else()
+      set(RHEL_NVINFER_PATH "/usr/local/cuda/targets/x86_64-linux/lib")
+    endif()
+  endif(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+endif(LINUX)
+
 #
 # Dependencies
 #
@@ -247,8 +259,8 @@ ENDFOREACH(p)
 
 # NOTE: TRT 10 for Windows added the version suffix to the library names. See the release notes:
 # https://docs.nvidia.com/deeplearning/tensorrt/release-notes/index.html#tensorrt-10
-find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10 PATHS "/usr/local/cuda/targets/x86_64-linux/lib")
-find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10 PATHS "/usr/local/cuda/targets/x86_64-linux/lib")
+find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10 PATHS ${RHEL_NVINFER_PATH})
+find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10 PATHS ${RHEL_NVINFER_PATH})
 target_link_libraries(
   triton-tensorrt-backend
   PRIVATE
