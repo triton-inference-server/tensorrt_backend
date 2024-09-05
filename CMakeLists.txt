@@ -52,7 +52,17 @@ endif()
 set(TRITON_TENSORRT_BACKEND_LIBNAME triton_tensorrt)
 set(TRITON_TENSORRT_BACKEND_INSTALLDIR ${CMAKE_INSTALL_PREFIX}/backends/tensorrt)
 
-set(CMAKE_PREFIX_PATH "/usr/local/cuda/targets/sbsa-linux/lib;/usr/local/cuda/targets/x86_64-linux/lib")
+
+if(LINUX)
+  file(STRINGS "/etc/os-release" DISTRO_ID_LIKE REGEX "ID_LIKE")
+  if(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+      set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} "/usr/local/cuda/targets/sbsa-linux/lib")
+    else()
+      set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} "/usr/local/cuda/targets/x86_64-linux/lib")
+    endif()
+  endif(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+endif(LINUX)
 
 #
 # Dependencies
