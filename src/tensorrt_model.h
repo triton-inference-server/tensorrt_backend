@@ -84,6 +84,7 @@ class TensorRTModel : public BackendModel {
           TRITONSERVER_ERROR_INTERNAL,
           (std::string("popping the wrong CiG context for ") + Name()).c_str());
     }
+    return nullptr;
   }
 
  protected:
