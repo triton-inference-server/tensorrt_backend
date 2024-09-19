@@ -25,8 +25,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
-#include "triton/backend/backend_model.h"
 #include <cuda.h>
+
+#include "triton/backend/backend_model.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
@@ -55,9 +56,10 @@ class TensorRTModel : public BackendModel {
   bool BusyWaitEvents() { return busy_wait_events_; }
 
 
-  //! Following functions are related to CiG (Cuda in Graphics) context sharing for
-  //! gaming use case. Creating a shared contexts reduces context switching overhead
-  //! and leads to better performance of model execution along side Graphics workload.
+  //! Following functions are related to CiG (Cuda in Graphics) context sharing
+  //! for gaming use case. Creating a shared contexts reduces context switching
+  //! overhead and leads to better performance of model execution along side
+  //! Graphics workload.
   CUcontext GetCiGContext() { return cig_ctx_; }
   bool isCiGEnabled() { return cig_ctx_ != nullptr; }
 
@@ -107,7 +109,7 @@ struct ScopedRuntimeCiGContext {
     }
   }
   ~ScopedRuntimeCiGContext()
-  { 
+  {
     if (model_state_->isCiGEnabled()) {
       THROW_IF_BACKEND_MODEL_ERROR(model_state_->PopCiGContext());
     }
