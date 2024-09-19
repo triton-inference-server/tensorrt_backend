@@ -25,7 +25,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
+#ifdef TRITON_ENABLE_CIG
 #include <cuda.h>
+#endif //TRITON_ENABLE_CIG
 
 #include "triton/backend/backend_model.h"
 
@@ -55,7 +57,7 @@ class TensorRTModel : public BackendModel {
   bool EagerBatching() { return eager_batching_; }
   bool BusyWaitEvents() { return busy_wait_events_; }
 
-
+#ifdef TRITON_ENABLE_CIG
   //! Following functions are related to CiG (Cuda in Graphics) context sharing
   //! for gaming use case. Creating a shared contexts reduces context switching
   //! overhead and leads to better performance of model execution along side
@@ -88,6 +90,7 @@ class TensorRTModel : public BackendModel {
     }
     return nullptr;
   }
+#endif //TRITON_ENABLE_CIG
 
  protected:
   common::TritonJson::Value graph_specs_;
@@ -97,9 +100,13 @@ class TensorRTModel : public BackendModel {
   bool separate_output_stream_;
   bool eager_batching_;
   bool busy_wait_events_;
+#ifdef TRITON_ENABLE_CIG
   CUcontext cig_ctx_;
+#endif //TRITON_ENABLE_CIG
+
 };
 
+#ifdef TRITON_ENABLE_CIG
 struct ScopedRuntimeCiGContext {
   ScopedRuntimeCiGContext(TensorRTModel* model_state)
       : model_state_(model_state)
@@ -116,5 +123,6 @@ struct ScopedRuntimeCiGContext {
   }
   TensorRTModel* model_state_;
 };
+#endif //TRITON_ENABLE_CIG
 
 }}}  // namespace triton::backend::tensorrt
