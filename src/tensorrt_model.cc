@@ -25,6 +25,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tensorrt_model.h"
+
 #include <sstream>
 
 namespace triton { namespace backend { namespace tensorrt {
