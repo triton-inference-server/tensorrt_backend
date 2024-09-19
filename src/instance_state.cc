@@ -257,8 +257,11 @@ ModelInstanceState::ModelInstanceState(
 
 ModelInstanceState::~ModelInstanceState()
 {
+#ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
-  if (!model_state_->isCiGEnabled()) {
+  if (!model_state_->isCiGEnabled())
+#endif //TRITON_ENABLE_CIG 
+  {
     cudaSetDevice(DeviceId());
   }
   for (auto& io_binding_infos : io_binding_infos_) {
@@ -427,8 +430,11 @@ ModelInstanceState::Run(
   payload_.reset(new Payload(next_set_, requests, request_count));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
+#ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
-  if (!model_state_->isCiGEnabled()) {
+  if (!model_state_->isCiGEnabled())
+#endif //TRITON_ENABLE_CIG 
+  {
     cudaSetDevice(DeviceId());
   }
 #ifdef TRITON_ENABLE_STATS
@@ -1557,8 +1563,11 @@ ModelInstanceState::EvaluateTensorRTContext(
 TRITONSERVER_Error*
 ModelInstanceState::InitStreamsAndEvents()
 {
+#ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
-  if (!model_state_->isCiGEnabled()) {
+  if (!model_state_->isCiGEnabled())
+#endif //TRITON_ENABLE_CIG 
+  {
     // Set the device before preparing the context.
     auto cuerr = cudaSetDevice(DeviceId());
     if (cuerr != cudaSuccess) {
