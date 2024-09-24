@@ -26,6 +26,8 @@
 
 #include "tensorrt_model.h"
 
+#include <sstream>
+
 namespace triton { namespace backend { namespace tensorrt {
 
 TensorRTModel::Priority
@@ -54,6 +56,10 @@ TensorRTModel::TensorRTModel(TRITONBACKEND_Model* triton_model)
       use_cuda_graphs_(false), gather_kernel_buffer_threshold_(0),
       separate_output_stream_(false), eager_batching_(false),
       busy_wait_events_(false)
+#ifdef TRITON_ENABLE_CIG
+      ,
+      cig_ctx_(nullptr)
+#endif  // TRITON_ENABLE_CIG
 {
   ParseModelConfig();
 }
@@ -89,6 +95,23 @@ TensorRTModel::ParseModelConfig()
           cuda.MemberAsBool("output_copy_stream", &separate_output_stream_));
     }
   }
+
+#ifdef TRITON_ENABLE_CIG
+  triton::common::TritonJson::Value parameters;
+  if (model_config_.Find("parameters", &parameters)) {
+    triton::common::TritonJson::Value value;
+    std::string ptr_value;
+    if (parameters.Find("CIG_CONTEXT_PTR", &value)) {
+      RETURN_IF_ERROR(value.MemberAsString("string_value", &ptr_value));
+      std::stringstream ss;
+      ss << ptr_value;
+      void* ctx_ptr;
+      ss >> ctx_ptr;
+      cig_ctx_ = static_cast<CUcontext>(ctx_ptr);
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "CiG Context pointer is set");
+    }
+  }
+#endif  // TRITON_ENABLE_CIG
 
   return nullptr;  // Success
 }
