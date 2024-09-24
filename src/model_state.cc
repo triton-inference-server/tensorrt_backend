@@ -177,8 +177,8 @@ ModelState::~ModelState()
   for (auto& device_engine : device_engines_) {
 #ifdef TRITON_ENABLE_CIG
     // Set device if CiG is disabled
-    if (!isCiGEnabled()) 
-#endif //TRITON_ENABLE_CIG 
+    if (!isCiGEnabled())
+#endif  // TRITON_ENABLE_CIG
     {
       cudaSetDevice(device_engine.first.first);
     }
@@ -215,11 +215,10 @@ ModelState::CreateEngine(
   // We share the engine (for models that don't have dynamic shapes) and
   // runtime across instances that have access to the same GPU/NVDLA.
   if (eit->second.second == nullptr) {
-
 #ifdef TRITON_ENABLE_CIG
     // Set device if CiG is disabled
-    if (!isCiGEnabled()) 
-#endif //TRITON_ENABLE_CIG
+    if (!isCiGEnabled())
+#endif  // TRITON_ENABLE_CIG
     {
       auto cuerr = cudaSetDevice(gpu_device);
       if (cuerr != cudaSuccess) {
@@ -335,8 +334,8 @@ ModelState::AutoCompleteConfig()
 
 #ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
-  if (!isCiGEnabled()) 
-#endif //TRITON_ENABLE_CIG
+  if (!isCiGEnabled())
+#endif  // TRITON_ENABLE_CIG
   {
     cuerr = cudaSetDevice(device_id);
     if (cuerr != cudaSuccess) {
@@ -393,8 +392,8 @@ ModelState::AutoCompleteConfig()
 
 #ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
-  if (!isCiGEnabled()) 
-#endif //TRITON_ENABLE_CIG
+  if (!isCiGEnabled())
+#endif  // TRITON_ENABLE_CIG
   {
     cuerr = cudaSetDevice(current_device);
     if (cuerr != cudaSuccess) {
