@@ -27,7 +27,7 @@
 
 #ifdef TRITON_ENABLE_CIG
 #include <cuda.h>
-#endif //TRITON_ENABLE_CIG
+#endif  // TRITON_ENABLE_CIG
 
 #include "triton/backend/backend_model.h"
 
@@ -90,7 +90,7 @@ class TensorRTModel : public BackendModel {
     }
     return nullptr;
   }
-#endif //TRITON_ENABLE_CIG
+#endif  // TRITON_ENABLE_CIG
 
  protected:
   common::TritonJson::Value graph_specs_;
@@ -102,8 +102,7 @@ class TensorRTModel : public BackendModel {
   bool busy_wait_events_;
 #ifdef TRITON_ENABLE_CIG
   CUcontext cig_ctx_;
-#endif //TRITON_ENABLE_CIG
-
+#endif  // TRITON_ENABLE_CIG
 };
 
 #ifdef TRITON_ENABLE_CIG
@@ -123,6 +122,6 @@ struct ScopedRuntimeCiGContext {
   }
   TensorRTModel* model_state_;
 };
-#endif //TRITON_ENABLE_CIG
+#endif  // TRITON_ENABLE_CIG
 
 }}}  // namespace triton::backend::tensorrt

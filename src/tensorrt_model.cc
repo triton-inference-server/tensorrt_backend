@@ -57,7 +57,8 @@ TensorRTModel::TensorRTModel(TRITONBACKEND_Model* triton_model)
       separate_output_stream_(false), eager_batching_(false),
       busy_wait_events_(false)
 #ifdef TRITON_ENABLE_CIG
-      ,cig_ctx_(nullptr)
+      ,
+      cig_ctx_(nullptr)
 #endif  // TRITON_ENABLE_CIG
 {
   ParseModelConfig();
@@ -110,7 +111,7 @@ TensorRTModel::ParseModelConfig()
       LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "CiG Context pointer is set");
     }
   }
-#endif //TRITON_ENABLE_CIG
+#endif  // TRITON_ENABLE_CIG
 
   return nullptr;  // Success
 }

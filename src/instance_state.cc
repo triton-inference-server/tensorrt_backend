@@ -260,7 +260,7 @@ ModelInstanceState::~ModelInstanceState()
 #ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
   if (!model_state_->isCiGEnabled())
-#endif //TRITON_ENABLE_CIG 
+#endif  // TRITON_ENABLE_CIG
   {
     cudaSetDevice(DeviceId());
   }
@@ -433,7 +433,7 @@ ModelInstanceState::Run(
 #ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
   if (!model_state_->isCiGEnabled())
-#endif //TRITON_ENABLE_CIG 
+#endif  // TRITON_ENABLE_CIG
   {
     cudaSetDevice(DeviceId());
   }
@@ -1566,7 +1566,7 @@ ModelInstanceState::InitStreamsAndEvents()
 #ifdef TRITON_ENABLE_CIG
   // Set device if CiG is disabled
   if (!model_state_->isCiGEnabled())
-#endif //TRITON_ENABLE_CIG 
+#endif  // TRITON_ENABLE_CIG
   {
     // Set the device before preparing the context.
     auto cuerr = cudaSetDevice(DeviceId());
