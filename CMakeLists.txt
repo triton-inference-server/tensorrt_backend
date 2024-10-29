@@ -166,7 +166,7 @@ target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_${TRITON_MIN_CXX
 target_compile_options(
   triton-tensorrt-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror -Wno-deprecated-declarations>
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Wno-error=maybe-uninitialized -Werror -Wno-deprecated-declarations>
   $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor>
 )
 
