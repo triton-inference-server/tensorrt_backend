@@ -90,7 +90,6 @@ TensorRTModel::ParseModelConfig()
     }
   }
 
-// TODO Ashish
 #ifdef TRITON_ENABLE_CUDA_CTX_SHARING
   triton::common::TritonJson::Value parameters;
   if (model_config_.Find("parameters", &parameters)) {
