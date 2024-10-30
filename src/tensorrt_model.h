@@ -39,6 +39,14 @@ class TensorRTModel : public BackendModel {
   TensorRTModel(TRITONBACKEND_Model* triton_model);
   virtual ~TensorRTModel() = default;
 
+  template <typename T>
+  TRITONSERVER_Error* GetParameter(std::string const& name, T& value)
+  {
+    assert(false);
+    auto dummy = T();
+    return dummy;
+  }
+
   TRITONSERVER_Error* SetTensorRTModelConfig();
 
   TRITONSERVER_Error* ParseModelConfig();
@@ -57,6 +65,10 @@ class TensorRTModel : public BackendModel {
   bool SeparateOutputStream() { return separate_output_stream_; }
   bool EagerBatching() { return eager_batching_; }
   bool BusyWaitEvents() { return busy_wait_events_; }
+
+  template <>
+  TRITONSERVER_Error* GetParameter<std::string>(
+      std::string const& name, std::string& str_value);
 
   void* StringToPointer(std::string& str)
   {
