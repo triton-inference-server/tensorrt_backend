@@ -54,6 +54,18 @@ endif()
 set(TRITON_TENSORRT_BACKEND_LIBNAME triton_tensorrt)
 set(TRITON_TENSORRT_BACKEND_INSTALLDIR ${CMAKE_INSTALL_PREFIX}/backends/tensorrt)
 
+
+if(LINUX)
+  file(STRINGS "/etc/os-release" DISTRO_ID_LIKE REGEX "ID_LIKE")
+  if(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+      set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} "/usr/local/cuda/targets/sbsa-linux/lib")
+    else()
+      set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} "/usr/local/cuda/targets/x86_64-linux/lib")
+    endif()
+  endif(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+endif(LINUX)
+
 #
 # Dependencies
 #
@@ -108,91 +120,40 @@ if(${TRITON_ENABLE_NVTX})
   add_definitions(-DTRITON_ENABLE_NVTX=1)
 endif() # TRITON_ENABLE_NVTX
 
-if(NOT DEFINED ENV{TRT_VERSION})
-  set(ENV{TRT_VERSION} 10.0.1.6)
-endif()
+add_library(
+  triton-tensorrt-backend SHARED
+  src/tensorrt.cc
+  src/model_state.cc
+  src/tensorrt_model.cc
+  src/tensorrt_model.h
+  src/instance_state.cc
+  src/tensorrt_model_instance.cc
+  src/tensorrt_model_instance.h
+  src/shape_tensor.cc
+  src/shape_tensor.h
+  src/tensorrt_utils.cc
+  src/tensorrt_utils.h
+  src/filesystem.h
+  src/filesystem.cc
+  src/semaphore.h
+  src/shared_library.h
+  src/shared_library.cc
+  src/loader.cc
+  src/loader.h
+  src/logging.cc
+  src/logging.h
+  src/output_allocator.cc
+  src/output_allocator.h
+  src/io_binding_info.cc
+  src/io_binding_info.h
+)
+# Shared library implementing the Triton Backend API
+configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
 
-message(STATUS "TRT_VERSION envvar is $ENV{TRT_VERSION}")
-
-#
-# FIXME: Update src folder to build with TRT8 and then remove
-# src_trt8 folder.
-# Currently the iGPU builds are still using TensorRT 8. This means
-# we need to keep supporting TRT 8 for this backend. As there has
-# been significant clean-ups when moving from TRT 8 to TRT 10
-# we are maintaining a previous version of backend for now.
-#
-if("$ENV{TRT_VERSION}" VERSION_LESS 10)
-  set(SOURCE_DIR "src_trt8")
-  add_library(
-    triton-tensorrt-backend SHARED
-    ${SOURCE_DIR}/tensorrt.cc
-    ${SOURCE_DIR}/model_state.cc
-    ${SOURCE_DIR}/tensorrt_model.cc
-    ${SOURCE_DIR}/tensorrt_model.h
-    ${SOURCE_DIR}/instance_state.cc
-    ${SOURCE_DIR}/tensorrt_model_instance.cc
-    ${SOURCE_DIR}/tensorrt_model_instance.h
-    ${SOURCE_DIR}/tensorrt_utils.cc
-    ${SOURCE_DIR}/tensorrt_utils.h
-    ${SOURCE_DIR}/filesystem.h
-    ${SOURCE_DIR}/filesystem.cc
-    ${SOURCE_DIR}/semaphore.h
-    ${SOURCE_DIR}/shared_library.h
-    ${SOURCE_DIR}/shared_library.cc
-    ${SOURCE_DIR}/loader.cc
-    ${SOURCE_DIR}/loader.h
-    ${SOURCE_DIR}/logging.cc
-    ${SOURCE_DIR}/logging.h
-    ${SOURCE_DIR}/output_allocator.cc
-    ${SOURCE_DIR}/output_allocator.h
-    ${SOURCE_DIR}/io_binding_info.cc
-    ${SOURCE_DIR}/io_binding_info.h
-  )
-  # Shared library implementing the Triton Backend API
-  configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
-
-  target_include_directories(
-    triton-tensorrt-backend
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
-  )
-else()
-  set(SOURCE_DIR "src")
-  add_library(
-    triton-tensorrt-backend SHARED
-    ${SOURCE_DIR}/tensorrt.cc
-    ${SOURCE_DIR}/model_state.cc
-    ${SOURCE_DIR}/tensorrt_model.cc
-    ${SOURCE_DIR}/tensorrt_model.h
-    ${SOURCE_DIR}/instance_state.cc
-    ${SOURCE_DIR}/tensorrt_model_instance.cc
-    ${SOURCE_DIR}/tensorrt_model_instance.h
-    ${SOURCE_DIR}/shape_tensor.cc
-    ${SOURCE_DIR}/shape_tensor.h
-    ${SOURCE_DIR}/tensorrt_utils.cc
-    ${SOURCE_DIR}/tensorrt_utils.h
-    ${SOURCE_DIR}/filesystem.h
-    ${SOURCE_DIR}/filesystem.cc
-    ${SOURCE_DIR}/semaphore.h
-    ${SOURCE_DIR}/shared_library.h
-    ${SOURCE_DIR}/shared_library.cc
-    ${SOURCE_DIR}/loader.cc
-    ${SOURCE_DIR}/loader.h
-    ${SOURCE_DIR}/logging.cc
-    ${SOURCE_DIR}/logging.h
-    ${SOURCE_DIR}/output_allocator.cc
-    ${SOURCE_DIR}/output_allocator.h
-    ${SOURCE_DIR}/io_binding_info.cc
-    ${SOURCE_DIR}/io_binding_info.h
-  )
-  # Shared library implementing the Triton Backend API
-  configure_file(${SOURCE_DIR}/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
-
-  target_include_directories(
-    triton-tensorrt-backend
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
-  )
-endif()
+target_include_directories(
+  triton-tensorrt-backend
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 add_library(
   TritonTensorRTBackend::triton-tensorrt-backend ALIAS triton-tensorrt-backend
@@ -207,7 +168,7 @@ target_compile_features(triton-tensorrt-backend PRIVATE cxx_std_${TRITON_MIN_CXX
 target_compile_options(
   triton-tensorrt-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror -Wno-deprecated-declarations>
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Wno-deprecated-declarations>
   $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor>
 )
 
@@ -249,8 +210,8 @@ ENDFOREACH(p)
 
 # NOTE: TRT 10 for Windows added the version suffix to the library names. See the release notes:
 # https://docs.nvidia.com/deeplearning/tensorrt/release-notes/index.html#tensorrt-10
-find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10 PATHS "/usr/local/cuda/targets/x86_64-linux/lib")
-find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10 PATHS "/usr/local/cuda/targets/x86_64-linux/lib")
+find_library(NVINFER_LIBRARY NAMES nvinfer nvinfer_10)
+find_library(NVINFER_PLUGIN_LIBRARY NAMES nvinfer_plugin nvinfer_plugin_10)
 target_link_libraries(
   triton-tensorrt-backend
   PRIVATE
