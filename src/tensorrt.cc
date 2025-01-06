@@ -318,7 +318,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
     DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
   }
 
-  ScopedRuntimeCudaContext cig_scope(model_state);
+  ScopedRuntimeCudaContext cuda_scope(model_state);
 
   // With each instance we create a ModelInstanceState object and
   // associate it with the TRITONBACKEND_ModelInstance.
@@ -358,7 +358,7 @@ TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
     return nullptr;
   }
 
-  ScopedRuntimeCudaContext cig_scope(instance_state->StateForModel());
+  ScopedRuntimeCudaContext cuda_scope(instance_state->StateForModel());
 
   delete instance_state;
 
@@ -383,7 +383,7 @@ TRITONBACKEND_ModelInstanceExecute(
       instance, reinterpret_cast<void**>(&instance_state)));
   ModelState* model_state = instance_state->StateForModel();
 
-  ScopedRuntimeCudaContext cig_scope(model_state);
+  ScopedRuntimeCudaContext cuda_scope(model_state);
 
   // For TensorRT backend, the executing instance may not closely tie to
   // TRITONBACKEND_ModelInstance, the instance will be assigned based on
