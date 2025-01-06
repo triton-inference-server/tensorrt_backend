@@ -134,20 +134,11 @@ TensorRTModel::GetParameter<std::string>(
     std::string const& name, std::string& str_value)
 {
   triton::common::TritonJson::Value parameters;
-  TRITONSERVER_Error* err =
-      model_config_.MemberAsObject("parameters", &parameters);
-  if (err != nullptr) {
-    return err;
-    // throw std::runtime_error("Model config doesn't have a parameters
-    // section");
-  }
+  RETURN_IF_ERROR(model_config_.MemberAsObject("parameters", &parameters));
+
   triton::common::TritonJson::Value value;
-  err = parameters.MemberAsObject(name.c_str(), &value);
-  if (err != nullptr) {
-    return err;
-    // std::string errStr = "Cannot find parameter with name: " + name;
-    // throw std::runtime_error(errStr);
-  }
+  RETURN_IF_ERROR(parameters.MemberAsObject(name.c_str(), &value));
+
   value.MemberAsString("string_value", &str_value);
   return nullptr;
 }
