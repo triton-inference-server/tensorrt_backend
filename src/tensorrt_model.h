@@ -80,10 +80,10 @@ class TensorRTModel : public BackendModel {
     return ctx_ptr;
   }
 
-  //! Following functions are related to Cuda (Cuda in Graphics) context sharing
-  //! for gaming use case. Creating a shared contexts reduces context switching
-  //! overhead and leads to better performance of model execution along side
-  //! Graphics workload.
+  //! Following functions are related to custom Cuda context (Cuda in Graphics)
+  //! sharing for gaming use case. Creating a shared contexts reduces context
+  //! switching overhead and leads to better performance of model execution
+  //! along side Graphics workload.
 
   bool isCudaContextSharingEnabled()
   {
