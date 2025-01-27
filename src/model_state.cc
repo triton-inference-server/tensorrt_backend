@@ -324,15 +324,25 @@ ModelState::AutoCompleteConfig()
            " to auto-complete config for " + Name())
            .c_str()));
 
-  if (!isCudaContextSharingEnabled()) {
-    cuerr = cudaSetDevice(device_id);
-    if (cuerr != cudaSuccess) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unable to set CUDA device to GPU ") +
-           std::to_string(device_id) + " : " + cudaGetErrorString(cuerr))
-              .c_str());
-    }
+#ifdef TRITON_ENABLE_CUDA_CTX_SHARING
+  // Return failure if Cuda context sharing is enabled and
+  // if it is a multi GPU setup
+  if (isCudaContextSharingEnabled() && device_id != 0) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string(
+             "Cuda context sharing is not supported on mult-GPU system."))
+            .c_str());
+  }
+#endif  // TRITON_ENABLE_CUDA_CTX_SHARING
+
+  cuerr = cudaSetDevice(device_id);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to set CUDA device to GPU ") +
+         std::to_string(device_id) + " : " + cudaGetErrorString(cuerr))
+            .c_str());
   }
 
   std::string artifact_name;
