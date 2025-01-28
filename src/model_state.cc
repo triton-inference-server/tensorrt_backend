@@ -175,7 +175,7 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
 ModelState::~ModelState()
 {
   for (auto& device_engine : device_engines_) {
-    if (!isCudaContextSharingEnabled()) {
+    if (!IsCudaContextSharingEnabled()) {
       cudaSetDevice(device_engine.first.first);
     }
     auto& runtime = device_engine.second.first;
@@ -211,7 +211,7 @@ ModelState::CreateEngine(
   // We share the engine (for models that don't have dynamic shapes) and
   // runtime across instances that have access to the same GPU/NVDLA.
   if (eit->second.second == nullptr) {
-    if (!isCudaContextSharingEnabled()) {
+    if (!IsCudaContextSharingEnabled()) {
       auto cuerr = cudaSetDevice(gpu_device);
       if (cuerr != cudaSuccess) {
         return TRITONSERVER_ErrorNew(
@@ -327,11 +327,11 @@ ModelState::AutoCompleteConfig()
 #ifdef TRITON_ENABLE_CUDA_CTX_SHARING
   // Return failure if Cuda context sharing is enabled and
   // if it is a multi GPU setup
-  if (isCudaContextSharingEnabled() && device_id != 0) {
+  if (IsCudaContextSharingEnabled() && device_id != 0) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string(
-             "Cuda context sharing is not supported on mult-GPU system."))
+             "Cuda context sharing is not supported on multi-GPU system."))
             .c_str());
   }
 #endif  // TRITON_ENABLE_CUDA_CTX_SHARING
@@ -388,7 +388,7 @@ ModelState::AutoCompleteConfig()
 
   RETURN_IF_ERROR(AutoCompleteConfigHelper(model_path));
 
-  if (!isCudaContextSharingEnabled()) {
+  if (!IsCudaContextSharingEnabled()) {
     cuerr = cudaSetDevice(current_device);
     if (cuerr != cudaSuccess) {
       return TRITONSERVER_ErrorNew(
