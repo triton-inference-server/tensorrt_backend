@@ -85,7 +85,7 @@ class TensorRTModel : public BackendModel {
   //! switching overhead and leads to better performance of model execution
   //! along side Graphics workload.
 
-  bool isCudaContextSharingEnabled()
+  bool IsCudaContextSharingEnabled()
   {
 #ifdef TRITON_ENABLE_CUDA_CTX_SHARING
     return cuda_ctx != nullptr;
@@ -143,7 +143,7 @@ struct ScopedRuntimeCudaContext {
       : model_state_(model_state)
   {
 #ifdef TRITON_ENABLE_CUDA_CTX_SHARING
-    if (model_state_->isCudaContextSharingEnabled()) {
+    if (model_state_->IsCudaContextSharingEnabled()) {
       THROW_IF_BACKEND_MODEL_ERROR(model_state_->PushCudaContext());
     }
 #endif  // TRITON_ENABLE_CUDA_CTX_SHARING
@@ -151,7 +151,7 @@ struct ScopedRuntimeCudaContext {
   ~ScopedRuntimeCudaContext()
   {
 #ifdef TRITON_ENABLE_CUDA_CTX_SHARING
-    if (model_state_->isCudaContextSharingEnabled()) {
+    if (model_state_->IsCudaContextSharingEnabled()) {
       THROW_IF_BACKEND_MODEL_ERROR(model_state_->PopCudaContext());
     }
 #endif  // TRITON_ENABLE_CUDA_CTX_SHARING
