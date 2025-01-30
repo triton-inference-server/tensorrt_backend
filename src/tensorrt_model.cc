@@ -90,6 +90,14 @@ TensorRTModel::ParseModelConfig()
     }
   }
 
+#ifdef TRITON_ENABLE_CUDA_CTX_SHARING
+  std::string ptr_str = "";
+  RETURN_IF_ERROR(GetParameter("CUDA_CONTEXT_PTR", ptr_str));
+  cuda_ctx = static_cast<CUcontext>(StringToPointer(ptr_str));
+  // cuda_ctx = static_cast<CUcontext>(reinterpret_cast<void*>(ptr_str));
+  LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Cuda Context pointer is set");
+#endif  // TRITON_ENABLE_CUDA_CTX_SHARING
+
   return nullptr;  // Success
 }
 
@@ -118,6 +126,21 @@ TensorRTModel::GetCudaStreamPriority()
   }
 
   return cuda_stream_priority;
+}
+
+template <>
+TRITONSERVER_Error*
+TensorRTModel::GetParameter<std::string>(
+    std::string const& name, std::string& str_value)
+{
+  triton::common::TritonJson::Value parameters;
+  RETURN_IF_ERROR(model_config_.MemberAsObject("parameters", &parameters));
+
+  triton::common::TritonJson::Value value;
+  RETURN_IF_ERROR(parameters.MemberAsObject(name.c_str(), &value));
+
+  value.MemberAsString("string_value", &str_value);
+  return nullptr;
 }
 
 }}}  // namespace triton::backend::tensorrt
