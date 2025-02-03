@@ -66,10 +66,6 @@ class TensorRTModel : public BackendModel {
   bool EagerBatching() { return eager_batching_; }
   bool BusyWaitEvents() { return busy_wait_events_; }
 
-  template <>
-  TRITONSERVER_Error* GetParameter<std::string>(
-      std::string const& name, std::string& str_value);
-
   void* StringToPointer(std::string& str)
   {
     std::stringstream ss;
@@ -137,6 +133,10 @@ class TensorRTModel : public BackendModel {
   CUcontext cuda_ctx = nullptr;
 #endif  // TRITON_ENABLE_CUDA_CTX_SHARING
 };
+
+template <>
+TRITONSERVER_Error* TensorRTModel::GetParameter<std::string>(
+    std::string const& name, std::string& str_value);
 
 struct ScopedRuntimeCudaContext {
   ScopedRuntimeCudaContext(TensorRTModel* model_state)
