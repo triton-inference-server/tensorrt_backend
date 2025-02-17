@@ -175,7 +175,9 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
 ModelState::~ModelState()
 {
   for (auto& device_engine : device_engines_) {
-    cudaSetDevice(device_engine.first.first);
+    if (!IsCudaContextSharingEnabled()) {
+      cudaSetDevice(device_engine.first.first);
+    }
     auto& runtime = device_engine.second.first;
     auto& engine = device_engine.second.second;
     // Need to reset explicitly to ensure proper destruction order
@@ -209,15 +211,16 @@ ModelState::CreateEngine(
   // We share the engine (for models that don't have dynamic shapes) and
   // runtime across instances that have access to the same GPU/NVDLA.
   if (eit->second.second == nullptr) {
-    auto cuerr = cudaSetDevice(gpu_device);
-    if (cuerr != cudaSuccess) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unable to set device for ") + Name() + ": " +
-           cudaGetErrorString(cuerr))
-              .c_str());
+    if (!IsCudaContextSharingEnabled()) {
+      auto cuerr = cudaSetDevice(gpu_device);
+      if (cuerr != cudaSuccess) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("unable to set device for ") + Name() + ": " +
+             cudaGetErrorString(cuerr))
+                .c_str());
+      }
     }
-
     const bool new_runtime = (eit->second.first == nullptr);
     RETURN_IF_ERROR(LoadPlan(
         model_path, dla_core_id, &eit->second.first, &eit->second.second,
@@ -321,6 +324,18 @@ ModelState::AutoCompleteConfig()
            " to auto-complete config for " + Name())
            .c_str()));
 
+#ifdef TRITON_ENABLE_CUDA_CTX_SHARING
+  // Return failure if Cuda context sharing is enabled and
+  // if it is a multi GPU setup
+  if (IsCudaContextSharingEnabled() && device_id != 0) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string(
+             "Cuda context sharing is not supported on multi-GPU system."))
+            .c_str());
+  }
+#endif  // TRITON_ENABLE_CUDA_CTX_SHARING
+
   cuerr = cudaSetDevice(device_id);
   if (cuerr != cudaSuccess) {
     return TRITONSERVER_ErrorNew(
@@ -373,13 +388,15 @@ ModelState::AutoCompleteConfig()
 
   RETURN_IF_ERROR(AutoCompleteConfigHelper(model_path));
 
-  cuerr = cudaSetDevice(current_device);
-  if (cuerr != cudaSuccess) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("unable to revert CUDA device to GPU ") +
-         std::to_string(current_device) + " : " + cudaGetErrorString(cuerr))
-            .c_str());
+  if (!IsCudaContextSharingEnabled()) {
+    cuerr = cudaSetDevice(current_device);
+    if (cuerr != cudaSuccess) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to revert CUDA device to GPU ") +
+           std::to_string(current_device) + " : " + cudaGetErrorString(cuerr))
+              .c_str());
+    }
   }
 
   if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
