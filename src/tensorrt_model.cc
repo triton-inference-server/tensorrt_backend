@@ -92,10 +92,15 @@ TensorRTModel::ParseModelConfig()
 
 #ifdef TRITON_ENABLE_CUDA_CTX_SHARING
   std::string ptr_str = "";
-  RETURN_IF_ERROR(GetParameter("CUDA_CONTEXT_PTR", ptr_str));
-  cuda_ctx = static_cast<CUcontext>(StringToPointer(ptr_str));
-  // cuda_ctx = static_cast<CUcontext>(reinterpret_cast<void*>(ptr_str));
-  LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Cuda Context pointer is set");
+  // This parameter can be optional
+  auto _err = GetParameter("CUDA_CONTEXT_PTR", ptr_str);
+  if (_err == nullptr) {
+    cuda_ctx = static_cast<CUcontext>(StringToPointer(ptr_str));
+    LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Cuda Context pointer is set");
+  } else {
+    // Ignore this error as the parameter is optional
+    TRITONSERVER_ErrorDelete(_err);
+  }
 #endif  // TRITON_ENABLE_CUDA_CTX_SHARING
 
   return nullptr;  // Success
