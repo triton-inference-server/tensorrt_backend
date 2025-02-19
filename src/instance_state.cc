@@ -1698,7 +1698,7 @@ ModelInstanceState::InitOptimizationProfiles()
   // context per engine, in order to set the specified profile_index,
   // another context is created and the previous context is destroyed.
   std::shared_ptr<nvinfer1::IExecutionContext> default_trt_context(
-      engine_->createExecutionContext());
+      engine_->createExecutionContext(model_state_->AllocationStrategy()));
   if (default_trt_context == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
@@ -1739,7 +1739,7 @@ ModelInstanceState::InitOptimizationProfiles()
     if (profile_index == 0) {
       res.first->second.context_ = std::move(default_trt_context);
     } else {
-      res.first->second.context_.reset(engine_->createExecutionContext());
+      res.first->second.context_.reset(engine_->createExecutionContext(model_state_->AllocationStrategy()));
       if (res.first->second.context_ == nullptr) {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,

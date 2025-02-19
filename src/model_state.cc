@@ -288,6 +288,32 @@ ModelState::ValidateModelConfig()
 TRITONSERVER_Error*
 ModelState::ParseParameters()
 {
+  std::string exec_alloc_strategy_str = "STATIC";
+
+  common::TritonJson::Value params;
+  if (ModelConfig().Find("parameters", &params)) {
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "'parameters' field found in model configuration.");
+      common::TritonJson::Value strategy_param;
+      if (params.Find("execution_context_allocation_strategy", &strategy_param)) {
+          LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "'execution_context_allocation_strategy' field found in model configuration in 'parameters' field.");
+          std::string allocation_strategy_str;
+          RETURN_IF_ERROR(strategy_param.MemberAsString("string_value", &exec_alloc_strategy_str));
+      }
+      if (exec_alloc_strategy_str == "STATIC") {
+        exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
+      } else if (exec_alloc_strategy_str == "ON_PROFILE_CHANGE") {
+        exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kON_PROFILE_CHANGE;
+      } else if (exec_alloc_strategy_str == "USER_MANAGED") {
+        exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kUSER_MANAGED;
+      } else {
+        return TRITONSERVER_ErrorNew(
+                TRITONSERVER_ERROR_INVALID_ARG,
+                ("Invalid value for execution_context_allocation_strategy field: " + exec_alloc_strategy_str).c_str());
+      }
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, ("Selected Execution Context Allocation Strategy: " + exec_alloc_strategy_str).c_str());
+  } else {
+      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "'parameters' field NOT found in model configuration.");
+  }
   return nullptr;  // success
 }
 

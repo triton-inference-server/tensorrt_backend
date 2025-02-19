@@ -88,6 +88,11 @@ class ModelState : public TensorRTModel {
 
   TensorRTLogger& GetTensorRTLogger() { return tensorrt_logger_; }
 
+  nvinfer1::ExecutionContextAllocationStrategy AllocationStrategy() const
+  {
+      return exec_alloc_strategy_;
+  }
+
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
@@ -140,6 +145,8 @@ class ModelState : public TensorRTModel {
 
   // Whether the backend should support version-compatible TensorRT models.
   static inline bool is_version_compatible_{false};
+
+  nvinfer1::ExecutionContextAllocationStrategy exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
 };
 
 
