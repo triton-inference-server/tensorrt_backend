@@ -303,8 +303,6 @@ ModelState::ParseParameters()
         exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
       } else if (exec_alloc_strategy_str == "ON_PROFILE_CHANGE") {
         exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kON_PROFILE_CHANGE;
-      } else if (exec_alloc_strategy_str == "USER_MANAGED") {
-        exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kUSER_MANAGED;
       } else {
         return TRITONSERVER_ErrorNew(
                 TRITONSERVER_ERROR_INVALID_ARG,
