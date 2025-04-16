@@ -1728,7 +1728,8 @@ ModelInstanceState::InitOptimizationProfiles()
       continue;
     }
 
-    res.first->second.context_.reset(engine_->createExecutionContext());
+    res.first->second.context_.reset(
+        engine_->createExecutionContext(model_state_->AllocationStrategy()));
     if (res.first->second.context_ == nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,

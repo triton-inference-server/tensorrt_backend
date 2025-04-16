@@ -314,7 +314,8 @@ ModelState::ParseParameters()
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
             ("Invalid value for 'allocation_strategy': '" +
-             exec_alloc_strategy + "' for model instance '" + Name() + "'")
+             exec_alloc_strategy + "' for model instance '" + Name() +
+             "'. Supported values are 'STATIC' and 'ON_PROFILE_CHANGE'.")
                 .c_str());
       }
       LOG_MESSAGE(
