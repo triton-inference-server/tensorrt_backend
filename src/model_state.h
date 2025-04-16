@@ -1,4 +1,4 @@
-// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -88,6 +88,11 @@ class ModelState : public TensorRTModel {
 
   TensorRTLogger& GetTensorRTLogger() { return tensorrt_logger_; }
 
+  nvinfer1::ExecutionContextAllocationStrategy AllocationStrategy() const
+  {
+    return alloc_strategy_;
+  }
+
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
@@ -140,6 +145,8 @@ class ModelState : public TensorRTModel {
 
   // Whether the backend should support version-compatible TensorRT models.
   static inline bool is_version_compatible_{false};
+
+  nvinfer1::ExecutionContextAllocationStrategy alloc_strategy_;
 };
 
 

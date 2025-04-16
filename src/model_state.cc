@@ -1,4 +1,4 @@
-// Copyright 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -142,7 +142,8 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 }
 
 ModelState::ModelState(TRITONBACKEND_Model* triton_model)
-    : TensorRTModel(triton_model), engine_sharing_(true)
+    : TensorRTModel(triton_model), engine_sharing_(true),
+      alloc_strategy_(nvinfer1::ExecutionContextAllocationStrategy::kSTATIC)
 {
   // Obtain backend configuration
   TRITONBACKEND_Backend* backend;
@@ -288,6 +289,41 @@ ModelState::ValidateModelConfig()
 TRITONSERVER_Error*
 ModelState::ParseParameters()
 {
+  triton::common::TritonJson::Value params;
+  bool status = ModelConfig().Find("parameters", &params);
+  if (status) {
+    // If 'allocation_strategy' is not present in 'parameters',
+    // will use the default strategy "STATIC".
+    std::string exec_alloc_strategy;
+    TRITONSERVER_Error* err =
+        GetParameterValue(params, "allocation_strategy", &exec_alloc_strategy);
+    if (err != nullptr) {
+      if (TRITONSERVER_ErrorCode(err) != TRITONSERVER_ERROR_NOT_FOUND) {
+        return err;
+      } else {
+        TRITONSERVER_ErrorDelete(err);
+      }
+    } else {
+      // exec_alloc_strategy is present in model config parameters
+      if (exec_alloc_strategy == "STATIC") {
+        alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
+      } else if (exec_alloc_strategy == "ON_PROFILE_CHANGE") {
+        alloc_strategy_ =
+            nvinfer1::ExecutionContextAllocationStrategy::kON_PROFILE_CHANGE;
+      } else {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            ("Invalid value for 'allocation_strategy': '" +
+             exec_alloc_strategy + "' for model instance '" + Name() + "'")
+                .c_str());
+      }
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO,
+          ("'allocation_strategy' set to '" + exec_alloc_strategy +
+           "' for model instance '" + Name() + "'")
+              .c_str());
+    }
+  }
   return nullptr;  // success
 }
 
