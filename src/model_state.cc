@@ -296,7 +296,7 @@ ModelState::ParseParameters()
     // will use the default strategy "STATIC".
     std::string alloc_strategy;
     TRITONSERVER_Error* err =
-        GetParameterValue(params, "allocation_strategy", &alloc_strategy);
+        GetParameterValue(params, "execution_context_allocation_strategy", &alloc_strategy);
     if (err != nullptr) {
       if (TRITONSERVER_ErrorCode(err) != TRITONSERVER_ERROR_NOT_FOUND) {
         return err;
@@ -313,14 +313,14 @@ ModelState::ParseParameters()
       } else {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
-            ("Invalid value for 'allocation_strategy': '" + alloc_strategy +
+            ("Invalid value for 'execution_context_allocation_strategy': '" + alloc_strategy +
              "' for model instance '" + Name() +
              "'. Supported values are 'STATIC' and 'ON_PROFILE_CHANGE'.")
                 .c_str());
       }
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
-          ("'allocation_strategy' set to '" + alloc_strategy +
+          ("'execution_context_allocation_strategy' set to '" + alloc_strategy +
            "' for model instance '" + Name() + "'")
               .c_str());
     }
