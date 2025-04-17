@@ -292,7 +292,7 @@ ModelState::ParseParameters()
   triton::common::TritonJson::Value params;
   bool status = ModelConfig().Find("parameters", &params);
   if (status) {
-    // If 'allocation_strategy' is not present in 'parameters',
+    // If 'execution_context_allocation_strategy' is not present in 'parameters',
     // will use the default strategy "STATIC".
     std::string alloc_strategy;
     TRITONSERVER_Error* err =
