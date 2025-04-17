@@ -1,4 +1,4 @@
-// Copyright 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -90,7 +90,7 @@ class ModelState : public TensorRTModel {
 
   nvinfer1::ExecutionContextAllocationStrategy AllocationStrategy() const
   {
-      return exec_alloc_strategy_;
+    return alloc_strategy_;
   }
 
  private:
@@ -146,7 +146,7 @@ class ModelState : public TensorRTModel {
   // Whether the backend should support version-compatible TensorRT models.
   static inline bool is_version_compatible_{false};
 
-  nvinfer1::ExecutionContextAllocationStrategy exec_alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
+  nvinfer1::ExecutionContextAllocationStrategy alloc_strategy_;
 };
 
 

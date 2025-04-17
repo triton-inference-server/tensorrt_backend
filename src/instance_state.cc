@@ -1,4 +1,4 @@
-// Copyright 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -1697,21 +1697,9 @@ ModelInstanceState::InitOptimizationProfiles()
   // the first context creation. As currently triton supports one
   // context per engine, in order to set the specified profile_index,
   // another context is created and the previous context is destroyed.
-  std::shared_ptr<nvinfer1::IExecutionContext> default_trt_context = nullptr;
-  bool needs_profile0 = false;
-
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
   if (ProfileNames().empty()) {
-    needs_profile0 = true;
-    default_trt_context.reset(engine_->createExecutionContext(model_state_->AllocationStrategy()));
-    if (default_trt_context == nullptr) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unable to create TensorRT context: ") +
-          model_state_->GetTensorRTLogger().LastErrorMsg())
-              .c_str());
-    }
     profile_name_index.emplace_back("default", 0);
   } else {
     for (const auto& profile_name : ProfileNames()) {
@@ -1739,17 +1727,19 @@ ModelInstanceState::InitOptimizationProfiles()
               .c_str());
       continue;
     }
-    if (profile_index == 0 && needs_profile0) {
-      res.first->second.context_ = std::move(default_trt_context);
-    } else {
-      res.first->second.context_.reset(engine_->createExecutionContext(model_state_->AllocationStrategy()));
-      if (res.first->second.context_ == nullptr) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            (std::string("unable to create TensorRT context: ") +
-             model_state_->GetTensorRTLogger().LastErrorMsg())
-                .c_str());
-      }
+
+    // Create a new execution context for the profile
+    res.first->second.context_.reset(
+        engine_->createExecutionContext(model_state_->AllocationStrategy()));
+    if (res.first->second.context_ == nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to create TensorRT context: ") +
+           model_state_->GetTensorRTLogger().LastErrorMsg())
+              .c_str());
+    }
+
+    if (profile_index != 0) {
       if (!res.first->second.context_->setOptimizationProfileAsync(
               profile_index, stream_)) {
         return TRITONSERVER_ErrorNew(
