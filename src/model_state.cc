@@ -304,7 +304,7 @@ ModelState::ParseParameters()
         TRITONSERVER_ErrorDelete(err);
       }
     } else {
-      // allocation_strategy is present in model config parameters
+      // 'execution_context_allocation_strategy' is present in model config parameters.
       if (alloc_strategy == "STATIC") {
         alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
       } else if (alloc_strategy == "ON_PROFILE_CHANGE") {
