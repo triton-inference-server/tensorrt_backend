@@ -294,9 +294,9 @@ ModelState::ParseParameters()
   if (status) {
     // If 'allocation_strategy' is not present in 'parameters',
     // will use the default strategy "STATIC".
-    std::string exec_alloc_strategy;
+    std::string alloc_strategy;
     TRITONSERVER_Error* err =
-        GetParameterValue(params, "allocation_strategy", &exec_alloc_strategy);
+        GetParameterValue(params, "allocation_strategy", &alloc_strategy);
     if (err != nullptr) {
       if (TRITONSERVER_ErrorCode(err) != TRITONSERVER_ERROR_NOT_FOUND) {
         return err;
@@ -304,23 +304,23 @@ ModelState::ParseParameters()
         TRITONSERVER_ErrorDelete(err);
       }
     } else {
-      // exec_alloc_strategy is present in model config parameters
-      if (exec_alloc_strategy == "STATIC") {
+      // allocation_strategy is present in model config parameters
+      if (alloc_strategy == "STATIC") {
         alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
-      } else if (exec_alloc_strategy == "ON_PROFILE_CHANGE") {
+      } else if (alloc_strategy == "ON_PROFILE_CHANGE") {
         alloc_strategy_ =
             nvinfer1::ExecutionContextAllocationStrategy::kON_PROFILE_CHANGE;
       } else {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
-            ("Invalid value for 'allocation_strategy': '" +
-             exec_alloc_strategy + "' for model instance '" + Name() +
+            ("Invalid value for 'allocation_strategy': '" + alloc_strategy +
+             "' for model instance '" + Name() +
              "'. Supported values are 'STATIC' and 'ON_PROFILE_CHANGE'.")
                 .c_str());
       }
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
-          ("'allocation_strategy' set to '" + exec_alloc_strategy +
+          ("'allocation_strategy' set to '" + alloc_strategy +
            "' for model instance '" + Name() + "'")
               .c_str());
     }
