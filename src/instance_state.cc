@@ -1693,10 +1693,6 @@ ModelInstanceState::InitIOIndexMap()
 TRITONSERVER_Error*
 ModelInstanceState::InitOptimizationProfiles()
 {
-  // TRT sets the optimization profile index to be 0 implicitly with
-  // the first context creation. As currently triton supports one
-  // context per engine, in order to set the specified profile_index,
-  // another context is created and the previous context is destroyed.
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
   if (ProfileNames().empty()) {
