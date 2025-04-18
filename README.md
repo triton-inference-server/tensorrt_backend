@@ -99,3 +99,21 @@ but the listed CMake argument can be used to override.
 * triton-inference-server/backend: -DTRITON_BACKEND_REPO_TAG=[tag]
 * triton-inference-server/core: -DTRITON_CORE_REPO_TAG=[tag]
 * triton-inference-server/common: -DTRITON_COMMON_REPO_TAG=[tag]
+
+## Parameters
+
+Triton exposes some flags to control the execution mode of the TensorRT models through
+the Parameters section of the model's `config.pbtxt` file.
+
+### execution_context_allocation_strategy
+
+Different memory allocation behaviors for IExecutionContext. IExecutionContext requires a block of device memory for internal activation tensors during inference. The user can let the execution context manage the memory in various ways. Current options are "STATIC" (default) and "ON_PROFILE_CHANGE".
+
+```
+parameters: {
+  key: "execution_context_allocation_strategy"
+  value: {
+    string_value: "STATIC"
+  }
+}
+```
