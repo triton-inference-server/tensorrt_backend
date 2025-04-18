@@ -109,6 +109,9 @@ the Parameters section of the model's `config.pbtxt` file.
 
 Different memory allocation behaviors for IExecutionContext. IExecutionContext requires a block of device memory for internal activation tensors during inference. The user can let the execution context manage the memory in various ways. Current options are "STATIC" (default) and "ON_PROFILE_CHANGE".
 
+* "STATIC": Default static allocation with the maximum size across all profiles.
+* "ON_PROFILE_CHANGE": Reallocate for a profile when it's selected.
+
 ```
 parameters: {
   key: "execution_context_allocation_strategy"
