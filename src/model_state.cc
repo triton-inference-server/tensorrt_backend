@@ -292,11 +292,11 @@ ModelState::ParseParameters()
   triton::common::TritonJson::Value params;
   bool status = ModelConfig().Find("parameters", &params);
   if (status) {
-    // If 'execution_context_allocation_strategy' is not present in 'parameters',
-    // will use the default strategy "STATIC".
+    // If 'execution_context_allocation_strategy' is not present in
+    // 'parameters', will use the default strategy "STATIC".
     std::string alloc_strategy;
-    TRITONSERVER_Error* err =
-        GetParameterValue(params, "execution_context_allocation_strategy", &alloc_strategy);
+    TRITONSERVER_Error* err = GetParameterValue(
+        params, "execution_context_allocation_strategy", &alloc_strategy);
     if (err != nullptr) {
       if (TRITONSERVER_ErrorCode(err) != TRITONSERVER_ERROR_NOT_FOUND) {
         return err;
@@ -304,7 +304,8 @@ ModelState::ParseParameters()
         TRITONSERVER_ErrorDelete(err);
       }
     } else {
-      // 'execution_context_allocation_strategy' is present in model config parameters.
+      // 'execution_context_allocation_strategy' is present in model config
+      // parameters.
       if (alloc_strategy == "STATIC") {
         alloc_strategy_ = nvinfer1::ExecutionContextAllocationStrategy::kSTATIC;
       } else if (alloc_strategy == "ON_PROFILE_CHANGE") {
@@ -313,8 +314,8 @@ ModelState::ParseParameters()
       } else {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INVALID_ARG,
-            ("Invalid value for 'execution_context_allocation_strategy': '" + alloc_strategy +
-             "' for model instance '" + Name() +
+            ("Invalid value for 'execution_context_allocation_strategy': '" +
+             alloc_strategy + "' for model instance '" + Name() +
              "'. Supported values are 'STATIC' and 'ON_PROFILE_CHANGE'.")
                 .c_str());
       }
