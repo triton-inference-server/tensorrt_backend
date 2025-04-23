@@ -1706,6 +1706,8 @@ ModelInstanceState::InitOptimizationProfiles()
          model_state_->GetTensorRTLogger().LastErrorMsg())
             .c_str());
   }
+  default_trt_context->setNvtxVerbosity(nvinfer1::ProfilingVerbosity::kNONE);
+                                  
   std::vector<std::pair<std::string, int>> profile_name_index;
   // No optimization profile is set for this TensorRT plan
   if (ProfileNames().empty()) {
@@ -1747,6 +1749,8 @@ ModelInstanceState::InitOptimizationProfiles()
              model_state_->GetTensorRTLogger().LastErrorMsg())
                 .c_str());
       }
+      res.first->second.context_->setNvtxVerbosity(nvinfer1::ProfilingVerbosity::kNONE);
+      
       if (!res.first->second.context_->setOptimizationProfileAsync(
               profile_index, stream_)) {
         return TRITONSERVER_ErrorNew(
