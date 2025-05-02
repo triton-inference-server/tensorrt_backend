@@ -636,7 +636,11 @@ ModelInstanceState::Run(
           "error setting the binding dimension");
 
       TRITONSERVER_DataType datatype = batch_input.DataType();
-      size_t total_byte_size = GetByteSize(datatype, shape);
+      int64_t total_byte_size = 0;
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          GetByteSize(datatype, shape, &total_byte_size),
+          "error getting the batch input byte size");
 
       const char* dst_buffer;
       size_t dst_buffer_byte_size;
@@ -690,7 +694,12 @@ ModelInstanceState::Run(
              "'")
                 .c_str());
 
-        ragged_shape[0] += backend::GetElementCount(shape, dims_count);
+        int64_t element_cnt = 0;
+        FAIL_ALL_AND_RETURN_IF_ERROR(
+            payload_->requests_, payload_->request_count_, payload_->responses_,
+            backend::GetElementCount(shape, dims_count, &element_cnt),
+            "error getting the input element count");
+        ragged_shape[0] += element_cnt;
         if (req_idx == 0) {
           datatype = temp_dt;
         }
@@ -702,7 +711,11 @@ ModelInstanceState::Run(
               name, ragged_shape, citr->second, io_index, &input_dims),
           "error setting the binding dimension");
 
-      size_t total_byte_size = GetByteSize(datatype, ragged_shape);
+      int64_t total_byte_size = 0;
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          GetByteSize(datatype, ragged_shape, &total_byte_size),
+          "error getting the input byte size");
 
       payload_->collector_->ProcessTensor(
           name.c_str(), static_cast<char*>(io_binding_info.GetBuffer()),
@@ -758,9 +771,12 @@ ModelInstanceState::Run(
             "error setting the binding dimension");
       }
 
-      size_t total_byte_size = 0;
+      int64_t total_byte_size = 0;
       if (io_binding_info.GetFormat().is_linear_format_) {
-        total_byte_size = GetByteSize(datatype, batchn_shape);
+        FAIL_ALL_AND_RETURN_IF_ERROR(
+            payload_->requests_, payload_->request_count_, payload_->responses_,
+            GetByteSize(datatype, batchn_shape, &total_byte_size),
+            "error getting the batch input byte size");
         // For input tensors with a linear IO format, the request has already
         // verified the byte size, so no further validation is needed here.
       } else {
@@ -768,7 +784,10 @@ ModelInstanceState::Run(
             (io_binding_info.GetFormat().components_per_element_ -
              (batchn_shape[io_binding_info.GetFormat().vectorized_dim_] %
               io_binding_info.GetFormat().components_per_element_));
-        total_byte_size = GetByteSize(datatype, batchn_shape);
+        FAIL_ALL_AND_RETURN_IF_ERROR(
+            payload_->requests_, payload_->request_count_, payload_->responses_,
+            GetByteSize(datatype, batchn_shape, &total_byte_size),
+            "error getting the batch input byte size");
 
         // Ensure the request data byte size matches the expected byte size for
         // non-linear IO format tensors
@@ -823,8 +842,13 @@ ModelInstanceState::Run(
       // Initialize additional entries in batch input
       if (io_binding_info.GetBatchInput() != nullptr) {
         const auto& batch_input = io_binding_info.GetBatchInput()->first;
-        const size_t total_byte_size = GetByteSize(
-            batch_input.DataType(), cuda_graph->input_dims_[input_idx]);
+        int64_t total_byte_size = 0;
+        FAIL_ALL_AND_RETURN_IF_ERROR(
+            payload_->requests_, payload_->request_count_, payload_->responses_,
+            GetByteSize(
+                batch_input.DataType(), cuda_graph->input_dims_[input_idx],
+                &total_byte_size),
+            "error getting the batch input byte size");
 
         auto& allocated_memory = io_binding_info.GetBatchInput()->second;
         TRITONSERVER_MemoryType mem_type = allocated_memory->MemoryType();
@@ -841,7 +865,7 @@ ModelInstanceState::Run(
                 batch_input, input_buffer, total_byte_size,
                 {{mem_type, mem_type_id}}, &dst_buffer, &dst_buffer_byte_size,
                 &dst_memory_type, &dst_memory_type_id),
-            "error setting the bath input value");
+            "error setting the batch input value");
 
         if ((batch_input.BatchInputKind() !=
              BatchInput::Kind::BATCH_MAX_ELEMENT_COUNT_AS_SHAPE) &&
@@ -1067,8 +1091,10 @@ ModelInstanceState::Run(
             batchn_shape[0] = shape[0];
           }
 
-          const size_t tensor_element_cnt =
-              backend::GetElementCount(batchn_shape);
+          int64_t tensor_element_cnt = 0;
+          RESPOND_AND_SET_NULL_IF_ERROR(
+              &response,
+              backend::GetElementCount(batchn_shape, &tensor_element_cnt));
 
           TRITONSERVER_DataType dt = ConvertTrtTypeToDataType(
               engine_->getTensorDataType(name.c_str()));
@@ -1112,7 +1138,11 @@ ModelInstanceState::Run(
       // FIXME process reformat-free output, need to update output
       // process code to accept batch1_byte_size and request batch
       // size to break down output buffer properly.
-      size_t batch1_byte_size = GetByteSize(dt, batchn_shape);
+      int64_t batch1_byte_size = 0;
+      FAIL_ALL_AND_RETURN_IF_ERROR(
+          payload_->requests_, payload_->request_count_, payload_->responses_,
+          GetByteSize(dt, batchn_shape, &batch1_byte_size),
+          "error getting the batch byte size");
       if (support_batching_) {
         batch1_byte_size /= payload_->total_batch_size_;
       }
@@ -1371,7 +1401,9 @@ ModelInstanceState::GetRequestShapeValues(
                 .c_str());
       }
 
-      int64_t element_cnt = backend::GetElementCount(shape, dims_count);
+      int64_t element_cnt = 0;
+      RETURN_IF_ERROR(
+          backend::GetElementCount(shape, dims_count, &element_cnt));
       if (support_batching_) {
         element_cnt /= shape[0];
       }
@@ -1481,7 +1513,10 @@ ModelInstanceState::EvaluateTensorRTContext(
         RETURN_IF_ERROR(TRITONBACKEND_InputProperties(
             repr_input, nullptr, nullptr, &shape, &dims_count, nullptr,
             nullptr));
-        shape_vec[0] += backend::GetElementCount(shape, dims_count);
+        int64_t element_cnt = 0;
+        RETURN_IF_ERROR(
+            backend::GetElementCount(shape, dims_count, &element_cnt));
+        shape_vec[0] += element_cnt;
       }
       auto err = ValidateDimension(
           shape_vec, citr->second.min_dims_[io_index],
@@ -2462,7 +2497,8 @@ ModelInstanceState::InitializeConfigShapeOutputBindings(
             context.context_->getTensorShape(io_name.c_str());
         std::vector<int64_t> dim_vec;
         DimsToDimVec(output_dim, &dim_vec);
-        int64_t byte_size = GetByteSize(dt, dim_vec);
+        int64_t byte_size = 0;
+        RETURN_IF_ERROR(GetByteSize(dt, dim_vec, &byte_size));
 
         max_byte_size = std::max(max_byte_size, byte_size);
       }
@@ -2691,13 +2727,13 @@ ModelInstanceState::InitializeExecuteInputBinding(
 
     int64_t byte_size = 0;
     if (io_binding_info.GetFormat().is_linear_format_) {
-      byte_size = GetByteSize(dt, maximum_dims);
+      RETURN_IF_ERROR(GetByteSize(dt, maximum_dims, &byte_size));
     } else {
       maximum_dims[io_binding_info.GetFormat().vectorized_dim_] +=
           (io_binding_info.GetFormat().components_per_element_ -
            (maximum_dims[io_binding_info.GetFormat().vectorized_dim_] %
             io_binding_info.GetFormat().components_per_element_));
-      byte_size = GetByteSize(dt, maximum_dims);
+      RETURN_IF_ERROR(GetByteSize(dt, maximum_dims, &byte_size));
     }
 
     if (byte_size == -1) {
@@ -3097,7 +3133,7 @@ ModelInstanceState::InitializeShapeInputBinding(
         std::vector<int64_t> dim_vec;
         DimsToDimVec(
             context.context_->getTensorShape(input_name.c_str()), &dim_vec);
-        byte_size = GetByteSize(dt, dim_vec);
+        RETURN_IF_ERROR(GetByteSize(dt, dim_vec, &byte_size));
       } else {
         auto component_count = GetElementCount(
             context.context_->getTensorStrides(input_name.c_str()));
