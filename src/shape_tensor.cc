@@ -72,6 +72,11 @@ ShapeTensor::SetDataFromBuffer(
       *reinterpret_cast<int64_t*>(data_.get()) =
           static_cast<int64_t>(total_batch_size);
     }
+    if (size_ < datatype_size) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          "Unexpected integer underflow while calculating shape tensor size.");
+    }
     std::memcpy(
         data_.get() + datatype_size, data_buffer, size_ - datatype_size);
   } else {
