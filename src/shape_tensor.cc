@@ -1,4 +1,4 @@
-// Copyright 2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -71,6 +71,11 @@ ShapeTensor::SetDataFromBuffer(
     } else if (datatype_ == ShapeTensorDataType::INT64) {
       *reinterpret_cast<int64_t*>(data_.get()) =
           static_cast<int64_t>(total_batch_size);
+    }
+    if (size_ < datatype_size) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          "Unexpected integer underflow while calculating shape tensor size.");
     }
     std::memcpy(
         data_.get() + datatype_size, data_buffer, size_ - datatype_size);
