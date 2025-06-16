@@ -51,7 +51,7 @@ class ShapeTensor {
       const char* input_name, bool support_batching, size_t total_batch_size);
 
   TRITONSERVER_Error* SetDataFromShapeValues(
-      const int32_t* shape_values, TRITONSERVER_DataType datatype,
+      const int64_t* shape_values, TRITONSERVER_DataType datatype,
       size_t nb_shape_values);
 
   int64_t GetDistance(const ShapeTensor& other, int64_t total_batch_size) const;
