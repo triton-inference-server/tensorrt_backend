@@ -3095,21 +3095,21 @@ ModelInstanceState::InitializeShapeInputBinding(
                                    : context.max_dims_[io_index].d[0];
     context.max_shapes_[io_index] = ShapeTensor();
     context.max_shapes_[io_index].SetDataFromShapeValues(
-        engine_->getProfileTensorValues(
+        engine_->getProfileTensorValuesV2(
             input_name.c_str(), profile_index,
             nvinfer1::OptProfileSelector::kMAX),
         input_datatype, context.nb_shape_values_);
 
     context.min_shapes_[io_index] = ShapeTensor();
     context.min_shapes_[io_index].SetDataFromShapeValues(
-        engine_->getProfileTensorValues(
+        engine_->getProfileTensorValuesV2(
             input_name.c_str(), profile_index,
             nvinfer1::OptProfileSelector::kMIN),
         input_datatype, context.nb_shape_values_);
 
     context.opt_shapes_[io_index] = ShapeTensor();
     context.opt_shapes_[io_index].SetDataFromShapeValues(
-        engine_->getProfileTensorValues(
+        engine_->getProfileTensorValuesV2(
             input_name.c_str(), profile_index,
             nvinfer1::OptProfileSelector::kOPT),
         input_datatype, context.nb_shape_values_);
