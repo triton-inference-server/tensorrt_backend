@@ -88,7 +88,7 @@ ShapeTensor::SetDataFromBuffer(
 
 TRITONSERVER_Error*
 ShapeTensor::SetDataFromShapeValues(
-    const int32_t* shape_values, TRITONSERVER_DataType datatype,
+    const int64_t* shape_values, TRITONSERVER_DataType datatype,
     size_t nb_shape_values)
 {
   nb_shape_values_ = nb_shape_values;
