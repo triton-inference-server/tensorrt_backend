@@ -708,7 +708,7 @@ ModelState::GetProfileMaxBatchSize(
         }
 
       } else {
-        const int32_t* max_shapes = engine->getProfileTensorValues(
+        const int64_t* max_shapes = engine->getProfileTensorValuesV2(
             tensor_name.c_str(), profile_index,
             nvinfer1::OptProfileSelector::kMAX);
         if (*max_batch_size > *max_shapes) {
