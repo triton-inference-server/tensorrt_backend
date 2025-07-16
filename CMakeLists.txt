@@ -37,6 +37,8 @@ set(TRITON_MIN_CXX_STANDARD 17 CACHE STRING "The minimum C++ standard which feat
 option(TRITON_ENABLE_GPU "Enable GPU support in backend." ON)
 option(TRITON_ENABLE_STATS "Include statistics collections in backend." ON)
 option(TRITON_ENABLE_NVTX "Include nvtx markers collection in backend." OFF)
+option(TRITON_ENABLE_CUDA_CTX_SHARING "Enable Cuda context sharing support in backend." OFF)
+
 set(TRITON_TENSORRT_LIB_PATHS "" CACHE PATH "Paths to TensorRT libraries. Multiple paths may be specified by separating them with a semicolon.")
 set(TRITON_TENSORRT_INCLUDE_PATHS "" CACHE PATH "Paths to TensorRT includes. Multiple paths may be specified by separating them with a semicolon.")
 
@@ -232,6 +234,17 @@ target_link_libraries(
       CUDA::cudart
 )
 
+if(${TRITON_ENABLE_CUDA_CTX_SHARING})
+  target_compile_definitions(
+      triton-tensorrt-backend
+      PRIVATE TRITON_ENABLE_CUDA_CTX_SHARING
+  )
+  target_link_libraries(
+      triton-tensorrt-backend
+      PRIVATE
+        CUDA::cuda_driver
+  )
+endif()
 
 #
 # Install

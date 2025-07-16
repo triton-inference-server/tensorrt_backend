@@ -257,7 +257,9 @@ ModelInstanceState::ModelInstanceState(
 
 ModelInstanceState::~ModelInstanceState()
 {
-  cudaSetDevice(DeviceId());
+  if (!model_state_->IsCudaContextSharingEnabled()) {
+    cudaSetDevice(DeviceId());
+  }
   for (auto& io_binding_infos : io_binding_infos_) {
     for (auto& io_binding_info : io_binding_infos) {
       if (!io_binding_info.IsDynamicShapeOutput() &&
@@ -424,7 +426,9 @@ ModelInstanceState::Run(
   payload_.reset(new Payload(next_set_, requests, request_count));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
-  cudaSetDevice(DeviceId());
+  if (!model_state_->IsCudaContextSharingEnabled()) {
+    cudaSetDevice(DeviceId());
+  }
 #ifdef TRITON_ENABLE_STATS
   {
     SET_TIMESTAMP(payload_->compute_start_ns_);
@@ -1586,13 +1590,16 @@ ModelInstanceState::EvaluateTensorRTContext(
 TRITONSERVER_Error*
 ModelInstanceState::InitStreamsAndEvents()
 {
-  // Set the device before preparing the context.
-  auto cuerr = cudaSetDevice(DeviceId());
-  if (cuerr != cudaSuccess) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL, (std::string("unable to set device for ") +
-                                      Name() + ": " + cudaGetErrorString(cuerr))
-                                         .c_str());
+  if (!model_state_->IsCudaContextSharingEnabled()) {
+    // Set the device before preparing the context.
+    auto cuerr = cudaSetDevice(DeviceId());
+    if (cuerr != cudaSuccess) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("unable to set device for ") + Name() + ": " +
+           cudaGetErrorString(cuerr))
+              .c_str());
+    }
   }
 
   // Create CUDA streams associated with the instance
