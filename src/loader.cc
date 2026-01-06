@@ -79,10 +79,9 @@ LoadPlan(
 
   std::string model_data_str;
   RETURN_IF_ERROR(ReadTextFile(plan_path, &model_data_str));
-  std::vector<char> model_data(model_data_str.begin(), model_data_str.end());
 
-  engine->reset(
-      (*runtime)->deserializeCudaEngine(&model_data[0], model_data.size()));
+  engine->reset((*runtime)->deserializeCudaEngine(
+      model_data_str.data(), model_data_str.size()));
   if (*engine == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
