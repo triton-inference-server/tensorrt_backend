@@ -56,6 +56,8 @@ set(TRITON_TENSORRT_BACKEND_INSTALLDIR ${CMAKE_INSTALL_PREFIX}/backends/tensorrt
 if(LINUX)
   file(STRINGS "/etc/os-release" DISTRO_ID_LIKE REGEX "ID_LIKE")
   if(${DISTRO_ID_LIKE} MATCHES "rhel|centos")
+    set(OPENSSL_ROOT_DIR "/usr/lib64/openssl3")
+    set(OPENSSL_INCLUDE_DIR "/usr/include/openssl3")
     if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
       set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} "/usr/local/cuda/targets/sbsa-linux/lib")
     else()
