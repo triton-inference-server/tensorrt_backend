@@ -1,4 +1,4 @@
-// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -25,6 +25,10 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "model_state.h"
+
+#include <algorithm>
+#include <sstream>
+#include <string>
 
 #include "instance_state.h"
 #include "loader.h"
@@ -325,7 +329,120 @@ ModelState::ParseParameters()
            "' for model instance '" + Name() + "'")
               .c_str());
     }
+
+    // TensorRT Multi-Device (MD) — TRT-28040.
+    // 'enable_multi_device' (default false) turns on the single-process,
+    // multi-GPU sharded execution path. 'multi_device_gpus' is a
+    // comma-separated list of physical GPU ids; one rank is created per id and
+    // rank count is its length. Requires instance_group kind KIND_MODEL.
+    RETURN_IF_ERROR(ParseMultiDeviceParameters(params));
   }
+  return nullptr;  // success
+}
+
+TRITONSERVER_Error*
+ModelState::ParseMultiDeviceParameters(common::TritonJson::Value& params)
+{
+  std::string enable_md;
+  TRITONSERVER_Error* err =
+      GetParameterValue(params, "enable_multi_device", &enable_md);
+  if (err != nullptr) {
+    if (TRITONSERVER_ErrorCode(err) != TRITONSERVER_ERROR_NOT_FOUND) {
+      return err;
+    }
+    TRITONSERVER_ErrorDelete(err);
+    return nullptr;  // not configured -> default single-GPU path
+  }
+
+  std::transform(
+      enable_md.begin(), enable_md.end(), enable_md.begin(), ::tolower);
+  enable_multi_device_ = (enable_md == "true" || enable_md == "1");
+  if (!enable_multi_device_) {
+    return nullptr;
+  }
+
+  std::string gpus_str;
+  RETURN_IF_ERROR(GetParameterValue(params, "multi_device_gpus", &gpus_str));
+
+  int device_count = 0;
+  cudaError_t cuerr = cudaGetDeviceCount(&device_count);
+  if (cuerr != cudaSuccess) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unable to get CUDA device count for multi-device: ") +
+         cudaGetErrorString(cuerr))
+            .c_str());
+  }
+
+  md_device_ids_.clear();
+  std::stringstream ss(gpus_str);
+  std::string item;
+  while (std::getline(ss, item, ',')) {
+    // trim surrounding whitespace
+    const auto b = item.find_first_not_of(" \t");
+    if (b == std::string::npos) {
+      continue;
+    }
+    const auto e = item.find_last_not_of(" \t");
+    int id = 0;
+    try {
+      id = std::stoi(item.substr(b, e - b + 1));
+    }
+    catch (const std::exception&) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          ("Invalid 'multi_device_gpus' entry '" + item + "' for model '" +
+           Name() + "'; expected comma-separated GPU ids.")
+              .c_str());
+    }
+    if (id < 0 || id >= device_count) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          ("'multi_device_gpus' references GPU " + std::to_string(id) +
+           " but only " + std::to_string(device_count) +
+           " device(s) are present for model '" + Name() + "'.")
+              .c_str());
+    }
+    md_device_ids_.push_back(id);
+  }
+
+  if (md_device_ids_.size() < 2) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        ("'enable_multi_device' is true but 'multi_device_gpus' lists fewer "
+         "than 2 GPUs for model '" +
+         Name() + "'; multi-device requires at least 2 ranks.")
+            .c_str());
+  }
+
+  // Optional: per-rank weight-sharded engines (true tensor parallelism). When
+  // true, rank r loads '<model_filename>.rank{r}'; otherwise the same engine is
+  // loaded on every rank.
+  std::string per_rank;
+  TRITONSERVER_Error* pr_err =
+      GetParameterValue(params, "multi_device_per_rank_engines", &per_rank);
+  if (pr_err != nullptr) {
+    if (TRITONSERVER_ErrorCode(pr_err) != TRITONSERVER_ERROR_NOT_FOUND) {
+      return pr_err;
+    }
+    TRITONSERVER_ErrorDelete(pr_err);
+  } else {
+    std::transform(
+        per_rank.begin(), per_rank.end(), per_rank.begin(), ::tolower);
+    md_per_rank_engines_ = (per_rank == "true" || per_rank == "1");
+  }
+
+  std::string ids_desc;
+  for (size_t i = 0; i < md_device_ids_.size(); ++i) {
+    ids_desc += (i ? "," : "") + std::to_string(md_device_ids_[i]);
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      ("TensorRT Multi-Device enabled for model '" + Name() + "': ranks=" +
+       std::to_string(md_device_ids_.size()) + " gpus=[" + ids_desc + "]" +
+       (md_per_rank_engines_ ? " per-rank-engines (tensor-parallel)"
+                             : " shared-engine"))
+          .c_str());
   return nullptr;  // success
 }
 

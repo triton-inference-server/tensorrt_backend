@@ -1,4 +1,4 @@
-// Copyright 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -286,6 +286,20 @@ class ModelInstanceState : public TensorRTModelInstance {
       TRITONBACKEND_ModelInstance* triton_model_instance);
 
   void InitSemaphore();
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+  // TensorRT Multi-Device (MD) — TRT-28040.
+  // Sets up in-process communicators and one execution context per rank, then
+  // runs each inference fanned out across all ranks. Rank 0 reuses this
+  // instance's existing engine_/trt_contexts_/stream_; ranks 1..N-1 get their
+  // own engine/context/stream/buffers held in the md_* members below.
+  TRITONSERVER_Error* InitMultiDevice(const std::string& model_path);
+  // Concurrent multi-rank enqueue. 'rank0_context' is the profile-selected
+  // context used by the normal Run() path (rank 0). Mirrors rank-0 input
+  // buffers to the other ranks and issues enqueueV3 on every rank at once so
+  // the in-engine NCCL collectives can rendezvous. Returns false on failure.
+  bool EnqueueMultiDevice(nvinfer1::IExecutionContext* rank0_context);
+  void DestroyMultiDevice();
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
   TRITONSERVER_Error* InitStreamsAndEvents();
   TRITONSERVER_Error* InitEventSet(bool busy_wait_events);
   TRITONSERVER_Error* DestroyEventSet();
@@ -356,6 +370,20 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   void GetConfiguredProfiles(std::string* profiles_desc);
   int CudaStreamPriority() { return cuda_stream_priority_; }
+
+  // The GPU that rank 0 (and all the single-device machinery this instance
+  // reuses) runs on. Under Multi-Device this is the first configured GPU
+  // rather than the Triton-assigned DeviceId(), since a KIND_MODEL instance
+  // is not bound to a device. Identical to DeviceId() when MD is disabled.
+  int Rank0Device() const
+  {
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+    if (md_enabled_) {
+      return md_device_ids_[0];
+    }
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
+    return DeviceId();
+  }
 
   void FindClosestCudaGraph(
       const TensorRTContext& trt_context,
@@ -512,6 +540,37 @@ class ModelInstanceState : public TensorRTModelInstance {
   // ahead to prepare further executions. Use semaphore to prevent going too
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_{nullptr};
+
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+  // --- TensorRT Multi-Device (MD) state — TRT-28040 ---
+  // Enabled when the model config sets enable_multi_device=true (KIND_MODEL).
+  bool md_enabled_{false};
+  // Physical GPU id per rank; size == world size. md_device_ids_[0] is rank 0,
+  // which is also DeviceId() / the device the rest of this instance runs on.
+  std::vector<int> md_device_ids_{};
+  int md_world_size_{0};
+
+  // NCCL communicators, one per rank (stored as void* to keep nccl.h out of
+  // this header; cast to ncclComm_t in the .cc). Index == rank.
+  std::vector<void*> md_comms_{};
+
+  // Per-rank resources for ranks 1..N-1 (index r-1). Rank 0 reuses the
+  // instance's engine_/trt_contexts_/stream_/io_binding_infos_.
+  std::vector<std::shared_ptr<nvinfer1::IRuntime>> md_runtimes_{};
+  std::vector<std::shared_ptr<nvinfer1::ICudaEngine>> md_engines_{};
+  std::vector<std::shared_ptr<nvinfer1::IExecutionContext>> md_contexts_{};
+  std::vector<cudaStream_t> md_streams_{};
+  // Per non-zero rank, per IO tensor name -> (device buffer, byte size).
+  std::vector<std::map<std::string, std::pair<void*, size_t>>> md_io_buffers_{};
+  // Pinned host bounce buffer per non-zero rank, used to replicate rank-0
+  // inputs when direct P2P copy is unavailable. Sized to the largest IO
+  // tensor, allocated once and reused across requests.
+  std::vector<void*> md_stage_{};
+  // Whether rank 0's GPU and rank r's GPU support a direct peer copy. When
+  // true (e.g. NVLink or working PCIe P2P) inputs are replicated with
+  // cudaMemcpyPeer; otherwise via the pinned host bounce buffer.
+  std::vector<char> md_peer_{};
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
 };
 
 }}}  // namespace triton::backend::tensorrt

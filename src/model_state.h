@@ -1,4 +1,4 @@
-// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -127,6 +127,11 @@ class ModelState : public TensorRTModel {
 
   // Parses the parameters in config
   TRITONSERVER_Error* ParseParameters();
+
+  // Parses TensorRT Multi-Device (MD) parameters from the 'parameters' config
+  // block (TRT-28040): 'enable_multi_device' and 'multi_device_gpus'.
+  TRITONSERVER_Error* ParseMultiDeviceParameters(
+      common::TritonJson::Value& params);
 
   // TensorRT logger for this model
   TensorRTLogger tensorrt_logger_;
