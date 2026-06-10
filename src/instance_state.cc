@@ -1,4 +1,4 @@
-// Copyright 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -28,6 +28,14 @@
 
 #include "tensorrt_utils.h"
 #include "triton/common/nvtx.h"
+
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+#include <nccl.h>
+
+#include <atomic>
+#include <cstdlib>
+#include <thread>
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
 
 namespace triton { namespace backend { namespace tensorrt {
 
@@ -144,19 +152,28 @@ ModelInstanceState::Create(
       {model_state->RepositoryPath(), std::to_string(model_state->Version()),
        cc_model_filename});
 
+  // For per-rank (weight-sharded) Multi-Device, rank 0 loads
+  // '<model_filename>.rank0'; otherwise the shared engine.
+  std::string rank0_model_path = model_path;
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+  if ((*state)->md_enabled_ && model_state->MdPerRankEngines()) {
+    rank0_model_path = model_path + ".rank0";
+  }
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
+
   {
     bool exists;
-    RETURN_IF_ERROR(FileExists(model_path, &exists));
+    RETURN_IF_ERROR(FileExists(rank0_model_path, &exists));
     RETURN_ERROR_IF_FALSE(
         exists, TRITONSERVER_ERROR_UNAVAILABLE,
-        std::string("unable to find '") + model_path +
+        std::string("unable to find '") + rank0_model_path +
             "' for model instance '" + (*state)->Name() + "'");
   }
 
   (*state)->InitSemaphore();
   RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
-      (*state)->DeviceId(), (*state)->DLACoreId(), model_path,
+      (*state)->Rank0Device(), (*state)->DLACoreId(), rank0_model_path,
       (*state)->EnginePtr()));
 
   // Create TRT API interface, all TRT operations must be done after the
@@ -167,6 +184,15 @@ ModelInstanceState::Create(
   RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
   RETURN_IF_ERROR((*state)->ValidateIO());
   RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
+
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+  // Set up the additional ranks (1..N-1) and attach NCCL communicators. Must
+  // run after rank 0's engine/contexts/IO buffers exist, since rank 0 is
+  // included in the concurrent setCommunicator() handshake.
+  if ((*state)->md_enabled_) {
+    RETURN_IF_ERROR((*state)->InitMultiDevice(model_path));
+  }
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
 
   (*state)->completion_thread_ =
       std::thread(&ModelInstanceState::ProcessResponse, *state);
@@ -179,7 +205,7 @@ ModelInstanceState::Create(
   }
 #endif
 
-  model_state->RegisterInstance((*state)->DeviceId(), *state);
+  model_state->RegisterInstance((*state)->Rank0Device(), *state);
 
   std::string profiles_desc;
   (*state)->GetConfiguredProfiles(&profiles_desc);
@@ -215,7 +241,24 @@ ModelInstanceState::ModelInstanceState(
         reinterpret_cast<BackendConfiguration*>(state)->coalesce_request_input_;
   }
 
-  if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+  md_enabled_ = model_state_->EnableMultiDevice();
+  if (md_enabled_) {
+    // Multi-Device owns its GPUs explicitly, so it must be a KIND_MODEL
+    // instance (Triton does not bind a single device to it).
+    if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_MODEL) {
+      throw triton::backend::BackendModelInstanceException(TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          (std::string("unable to load model '") + model_state_->Name() +
+           "', TensorRT Multi-Device (enable_multi_device) requires "
+           "instance_group kind KIND_MODEL")
+              .c_str()));
+    }
+    md_device_ids_ = model_state_->MdDeviceIds();
+    md_world_size_ = static_cast<int>(md_device_ids_.size());
+  } else
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
+      if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
     throw triton::backend::BackendModelInstanceException(TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INVALID_ARG,
         (std::string("unable to load model '") + model_state_->Name() +
@@ -242,7 +285,7 @@ ModelInstanceState::ModelInstanceState(
   support_batching_ = (model_state_->MaxBatchSize() > 0);
 
   TRITONSERVER_Error* err =
-      SupportsIntegratedZeroCopy(DeviceId(), &zero_copy_support_);
+      SupportsIntegratedZeroCopy(Rank0Device(), &zero_copy_support_);
   if (err != nullptr) {
     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
     TRITONSERVER_ErrorDelete(err);
@@ -257,7 +300,12 @@ ModelInstanceState::ModelInstanceState(
 
 ModelInstanceState::~ModelInstanceState()
 {
-  cudaSetDevice(DeviceId());
+  cudaSetDevice(Rank0Device());
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+  if (md_enabled_) {
+    DestroyMultiDevice();
+  }
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
   for (auto& io_binding_infos : io_binding_infos_) {
     for (auto& io_binding_info : io_binding_infos) {
       if (!io_binding_info.IsDynamicShapeOutput() &&
@@ -352,6 +400,369 @@ ModelInstanceState::~ModelInstanceState()
   }
 }
 
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+namespace {
+// Wrap the loosely-typed void* communicators stored on the instance back to
+// the NCCL type. ncclComm_t is a pointer, so this is a no-op reinterpret.
+inline ncclComm_t*
+AsNcclComms(std::vector<void*>& comms)
+{
+  static_assert(
+      sizeof(void*) == sizeof(ncclComm_t),
+      "ncclComm_t must be a pointer to alias std::vector<void*>");
+  return reinterpret_cast<ncclComm_t*>(comms.data());
+}
+}  // namespace
+
+TRITONSERVER_Error*
+ModelInstanceState::InitMultiDevice(const std::string& model_path)
+{
+  const int world = md_world_size_;
+
+  // Multi-Device currently assumes a single optimization profile: rank 0 has
+  // exactly one execution context and a single communicator is attached to it.
+  if (trt_contexts_.size() != 1) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        (std::string("TensorRT Multi-Device for '") + Name() +
+         "' requires exactly one optimization profile, got " +
+         std::to_string(trt_contexts_.size()))
+            .c_str());
+  }
+  nvinfer1::IExecutionContext* rank0_context =
+      trt_contexts_.begin()->second.context_.get();
+
+  // 1) Create the in-process communicators (one blocking call, all ranks).
+  md_comms_.assign(world, nullptr);
+  {
+    std::vector<int> devs = md_device_ids_;
+    ncclResult_t nr =
+        ncclCommInitAll(AsNcclComms(md_comms_), world, devs.data());
+    if (nr != ncclSuccess) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("ncclCommInitAll failed for '") + Name() +
+           "': " + ncclGetErrorString(nr))
+              .c_str());
+    }
+  }
+
+  // 2) Per-rank resources for ranks 1..N-1. Rank 0 reuses engine_/trt_contexts_
+  //    and io_binding_infos_. Each non-zero rank gets its own engine (on its
+  //    GPU), context, stream and a mirror of every IO buffer.
+  md_runtimes_.resize(world - 1);
+  md_engines_.resize(world - 1);
+  md_contexts_.resize(world - 1);
+  md_streams_.resize(world - 1, nullptr);
+  md_io_buffers_.resize(world - 1);
+  md_stage_.assign(world - 1, nullptr);
+  md_peer_.assign(world - 1, 0);
+
+  const auto& rank0_io = io_binding_infos_[next_buffer_binding_set_];
+
+  const bool per_rank = model_state_->MdPerRankEngines();
+  for (int r = 1; r < world; ++r) {
+    const int idx = r - 1;
+    const int dev = md_device_ids_[r];
+
+    // Per-rank (weight-sharded) TP loads a distinct engine per rank; otherwise
+    // every rank shares the same engine.
+    const std::string rank_path =
+        per_rank ? (model_path + ".rank" + std::to_string(r)) : model_path;
+    RETURN_IF_ERROR(model_state_->CreateEngine(
+        dev, DLACoreId(), rank_path, &md_engines_[idx]));
+    if (md_engines_[idx] == nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("failed to create rank ") + std::to_string(r) +
+           " engine for '" + Name() + "'")
+              .c_str());
+    }
+
+    cudaSetDevice(dev);
+    cudaStream_t stream = nullptr;
+    cudaError_t cuerr = cudaStreamCreate(&stream);
+    if (cuerr != cudaSuccess) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("failed to create stream for rank ") +
+           std::to_string(r) + ": " + cudaGetErrorString(cuerr))
+              .c_str());
+    }
+    md_streams_[idx] = stream;
+
+    md_contexts_[idx].reset(
+        md_engines_[idx]->createExecutionContext(
+            model_state_->AllocationStrategy()));
+    if (md_contexts_[idx] == nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("failed to create execution context for rank ") +
+           std::to_string(r) + " of '" + Name() + "'")
+              .c_str());
+    }
+
+    // Mirror every IO buffer (same byte size as rank 0) onto this rank's GPU.
+    for (const auto& info : rank0_io) {
+      void* buf = nullptr;
+      const size_t bytes = info.GetByteSize();
+      if (bytes > 0) {
+        cuerr = cudaMalloc(&buf, bytes);
+        if (cuerr != cudaSuccess) {
+          return TRITONSERVER_ErrorNew(
+              TRITONSERVER_ERROR_INTERNAL,
+              (std::string("failed to allocate ") + std::to_string(bytes) +
+               " bytes for tensor '" + info.GetName() + "' on rank " +
+               std::to_string(r) + ": " + cudaGetErrorString(cuerr))
+                  .c_str());
+        }
+      }
+      md_io_buffers_[idx][info.GetName()] = std::make_pair(buf, bytes);
+    }
+
+    // Pinned host bounce buffer sized to the largest IO tensor, for input
+    // replication to this rank (see EnqueueMultiDevice).
+    size_t max_bytes = 0;
+    for (const auto& info : rank0_io) {
+      if ((size_t)info.GetByteSize() > max_bytes) {
+        max_bytes = (size_t)info.GetByteSize();
+      }
+    }
+    void* stage = nullptr;
+    if (max_bytes > 0) {
+      cudaSetDevice(dev);
+      cuerr = cudaMallocHost(&stage, max_bytes);
+      if (cuerr != cudaSuccess) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("failed to allocate pinned stage for rank ") +
+             std::to_string(r) + ": " + cudaGetErrorString(cuerr))
+                .c_str());
+      }
+    }
+    md_stage_[idx] = stage;
+
+    // Detect + enable direct peer access between rank 0 and rank r. When both
+    // directions are accessible and a probe copy succeeds we replicate inputs
+    // with cudaMemcpyPeer; otherwise fall back to the pinned host bounce.
+    int can_r0 = 0, can_0r = 0;
+    cudaDeviceCanAccessPeer(&can_r0, dev, md_device_ids_[0]);
+    cudaDeviceCanAccessPeer(&can_0r, md_device_ids_[0], dev);
+    if (can_r0 && can_0r) {
+      cudaSetDevice(dev);
+      cudaError_t pe = cudaDeviceEnablePeerAccess(md_device_ids_[0], 0);
+      if (pe != cudaSuccess && pe != cudaErrorPeerAccessAlreadyEnabled) {
+        cudaGetLastError();
+      }
+      // P2P is opt-in: the direct cudaMemcpyPeerAsync path currently produces
+      // incorrect results in this threaded backend context (under debug), so
+      // default to the proven pinned-host bounce unless explicitly enabled.
+      md_peer_[idx] = (std::getenv("TRT_MD_USE_PEER") != nullptr) ? 1 : 0;
+    }
+  }
+  cudaSetDevice(md_device_ids_[0]);
+  {
+    std::string desc;
+    for (int r = 1; r < world; ++r) {
+      desc += (r > 1 ? "," : "") + std::to_string(md_device_ids_[r]) + ":" +
+              (md_peer_[r - 1] ? "p2p" : "host");
+    }
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[MD] input replication path for '") + Name() + "': " +
+         desc)
+            .c_str());
+  }
+
+  // 3) Attach the communicator to every rank CONCURRENTLY. setCommunicator()
+  //    performs a cross-rank handshake, so a sequential loop would deadlock at
+  //    rank 0 (validated experimentally — see TRT-28040 Stage B).
+  std::atomic<bool> ok{true};
+  std::vector<std::thread> setup;
+  setup.reserve(world);
+  for (int r = 0; r < world; ++r) {
+    setup.emplace_back([this, r, rank0_context, &ok]() {
+      cudaSetDevice(md_device_ids_[r]);
+      nvinfer1::IExecutionContext* ctx =
+          (r == 0) ? rank0_context : md_contexts_[r - 1].get();
+      if (!ctx->setCommunicator(md_comms_[r])) {
+        ok.store(false);
+      }
+    });
+  }
+  for (auto& t : setup) {
+    t.join();
+  }
+  if (!ok.load()) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("IExecutionContext::setCommunicator failed for '") +
+         Name() + "'")
+            .c_str());
+  }
+
+  cudaSetDevice(Rank0Device());
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("TensorRT Multi-Device ready for '") + Name() +
+       "': " + std::to_string(world) + " ranks")
+          .c_str());
+  return nullptr;
+}
+
+bool
+ModelInstanceState::EnqueueMultiDevice(
+    nvinfer1::IExecutionContext* rank0_context)
+{
+  const int world = md_world_size_;
+  const auto& rank0_io = io_binding_infos_[next_buffer_binding_set_];
+
+  // Inputs were collected into rank-0's binding buffers on input_copy_stream_;
+  // wait for just those copies (not the whole device) so the buffers are
+  // materialized before we replicate them to the other ranks.
+  cudaSetDevice(md_device_ids_[0]);
+  cudaStreamSynchronize(input_copy_stream_);
+  cudaStreamSynchronize(stream_);
+
+  std::atomic<bool> ok{true};
+
+  // Replicate rank-0's inputs onto every other rank synchronously (TP +
+  // AllReduce contract: each rank consumes the full input). Done on this thread
+  // with synchronous peer copies so ordering after input collection is
+  // guaranteed and independent of the per-rank execution streams.
+  for (int r = 1; r < world && ok.load(); ++r) {
+    const int idx = r - 1;
+    for (const auto& info : rank0_io) {
+      const std::string& name = info.GetName();
+      if (engine_->getTensorIOMode(name.c_str()) !=
+          nvinfer1::TensorIOMode::kINPUT) {
+        continue;
+      }
+      auto bit = md_io_buffers_[idx].find(name);
+      if (bit == md_io_buffers_[idx].end() || bit->second.second == 0) {
+        continue;
+      }
+      const size_t bytes = bit->second.second;
+      cudaError_t cerr = cudaSuccess;
+      if (md_peer_[idx]) {
+        // Direct device-to-device copy (NVLink or working PCIe P2P). Make the
+        // destination device current (required for cudaMemcpyPeer to behave
+        // correctly here) and copy synchronously before the rank enqueues. The
+        // rank-0 input buffers are already materialized (synced above).
+        cudaSetDevice(md_device_ids_[r]);
+        cerr = cudaMemcpyPeer(
+            bit->second.first, md_device_ids_[r], info.GetDeviceBuffer(),
+            md_device_ids_[0], bytes);
+      } else {
+        // Fall back through a pinned host bounce buffer.
+        void* stage = md_stage_[idx];
+        cudaSetDevice(md_device_ids_[0]);
+        cerr = cudaMemcpy(
+            stage, info.GetDeviceBuffer(), bytes, cudaMemcpyDeviceToHost);
+        cudaSetDevice(md_device_ids_[r]);
+        if (cerr == cudaSuccess) {
+          cerr = cudaMemcpy(
+              bit->second.first, stage, bytes, cudaMemcpyHostToDevice);
+        }
+      }
+      if (cerr != cudaSuccess) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            (std::string("[MD] failed to mirror input '") + name +
+             "' to rank " + std::to_string(r) + ": " +
+             cudaGetErrorString(cerr))
+                .c_str());
+        ok.store(false);
+      }
+    }
+  }
+
+  // Bind buffers and enqueue each non-zero rank concurrently with rank 0, so the
+  // in-engine NCCL collectives across all ranks can rendezvous.
+  std::vector<std::thread> workers;
+  workers.reserve(world - 1);
+  for (int r = 1; r < world; ++r) {
+    const int idx = r - 1;
+    workers.emplace_back([this, idx, rank0_context, &rank0_io, &ok]() {
+      cudaSetDevice(md_device_ids_[idx + 1]);
+      nvinfer1::IExecutionContext* ctx = md_contexts_[idx].get();
+      for (const auto& info : rank0_io) {
+        const std::string& name = info.GetName();
+        auto bit = md_io_buffers_[idx].find(name);
+        if (bit == md_io_buffers_[idx].end()) {
+          ok.store(false);
+          return;
+        }
+        if (md_engines_[idx]->getTensorIOMode(name.c_str()) ==
+            nvinfer1::TensorIOMode::kINPUT) {
+          ctx->setInputShape(
+              name.c_str(), rank0_context->getTensorShape(name.c_str()));
+        }
+        if (!ctx->setTensorAddress(name.c_str(), bit->second.first)) {
+          ok.store(false);
+          return;
+        }
+      }
+      if (!ctx->enqueueV3(md_streams_[idx])) {
+        ok.store(false);
+      }
+    });
+  }
+
+  // Rank 0 enqueues on this thread, concurrently with the worker ranks. Reset
+  // the current device to rank 0's GPU first: the mirror loop above left device
+  // r selected, but rank 0's context/stream live on md_device_ids_[0].
+  cudaSetDevice(md_device_ids_[0]);
+  const bool rank0_ok = rank0_context->enqueueV3(stream_);
+
+  for (auto& t : workers) {
+    t.join();
+  }
+
+  // Make sure the non-zero ranks' work (and the collective rank 0 waits on) has
+  // completed before the next request reuses these buffers.
+  for (int r = 1; r < world; ++r) {
+    cudaSetDevice(md_device_ids_[r]);
+    cudaStreamSynchronize(md_streams_[r - 1]);
+  }
+  cudaSetDevice(Rank0Device());
+
+  return rank0_ok && ok.load();
+}
+
+void
+ModelInstanceState::DestroyMultiDevice()
+{
+  // Order matters: free per-rank contexts/buffers/streams BEFORE destroying the
+  // communicators, since the contexts hold the communicator pointers.
+  for (int r = 1; r < md_world_size_; ++r) {
+    const int idx = r - 1;
+    cudaSetDevice(md_device_ids_[r]);
+    md_contexts_[idx].reset();
+    md_engines_[idx].reset();
+    md_runtimes_[idx].reset();
+    for (auto& kv : md_io_buffers_[idx]) {
+      if (kv.second.first != nullptr) {
+        cudaFree(kv.second.first);
+      }
+    }
+    if (idx < (int)md_stage_.size() && md_stage_[idx] != nullptr) {
+      cudaFreeHost(md_stage_[idx]);
+    }
+    if (md_streams_[idx] != nullptr) {
+      cudaStreamDestroy(md_streams_[idx]);
+    }
+  }
+  for (void* comm : md_comms_) {
+    if (comm != nullptr) {
+      ncclCommDestroy(static_cast<ncclComm_t>(comm));
+    }
+  }
+  md_comms_.clear();
+  cudaSetDevice(Rank0Device());
+}
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
+
 void
 ModelInstanceState::ProcessRequests(
     TRITONBACKEND_Request** requests, const uint32_t request_count)
@@ -424,7 +835,7 @@ ModelInstanceState::Run(
   payload_.reset(new Payload(next_set_, requests, request_count));
   SET_TIMESTAMP(payload_->compute_start_ns_);
 
-  cudaSetDevice(DeviceId());
+  cudaSetDevice(Rank0Device());
 #ifdef TRITON_ENABLE_STATS
   {
     SET_TIMESTAMP(payload_->compute_start_ns_);
@@ -1587,7 +1998,7 @@ TRITONSERVER_Error*
 ModelInstanceState::InitStreamsAndEvents()
 {
   // Set the device before preparing the context.
-  auto cuerr = cudaSetDevice(DeviceId());
+  auto cuerr = cudaSetDevice(Rank0Device());
   if (cuerr != cudaSuccess) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL, (std::string("unable to set device for ") +
@@ -3711,6 +4122,12 @@ TRTv3Interface::Enqueue(nvinfer1::IExecutionContext* context)
   if (SetTensorAddress(context)) {
     if (context->setInputConsumedEvent(
             instance_->events_[instance_->next_set_].ready_for_input_)) {
+#ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
+      if (instance_->md_enabled_) {
+        // Fan the inference out across all ranks (rank 0 == 'context').
+        return instance_->EnqueueMultiDevice(context);
+      }
+#endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
       return context->enqueueV3(instance_->stream_);
     }
   }

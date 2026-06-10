@@ -1,4 +1,4 @@
-// Copyright 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -24,6 +24,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
+
+#include <vector>
 
 #include "triton/backend/backend_model.h"
 
@@ -53,6 +55,16 @@ class TensorRTModel : public BackendModel {
   bool EagerBatching() { return eager_batching_; }
   bool BusyWaitEvents() { return busy_wait_events_; }
 
+  // TensorRT Multi-Device (MD) — TRT-28040. When enabled, a single KIND_MODEL
+  // instance drives a sharded engine across MdDeviceIds() GPUs in one process.
+  bool EnableMultiDevice() const { return enable_multi_device_; }
+  const std::vector<int>& MdDeviceIds() const { return md_device_ids_; }
+  int MdRankCount() const { return static_cast<int>(md_device_ids_.size()); }
+  // When true, each rank loads its own weight-sharded engine
+  // '<model_filename>.rank{r}' (true tensor parallelism). When false, the same
+  // engine is loaded on every rank (context/activation parallel).
+  bool MdPerRankEngines() const { return md_per_rank_engines_; }
+
  protected:
   common::TritonJson::Value graph_specs_;
   Priority priority_;
@@ -61,6 +73,11 @@ class TensorRTModel : public BackendModel {
   bool separate_output_stream_;
   bool eager_batching_;
   bool busy_wait_events_;
+
+  // MD config, populated by ModelState::ParseParameters().
+  bool enable_multi_device_{false};
+  std::vector<int> md_device_ids_{};
+  bool md_per_rank_engines_{false};
 };
 
 }}}  // namespace triton::backend::tensorrt
