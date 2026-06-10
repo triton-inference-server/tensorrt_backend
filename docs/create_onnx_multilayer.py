@@ -57,17 +57,23 @@ def matmul(self, a, b):
 
 @gs.Graph.register()
 def transpose(self, a, perm):
-    return self.layer(op="Transpose", inputs=[a], attrs={"perm": perm}, outputs=["tr_o"])[0]
+    return self.layer(
+        op="Transpose", inputs=[a], attrs={"perm": perm}, outputs=["tr_o"]
+    )[0]
 
 
 @gs.Graph.register()
 def reshape(self, data, shape):
-    return self.layer(op="Reshape", inputs=[data, shape], attrs={"allowzero": 0}, outputs=["rs_o"])[0]
+    return self.layer(
+        op="Reshape", inputs=[data, shape], attrs={"allowzero": 0}, outputs=["rs_o"]
+    )[0]
 
 
 @gs.Graph.register()
 def softmax(self, a, axis=-1):
-    return self.layer(op="Softmax", inputs=[a], attrs={"axis": axis}, outputs=["sm_o"])[0]
+    return self.layer(op="Softmax", inputs=[a], attrs={"axis": axis}, outputs=["sm_o"])[
+        0
+    ]
 
 
 @gs.Graph.register()
@@ -82,7 +88,12 @@ def binop(self, op, a, b):
 
 @gs.Graph.register()
 def reduce_mean(self, a, axes):
-    return self.layer(op="ReduceMean", inputs=[a], attrs={"axes": axes, "keepdims": 1}, outputs=["rm_o"])[0]
+    return self.layer(
+        op="ReduceMean",
+        inputs=[a],
+        attrs={"axes": axes, "keepdims": 1},
+        outputs=["rm_o"],
+    )[0]
 
 
 @gs.Graph.register()
@@ -92,7 +103,9 @@ def shape_op(self, a):
 
 @gs.Graph.register()
 def gather(self, data, indices):
-    return self.layer(op="Gather", inputs=[data, indices], attrs={"axis": 0}, outputs=["ga_o"])[0]
+    return self.layer(
+        op="Gather", inputs=[data, indices], attrs={"axis": 0}, outputs=["ga_o"]
+    )[0]
 
 
 @gs.Graph.register()
@@ -102,7 +115,9 @@ def unsqueeze(self, a, axes):
 
 @gs.Graph.register()
 def concat(self, inputs, axis=0):
-    return self.layer(op="Concat", inputs=inputs, attrs={"axis": axis}, outputs=["cc_o"])[0]
+    return self.layer(
+        op="Concat", inputs=inputs, attrs={"axis": axis}, outputs=["cc_o"]
+    )[0]
 
 
 def attention_block(graph, x, idx, rng):
@@ -111,7 +126,9 @@ def attention_block(graph, x, idx, rng):
     def w():
         # Scale ~1/sqrt(hidden) so stacked matmuls stay numerically bounded
         # (no residual/norm between blocks in this synthetic model).
-        return (rng.standard_normal((HIDDEN_DIM, HIDDEN_DIM)) / math.sqrt(HIDDEN_DIM)).astype(np.float16)
+        return (
+            rng.standard_normal((HIDDEN_DIM, HIDDEN_DIM)) / math.sqrt(HIDDEN_DIM)
+        ).astype(np.float16)
 
     def s32(v):
         return np.array([v], dtype=np.float32)
@@ -124,7 +141,14 @@ def attention_block(graph, x, idx, rng):
         sh = graph.shape_op(proj)
         sd = graph.unsqueeze(graph.gather(sh, np.array(0, dtype=np.int64)), axes_0)
         bd = graph.unsqueeze(graph.gather(sh, np.array(1, dtype=np.int64)), axes_0)
-        tgt = graph.concat([sd, bd, np.array([NUM_HEADS], dtype=np.int64), np.array([HEAD_DIM], dtype=np.int64)])
+        tgt = graph.concat(
+            [
+                sd,
+                bd,
+                np.array([NUM_HEADS], dtype=np.int64),
+                np.array([HEAD_DIM], dtype=np.int64),
+            ]
+        )
         return graph.reshape(proj, tgt)
 
     q4, k4, v4 = to_heads(q_proj), to_heads(k_proj), to_heads(v_proj)
@@ -166,8 +190,14 @@ def attention_block(graph, x, idx, rng):
     sh = graph.shape_op(at)
     sd = graph.unsqueeze(graph.gather(sh, np.array(0, dtype=np.int64)), axes_0)
     bd = graph.unsqueeze(graph.gather(sh, np.array(1, dtype=np.int64)), axes_0)
-    hh = graph.unsqueeze(graph.binop("Mul", graph.gather(sh, np.array(2, dtype=np.int64)),
-                                     graph.gather(sh, np.array(3, dtype=np.int64))), axes_0)
+    hh = graph.unsqueeze(
+        graph.binop(
+            "Mul",
+            graph.gather(sh, np.array(2, dtype=np.int64)),
+            graph.gather(sh, np.array(3, dtype=np.int64)),
+        ),
+        axes_0,
+    )
     flat = graph.reshape(at, graph.concat([sd, bd, hh]))
     return graph.matmul(flat, w())  # output projection -> block output
 
@@ -175,7 +205,9 @@ def attention_block(graph, x, idx, rng):
 def build(layers):
     rng = np.random.default_rng(42)
     graph = gs.Graph(opset=OPSET)
-    x = gs.Variable("input", dtype=np.float16, shape=["sequence_length", "batch_size", HIDDEN_DIM])
+    x = gs.Variable(
+        "input", dtype=np.float16, shape=["sequence_length", "batch_size", HIDDEN_DIM]
+    )
     graph.inputs = [x]
     for i in range(layers):
         x = attention_block(graph, x, i, rng)
@@ -193,15 +225,43 @@ def make_hint(layers, path):
     hint = {
         "parallelism": "CP",
         "attention_layers": [
-            {"q": "q_scaled_%d" % i, "gather_kv": True, "gather_q": False,
-             "replace": None, "polygraphy_class": "AttentionLayerHint"}
+            {
+                "q": "q_scaled_%d" % i,
+                "gather_kv": True,
+                "gather_q": False,
+                "replace": None,
+                "polygraphy_class": "AttentionLayerHint",
+            }
             for i in range(layers)
         ],
-        "dist_collectives": {"group_size": 0, "root": -1, "nb_rank": 2, "reduce_op": "max",
-                             "groups": [], "polygraphy_class": "DistCollective"},
-        "inputs": [{"name": "input", "seq_len_idx": 0, "rank": 3, "polygraphy_class": "ShardTensor"}],
-        "outputs": [{"name": "output", "seq_len_idx": 0, "rank": 3, "polygraphy_class": "ShardTensor"}],
-        "k_seq_len_idx": 3, "v_seq_len_idx": 2, "kv_rank": 4, "polygraphy_class": "ShardHints",
+        "dist_collectives": {
+            "group_size": 0,
+            "root": -1,
+            "nb_rank": 2,
+            "reduce_op": "max",
+            "groups": [],
+            "polygraphy_class": "DistCollective",
+        },
+        "inputs": [
+            {
+                "name": "input",
+                "seq_len_idx": 0,
+                "rank": 3,
+                "polygraphy_class": "ShardTensor",
+            }
+        ],
+        "outputs": [
+            {
+                "name": "output",
+                "seq_len_idx": 0,
+                "rank": 3,
+                "polygraphy_class": "ShardTensor",
+            }
+        ],
+        "k_seq_len_idx": 3,
+        "v_seq_len_idx": 2,
+        "kv_rank": 4,
+        "polygraphy_class": "ShardHints",
     }
     with open(path, "w") as f:
         json.dump(hint, f, indent=2)
@@ -216,7 +276,10 @@ def main():
     m = build(a.layers)
     onnx.save(m, a.output)  # inline weights (keep <2GB protobuf limit)
     make_hint(a.layers, a.hint)
-    print("Saved %s (%d layers, %d nodes) + hint %s" % (a.output, a.layers, len(m.graph.node), a.hint))
+    print(
+        "Saved %s (%d layers, %d nodes) + hint %s"
+        % (a.output, a.layers, len(m.graph.node), a.hint)
+    )
 
 
 if __name__ == "__main__":

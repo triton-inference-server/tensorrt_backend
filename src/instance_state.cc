@@ -247,24 +247,26 @@ ModelInstanceState::ModelInstanceState(
     // Multi-Device owns its GPUs explicitly, so it must be a KIND_MODEL
     // instance (Triton does not bind a single device to it).
     if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_MODEL) {
-      throw triton::backend::BackendModelInstanceException(TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("unable to load model '") + model_state_->Name() +
-           "', TensorRT Multi-Device (enable_multi_device) requires "
-           "instance_group kind KIND_MODEL")
-              .c_str()));
+      throw triton::backend::BackendModelInstanceException(
+          TRITONSERVER_ErrorNew(
+              TRITONSERVER_ERROR_INVALID_ARG,
+              (std::string("unable to load model '") + model_state_->Name() +
+               "', TensorRT Multi-Device (enable_multi_device) requires "
+               "instance_group kind KIND_MODEL")
+                  .c_str()));
     }
     md_device_ids_ = model_state_->MdDeviceIds();
     md_world_size_ = static_cast<int>(md_device_ids_.size());
   } else
 #endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
-      if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
-    throw triton::backend::BackendModelInstanceException(TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        (std::string("unable to load model '") + model_state_->Name() +
-         "', TensorRT backend supports only GPU device")
-            .c_str()));
-  }
+    if (Kind() != TRITONSERVER_INSTANCEGROUPKIND_GPU) {
+      throw triton::backend::BackendModelInstanceException(
+          TRITONSERVER_ErrorNew(
+              TRITONSERVER_ERROR_INVALID_ARG,
+              (std::string("unable to load model '") + model_state_->Name() +
+               "', TensorRT backend supports only GPU device")
+                  .c_str()));
+    }
 
   signal_stream_ = nullptr;
   input_copy_stream_ = nullptr;
@@ -491,9 +493,8 @@ ModelInstanceState::InitMultiDevice(const std::string& model_path)
     }
     md_streams_[idx] = stream;
 
-    md_contexts_[idx].reset(
-        md_engines_[idx]->createExecutionContext(
-            model_state_->AllocationStrategy()));
+    md_contexts_[idx].reset(md_engines_[idx]->createExecutionContext(
+        model_state_->AllocationStrategy()));
     if (md_contexts_[idx] == nullptr) {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INTERNAL,
@@ -569,8 +570,8 @@ ModelInstanceState::InitMultiDevice(const std::string& model_path)
     }
     LOG_MESSAGE(
         TRITONSERVER_LOG_INFO,
-        (std::string("[MD] input replication path for '") + Name() + "': " +
-         desc)
+        (std::string("[MD] input replication path for '") + Name() +
+         "': " + desc)
             .c_str());
   }
 
@@ -603,10 +604,9 @@ ModelInstanceState::InitMultiDevice(const std::string& model_path)
 
   cudaSetDevice(Rank0Device());
   LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("TensorRT Multi-Device ready for '") + Name() +
-       "': " + std::to_string(world) + " ranks")
-          .c_str());
+      TRITONSERVER_LOG_INFO, (std::string("TensorRT Multi-Device ready for '") +
+                              Name() + "': " + std::to_string(world) + " ranks")
+                                 .c_str());
   return nullptr;
 }
 
@@ -669,16 +669,15 @@ ModelInstanceState::EnqueueMultiDevice(
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,
             (std::string("[MD] failed to mirror input '") + name +
-             "' to rank " + std::to_string(r) + ": " +
-             cudaGetErrorString(cerr))
+             "' to rank " + std::to_string(r) + ": " + cudaGetErrorString(cerr))
                 .c_str());
         ok.store(false);
       }
     }
   }
 
-  // Bind buffers and enqueue each non-zero rank concurrently with rank 0, so the
-  // in-engine NCCL collectives across all ranks can rendezvous.
+  // Bind buffers and enqueue each non-zero rank concurrently with rank 0, so
+  // the in-engine NCCL collectives across all ranks can rendezvous.
   std::vector<std::thread> workers;
   workers.reserve(world - 1);
   for (int r = 1; r < world; ++r) {
