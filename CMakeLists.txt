@@ -1,4 +1,4 @@
-# Copyright 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -231,6 +231,35 @@ target_link_libraries(
     PRIVATE
       CUDA::cudart
 )
+
+#
+# TensorRT Multi-Device (MD) support — TRT-28040.
+# Links NCCL so the backend can drive a sharded engine across multiple GPUs in
+# a single process. NCCL ships in the NGC TensorRT/Triton images. When disabled
+# the backend builds with no NCCL dependency and the MD code path is compiled
+# out (see TRITON_ENABLE_TRT_MULTI_DEVICE).
+#
+option(TRITON_ENABLE_TENSORRT_MULTI_DEVICE
+       "Enable TensorRT Multi-Device (NCCL) execution" ON)
+if(TRITON_ENABLE_TENSORRT_MULTI_DEVICE)
+  find_path(NCCL_INCLUDE_DIR
+    NAMES nccl.h
+    HINTS ${CUDAToolkit_INCLUDE_DIRS} /usr/include /usr/local/cuda/include)
+  find_library(NCCL_LIBRARY
+    NAMES nccl
+    HINTS /usr/lib/x86_64-linux-gnu /usr/local/cuda/lib64)
+  if(NOT NCCL_LIBRARY OR NOT NCCL_INCLUDE_DIR)
+    message(FATAL_ERROR
+      "NCCL not found (nccl.h / libnccl). Required for "
+      "TRITON_ENABLE_TENSORRT_MULTI_DEVICE=ON; set NCCL_INCLUDE_DIR / "
+      "NCCL_LIBRARY or pass -DTRITON_ENABLE_TENSORRT_MULTI_DEVICE=OFF.")
+  endif()
+  message(STATUS "TensorRT Multi-Device enabled: ${NCCL_LIBRARY}")
+  target_compile_definitions(triton-tensorrt-backend
+    PRIVATE TRITON_ENABLE_TRT_MULTI_DEVICE=1)
+  target_include_directories(triton-tensorrt-backend PRIVATE ${NCCL_INCLUDE_DIR})
+  target_link_libraries(triton-tensorrt-backend PRIVATE ${NCCL_LIBRARY})
+endif()
 
 
 #
