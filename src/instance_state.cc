@@ -4036,7 +4036,11 @@ TRTv3Interface::SetCudaGraphShape(
     TensorRTContext::CudaGraph* cuda_graph)
 {
   int batch_size = graph_spec.batch_size_;
-  *cuda_graph_key = std::vector<int64_t>{batch_size};
+  // Non-batching models (max_batch_size == 0) use a batch size of 1 in the
+  // lookup key at inference time. Use the same value here so the captured
+  // graph can be found.
+  int64_t cuda_graph_key_batch_size = (batch_size == 0) ? 1 : batch_size;
+  *cuda_graph_key = std::vector<int64_t>{cuda_graph_key_batch_size};
   auto& lower_bound_key = cuda_graph->lower_bound_key_;
   lower_bound_key.push_back(
       (graph_spec.lower_bound_batch_size_ == 0)
@@ -4078,10 +4082,12 @@ TRTv3Interface::SetCudaGraphShape(
           cuda_graph->input_dims_.emplace_back();
         } else {
           cuda_graph->input_dims_.emplace_back();
+          // Prepend the batch dimension only for batching models, so the keys
+          // stay aligned with non-batching models.
           if (batch_size != 0) {
             cuda_graph->input_dims_.back().push_back(batch_size);
+            lower_bound_key.push_back(lower_bound_key[0]);
           }
-          lower_bound_key.push_back(lower_bound_key[0]);
         }
         auto& shape = cuda_graph->input_dims_.back();
         shape.insert(shape.end(), it->second.begin(), it->second.end());
