@@ -848,7 +848,8 @@ ModelInstanceState::Run(
   // execution. The batch-size, number of inputs, and size of each
   // input has already been checked so don't need to do that here.
   payload_->total_batch_size_ = 0;
-  size_t cancelled_count = 0;
+  bool all_requests_cancelled =
+      (payload_->request_count_ > 0) && !uses_implicit_state_;
   for (size_t i = 0; i < payload_->request_count_; i++) {
     // If we get a nullptr request then something is badly wrong. Fail
     // and release all requests.
@@ -863,21 +864,24 @@ ModelInstanceState::Run(
       return;
     }
 
-    // The batch cannot be abandoned once issued to the engine, so this is the
-    // only point cancellation is actionable. Only a fully cancelled batch is
-    // skipped.
-    bool is_cancelled = false;
-    TRITONSERVER_Error* cancel_err =
-        TRITONBACKEND_RequestIsCancelled(payload_->requests_[i], &is_cancelled);
-    if (cancel_err != nullptr) {
-      LOG_MESSAGE(
-          TRITONSERVER_LOG_WARN,
-          (std::string("failed to query cancellation state for '") + Name() +
-           "': " + TRITONSERVER_ErrorMessage(cancel_err))
-              .c_str());
-      TRITONSERVER_ErrorDelete(cancel_err);
-    } else if (is_cancelled) {
-      cancelled_count++;
+    // This is the backend's last cancellation check before issuing the batch
+    // to the engine. Once a live request is found, this batch must execute and
+    // the remaining cancellation queries can be skipped.
+    if (all_requests_cancelled) {
+      bool is_cancelled = false;
+      TRITONSERVER_Error* cancel_err = TRITONBACKEND_RequestIsCancelled(
+          payload_->requests_[i], &is_cancelled);
+      if (cancel_err != nullptr) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_WARN,
+            (std::string("failed to query cancellation state for '") + Name() +
+             "': " + TRITONSERVER_ErrorMessage(cancel_err))
+                .c_str());
+        TRITONSERVER_ErrorDelete(cancel_err);
+        all_requests_cancelled = false;
+      } else if (!is_cancelled) {
+        all_requests_cancelled = false;
+      }
     }
 
     if (max_batch_size > 0) {
@@ -906,8 +910,7 @@ ModelInstanceState::Run(
   // which tells ProcessRequests that no completion-queue entry was produced.
   // Implicit state models are excluded: skipping execution would also skip the
   // state update and leave the slot's state stale.
-  if ((cancelled_count == payload_->request_count_) &&
-      (payload_->request_count_ > 0) && !uses_implicit_state_) {
+  if (all_requests_cancelled) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
         (std::string("TRITONBACKEND_ModelExecute: Skipping ") + Name() +
