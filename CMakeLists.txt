@@ -133,7 +133,7 @@ add_library(
   src/tensorrt_utils.h
   src/filesystem.h
   src/filesystem.cc
-  src/semaphore.h
+  src/triton_semaphore.h
   src/shared_library.h
   src/shared_library.cc
   src/loader.cc

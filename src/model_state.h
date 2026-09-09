@@ -29,9 +29,9 @@
 #include <NvInfer.h>
 
 #include "logging.h"
-#include "semaphore.h"
 #include "tensorrt_model.h"
 #include "tensorrt_model_instance.h"
+#include "triton_semaphore.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 
