@@ -131,8 +131,8 @@ add_library(
   src/shape_tensor.h
   src/tensorrt_utils.cc
   src/tensorrt_utils.h
-  src/filesystem.h
-  src/filesystem.cc
+  src/triton_filesystem.h
+  src/triton_filesystem.cc
   src/triton_semaphore.h
   src/shared_library.h
   src/shared_library.cc

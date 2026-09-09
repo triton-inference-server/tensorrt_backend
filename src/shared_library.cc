@@ -1,4 +1,4 @@
-// Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
+// Copyright (c) 2022-2026, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -26,9 +26,9 @@
 
 #include "shared_library.h"
 
-#include "filesystem.h"
 #include "logging.h"
 #include "mutex"
+#include "triton_filesystem.h"
 
 /// FIXME: Duplication of core/src/shared_library.cc
 /// Separate shared_library to common library and delete this
