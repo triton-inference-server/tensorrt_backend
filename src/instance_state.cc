@@ -131,8 +131,10 @@ ModelInstanceState::Create(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance,
     ModelInstanceState** state)
 {
+  *state = nullptr;
+  std::unique_ptr<ModelInstanceState> owned;
   try {
-    *state = new ModelInstanceState(model_state, triton_model_instance);
+    owned.reset(new ModelInstanceState(model_state, triton_model_instance));
   }
   catch (const BackendModelInstanceException& ex) {
     RETURN_ERROR_IF_TRUE(
@@ -143,7 +145,7 @@ ModelInstanceState::Create(
 
   // If the model configuration doesn't have an explicit model file
   // specified then use the default name.
-  std::string cc_model_filename = (*state)->ArtifactFilename();
+  std::string cc_model_filename = owned->ArtifactFilename();
   if (cc_model_filename.empty()) {
     cc_model_filename = "model.plan";
   }
@@ -156,7 +158,7 @@ ModelInstanceState::Create(
   // '<model_filename>.rank0'; otherwise the shared engine.
   std::string rank0_model_path = model_path;
 #ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
-  if ((*state)->md_enabled_ && model_state->MdPerRankEngines()) {
+  if (owned->md_enabled_ && model_state->MdPerRankEngines()) {
     rank0_model_path = model_path + ".rank0";
   }
 #endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
@@ -167,56 +169,57 @@ ModelInstanceState::Create(
     RETURN_ERROR_IF_FALSE(
         exists, TRITONSERVER_ERROR_UNAVAILABLE,
         std::string("unable to find '") + rank0_model_path +
-            "' for model instance '" + (*state)->Name() + "'");
+            "' for model instance '" + owned->Name() + "'");
   }
 
-  (*state)->InitSemaphore();
-  RETURN_IF_ERROR((*state)->InitStreamsAndEvents());
+  owned->InitSemaphore();
+  RETURN_IF_ERROR(owned->InitStreamsAndEvents());
   RETURN_IF_ERROR(model_state->CreateEngine(
-      (*state)->Rank0Device(), (*state)->DLACoreId(), rank0_model_path,
-      (*state)->EnginePtr()));
+      owned->Rank0Device(), owned->DLACoreId(), rank0_model_path,
+      owned->EnginePtr()));
 
   // Create TRT API interface, all TRT operations must be done after the
   // interface is instantiated.
-  (*state)->interface_.reset(new TRTv3Interface(*state));
+  owned->interface_.reset(new TRTv3Interface(owned.get()));
 
-  RETURN_IF_ERROR((*state)->InitIOIndexMap());
-  RETURN_IF_ERROR((*state)->InitOptimizationProfiles());
-  RETURN_IF_ERROR((*state)->ValidateIO());
-  RETURN_IF_ERROR((*state)->InitIOBindingBuffers());
+  RETURN_IF_ERROR(owned->InitIOIndexMap());
+  RETURN_IF_ERROR(owned->InitOptimizationProfiles());
+  RETURN_IF_ERROR(owned->ValidateIO());
+  RETURN_IF_ERROR(owned->InitIOBindingBuffers());
 
 #ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
   // Set up the additional ranks (1..N-1) and attach NCCL communicators. Must
   // run after rank 0's engine/contexts/IO buffers exist, since rank 0 is
   // included in the concurrent setCommunicator() handshake.
-  if ((*state)->md_enabled_) {
-    RETURN_IF_ERROR((*state)->InitMultiDevice(model_path));
+  if (owned->md_enabled_) {
+    RETURN_IF_ERROR(owned->InitMultiDevice(model_path));
   }
 #endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
 
-  (*state)->completion_thread_ =
-      std::thread(&ModelInstanceState::ProcessResponse, *state);
+  owned->completion_thread_ =
+      std::thread(&ModelInstanceState::ProcessResponse, owned.get());
 
   // CUDA 10.1 starts to support CUDA graphs.
   // If enabled, build CUDA graphs with a set of graph specs.
 #ifdef TRITON_ENABLE_CUDA_GRAPH
   if (model_state->UseCudaGraphs()) {
-    RETURN_IF_ERROR((*state)->InitializeCudaGraph());
+    RETURN_IF_ERROR(owned->InitializeCudaGraph());
   }
 #endif
 
-  model_state->RegisterInstance((*state)->Rank0Device(), *state);
+  model_state->RegisterInstance(owned->Rank0Device(), owned.get());
 
   std::string profiles_desc;
-  (*state)->GetConfiguredProfiles(&profiles_desc);
+  owned->GetConfiguredProfiles(&profiles_desc);
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Created instance ") + (*state)->Name() + " on GPU " +
-       std::to_string((*state)->DeviceId()) + " with stream priority " +
-       std::to_string((*state)->CudaStreamPriority()) +
+      (std::string("Created instance ") + owned->Name() + " on GPU " +
+       std::to_string(owned->DeviceId()) + " with stream priority " +
+       std::to_string(owned->CudaStreamPriority()) +
        " and optimization profile" + profiles_desc)
           .c_str());
 
+  *state = owned.release();
   return nullptr;  // success
 }
 

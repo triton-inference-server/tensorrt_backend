@@ -1,4 +1,4 @@
-// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -324,8 +324,10 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   ModelInstanceState* instance_state;
   RETURN_IF_ERROR(
       ModelInstanceState::Create(model_state, instance, &instance_state));
+  std::unique_ptr<ModelInstanceState> owned(instance_state);
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
       instance, reinterpret_cast<void*>(instance_state)));
+  owned.release();
 
   if (lusage) {
     DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
