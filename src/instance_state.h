@@ -34,11 +34,11 @@
 
 #include "io_binding_info.h"
 #include "model_state.h"
-#include "semaphore.h"
 #include "shape_tensor.h"
 #include "tensorrt_model_instance.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
+#include "triton_semaphore.h"
 
 namespace triton { namespace backend { namespace tensorrt {
 

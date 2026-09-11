@@ -28,8 +28,8 @@ cmake_minimum_required(VERSION 3.31.8)
 
 project(tritontensorrtbackend LANGUAGES C CXX)
 
-# Use C++17 standard as Triton's minimum required.
-set(TRITON_MIN_CXX_STANDARD 17 CACHE STRING "The minimum C++ standard which features are requested to build this target.")
+# Use C++20 standard as Triton's minimum required.
+set(TRITON_MIN_CXX_STANDARD 20 CACHE STRING "The minimum C++ standard which features are requested to build this target.")
 
 #
 # Options
@@ -131,9 +131,9 @@ add_library(
   src/shape_tensor.h
   src/tensorrt_utils.cc
   src/tensorrt_utils.h
-  src/filesystem.h
-  src/filesystem.cc
-  src/semaphore.h
+  src/triton_filesystem.h
+  src/triton_filesystem.cc
+  src/triton_semaphore.h
   src/shared_library.h
   src/shared_library.cc
   src/loader.cc
