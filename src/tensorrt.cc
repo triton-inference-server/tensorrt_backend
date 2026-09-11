@@ -338,6 +338,10 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         instance, ba_array, ba_len));
   }
 
+  // Publish the instance to the execution arbitrator only after all fallible
+  // initialization has completed.
+  model_state->RegisterInstance(instance_state->Rank0Device(), instance_state);
+
   return nullptr;  // success
 }
 

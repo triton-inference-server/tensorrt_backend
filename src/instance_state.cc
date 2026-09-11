@@ -207,8 +207,6 @@ ModelInstanceState::Create(
   }
 #endif
 
-  model_state->RegisterInstance(owned->Rank0Device(), owned.get());
-
   std::string profiles_desc;
   owned->GetConfiguredProfiles(&profiles_desc);
   LOG_MESSAGE(
@@ -737,21 +735,30 @@ ModelInstanceState::DestroyMultiDevice()
 {
   // Order matters: free per-rank contexts/buffers/streams BEFORE destroying the
   // communicators, since the contexts hold the communicator pointers.
+  // Initialization can fail before or while the per-rank vectors are sized.
   for (int r = 1; r < md_world_size_; ++r) {
-    const int idx = r - 1;
+    const size_t idx = r - 1;
     cudaSetDevice(md_device_ids_[r]);
-    md_contexts_[idx].reset();
-    md_engines_[idx].reset();
-    md_runtimes_[idx].reset();
-    for (auto& kv : md_io_buffers_[idx]) {
-      if (kv.second.first != nullptr) {
-        cudaFree(kv.second.first);
+    if (idx < md_contexts_.size()) {
+      md_contexts_[idx].reset();
+    }
+    if (idx < md_engines_.size()) {
+      md_engines_[idx].reset();
+    }
+    if (idx < md_runtimes_.size()) {
+      md_runtimes_[idx].reset();
+    }
+    if (idx < md_io_buffers_.size()) {
+      for (auto& kv : md_io_buffers_[idx]) {
+        if (kv.second.first != nullptr) {
+          cudaFree(kv.second.first);
+        }
       }
     }
-    if (idx < (int)md_stage_.size() && md_stage_[idx] != nullptr) {
+    if (idx < md_stage_.size() && md_stage_[idx] != nullptr) {
       cudaFreeHost(md_stage_[idx]);
     }
-    if (md_streams_[idx] != nullptr) {
+    if (idx < md_streams_.size() && md_streams_[idx] != nullptr) {
       cudaStreamDestroy(md_streams_[idx]);
     }
   }
