@@ -848,7 +848,7 @@ ModelInstanceState::Run(
   // execution. The batch-size, number of inputs, and size of each
   // input has already been checked so don't need to do that here.
   payload_->total_batch_size_ = 0;
-  bool skip_batch_execution =
+  bool may_skip_execution =
       (payload_->request_count_ > 0) && !uses_implicit_state_;
   for (size_t i = 0; i < payload_->request_count_; i++) {
     // If we get a nullptr request then something is badly wrong. Fail
@@ -864,10 +864,11 @@ ModelInstanceState::Run(
       return;
     }
 
-    // This is the backend's last cancellation check before issuing the batch
-    // to the engine. Once a live request is found, this batch must execute and
-    // the remaining cancellation queries can be skipped.
-    if (skip_batch_execution) {
+    // Check cancellation before TensorRT processing. Skip the payload only if
+    // every request is cancelled. If a request is not cancelled or its check
+    // fails, continue normal processing and stop checking the remaining
+    // requests.
+    if (may_skip_execution) {
       bool is_cancelled = false;
       TRITONSERVER_Error* cancel_err = TRITONBACKEND_RequestIsCancelled(
           payload_->requests_[i], &is_cancelled);
@@ -878,9 +879,9 @@ ModelInstanceState::Run(
              "': " + TRITONSERVER_ErrorMessage(cancel_err))
                 .c_str());
         TRITONSERVER_ErrorDelete(cancel_err);
-        skip_batch_execution = false;
+        may_skip_execution = false;
       } else if (!is_cancelled) {
-        skip_batch_execution = false;
+        may_skip_execution = false;
       }
     }
 
@@ -906,11 +907,10 @@ ModelInstanceState::Run(
     }
   }
 
-  // Nothing to compute. 'RequestsRespondWithError' nulls the request pointers,
-  // which tells ProcessRequests that no completion-queue entry was produced.
-  // Implicit state models are excluded: skipping execution would also skip the
-  // state update and leave the slot's state stale.
-  if (skip_batch_execution) {
+  // All requests are cancelled and no implicit state update is required.
+  // Respond without invoking TensorRT. Clearing the request pointers tells
+  // ProcessRequests to release the instance slot directly.
+  if (may_skip_execution) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
         (std::string("TRITONBACKEND_ModelExecute: Skipping ") + Name() +
