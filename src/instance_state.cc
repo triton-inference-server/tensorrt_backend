@@ -848,6 +848,8 @@ ModelInstanceState::Run(
   // execution. The batch-size, number of inputs, and size of each
   // input has already been checked so don't need to do that here.
   payload_->total_batch_size_ = 0;
+  bool may_skip_execution =
+      (payload_->request_count_ > 0) && !uses_implicit_state_;
   for (size_t i = 0; i < payload_->request_count_; i++) {
     // If we get a nullptr request then something is badly wrong. Fail
     // and release all requests.
@@ -860,6 +862,27 @@ ModelInstanceState::Run(
                   "null request given to TensorRT backend for '" + Name() + "'")
                   .c_str()));
       return;
+    }
+
+    // Check cancellation before TensorRT processing. Skip the payload only if
+    // every request is cancelled. If a request is not cancelled or its check
+    // fails, continue normal processing and stop checking the remaining
+    // requests.
+    if (may_skip_execution) {
+      bool is_cancelled = false;
+      TRITONSERVER_Error* cancel_err = TRITONBACKEND_RequestIsCancelled(
+          payload_->requests_[i], &is_cancelled);
+      if (cancel_err != nullptr) {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_WARN,
+            (std::string("failed to query cancellation state for '") + Name() +
+             "': " + TRITONSERVER_ErrorMessage(cancel_err))
+                .c_str());
+        TRITONSERVER_ErrorDelete(cancel_err);
+        may_skip_execution = false;
+      } else if (!is_cancelled) {
+        may_skip_execution = false;
+      }
     }
 
     if (max_batch_size > 0) {
@@ -882,6 +905,23 @@ ModelInstanceState::Run(
     } else {
       payload_->total_batch_size_ += 1;
     }
+  }
+
+  // All requests are cancelled and no implicit state update is required.
+  // Respond without invoking TensorRT. Clearing the request pointers tells
+  // ProcessRequests to release the instance slot directly.
+  if (may_skip_execution) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_VERBOSE,
+        (std::string("TRITONBACKEND_ModelExecute: Skipping ") + Name() +
+         " execution, all " + std::to_string(payload_->request_count_) +
+         " requests in the batch were cancelled")
+            .c_str());
+    RequestsRespondWithError(
+        payload_->requests_, payload_->request_count_,
+        TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_CANCELLED, "request was cancelled"));
+    return;
   }
 
   // If there are no valid requests then no need to run the
