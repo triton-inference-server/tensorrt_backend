@@ -24,17 +24,16 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "model_state.h"
+#include "model_state.hh"
+#include "instance_state.hh"
+#include "loader.hh"
+#include "../tensorrt_utils.h"
 
 #include <algorithm>
 #include <sstream>
 #include <string>
 
-#include "instance_state.h"
-#include "loader.h"
-#include "tensorrt_utils.h"
-
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt::plan {
 
 class DeviceBlockingArbitrator : public ExecutionArbitrator {
  public:
@@ -1086,4 +1085,4 @@ ModelState::FixIO(
   return nullptr;
 }
 
-}}}  // namespace triton::backend::tensorrt
+}

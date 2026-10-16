@@ -32,15 +32,15 @@
 #include <map>
 #include <unordered_map>
 
-#include "io_binding_info.h"
-#include "model_state.h"
-#include "shape_tensor.h"
-#include "tensorrt_model_instance.h"
+#include "model_instance.hh"
+#include "model_state.hh"
+#include "../io_binding_info.h"
+#include "../shape_tensor.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
 #include "triton_semaphore.h"
 
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt::plan {
 
 // Number of CUDA event set for each instance.
 // We need three sets to avoid event overlaps between issue
@@ -536,7 +536,7 @@ class ModelInstanceState : public TensorRTModelInstance {
 
   std::unique_ptr<TRTInterface> interface_{nullptr};
 
-  // TRT model instance performs execution asynchorously and thus may go
+  // TRT model instance performs execution asynchronously and thus may go
   // ahead to prepare further executions. Use semaphore to prevent going too
   // far ahead and overwriting resources that are still in use.
   std::unique_ptr<Semaphore> semaphore_{nullptr};
@@ -573,4 +573,4 @@ class ModelInstanceState : public TensorRTModelInstance {
 #endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
 };
 
-}}}  // namespace triton::backend::tensorrt
+}  // namespace triton::backend::tensorrt::plan

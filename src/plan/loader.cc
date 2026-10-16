@@ -24,7 +24,7 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "loader.h"
+#include "loader.hh"
 
 #include <NvInferPlugin.h>
 
@@ -33,7 +33,7 @@
 
 #include "triton/backend/backend_common.h"
 
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt::plan {
 
 TRITONSERVER_Error*
 LoadPlan(
@@ -93,4 +93,4 @@ LoadPlan(
   return nullptr;
 }
 
-}}}  // namespace triton::backend::tensorrt
+}  // namespace triton::backend::tensorrt::plan
