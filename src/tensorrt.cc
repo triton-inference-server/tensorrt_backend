@@ -24,6 +24,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "tensorrt.hh"
+
 #include <NvInferPlugin.h>
 #include <cuda_runtime_api.h>
 
@@ -36,21 +38,162 @@
 #include <thread>
 #include <unordered_map>
 
+#include "backend_configuration.hh"
+#include "logging.h"
 #include "plan/instance_state.hh"
 #include "plan/model_state.hh"
-#include "logging.h"
 #include "shared_library.h"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/device_memory_tracker.h"
+#include "triton_utils.hh"
 
 //
 // TensorRT Backend that implements the TRITONBACKEND API.
 //
 namespace triton::backend::tensorrt {
 
-/////////////
+static std::unordered_map<void*, bool> model_is_trtmc_map{};
+static std::mutex model_is_trtmc_map_mutex{};
 
-extern "C" {
+/// @brief Gets the model configuration and determine if the model is a TRT
+/// Model Connect model bundle based on the platform field in the model
+/// configuration.
+/// @param model The TRITONBACKEND_Model for which to get the configuration and
+/// determine if it's a TRT-MC model.
+/// @param model_name The name of the model, used for logging purposes.
+/// @param platform The platform of the model, used to determine if it's a
+/// TRT-MC model.
+/// @returns A TRITONSERVER_Error indicating success or failure of the
+/// operation.
+TRITONSERVER_Error*
+GetModelConfigPlatform(
+    TRITONBACKEND_Model* model, const std::string model_name,
+    std::string& platform)
+{
+  TRITONSERVER_Message* config_msg{nullptr};
+  RETURN_IF_ERROR(TRITONBACKEND_ModelConfig(model, 1, &config_msg));
+
+  const char* json_buffer{nullptr};
+  size_t json_buffer_size{0};
+  RETURN_IF_ERROR(TRITONSERVER_MessageSerializeToJson(
+      config_msg, &json_buffer, &json_buffer_size));
+
+  common::TritonJson::Value model_config;
+  auto err = model_config.Parse(json_buffer, json_buffer_size);
+  TRITONSERVER_MessageDelete(config_msg);
+  RETURN_IF_ERROR(err);
+
+  platform.clear();
+
+  const char* platform_cstr{nullptr};
+  size_t platform_size{0};
+  err = model_config.MemberAsString("platform", &platform_cstr, &platform_size);
+  if (err) {
+    TRITON_LOG_WARN(
+        "Failed to get platform from model config for '"
+        << model_name << "': " << TRITONSERVER_ErrorMessage(err) << ".");
+    return err;
+  }
+
+  platform = std::string{platform_cstr, platform_size};
+  TRITON_LOG_INFO(
+      "Model platform for '" << model_name << "': '" << platform << "'.")
+
+  return nullptr;  // success
+}
+
+/// @brief Gets model information including the model name, version, artifact
+/// type, and whether it's a TRT-MC model.
+/// @param model The TRITONBACKEND_Model for which to get the information.
+/// @param model_name The name of the model, used for logging purposes.
+/// @param model_version The version of the model.
+/// @param artifact_type The artifact type of the model.
+/// @param is_trtmc A boolean indicating whether the model is a TRT-MC model.
+/// @returns A TRITONSERVER_Error indicating success or failure of the
+/// operation.
+TRITONSERVER_Error*
+GetModelInfo(
+    TRITONBACKEND_Model* model, std::string& model_name, uint64_t model_version,
+    TRITONBACKEND_ArtifactType& artifact_type, bool& is_trtmc)
+{
+  const char* cname;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelName(model, &cname));
+
+  model_name = std::string{cname};
+
+  RETURN_IF_ERROR(TRITONBACKEND_ModelVersion(model, &model_version));
+
+  const char* location{nullptr};
+  RETURN_IF_ERROR(
+      TRITONBACKEND_ModelRepository(model, &artifact_type, &location));
+
+  try {
+    std::lock_guard lock{model_is_trtmc_map_mutex};
+    auto it = model_is_trtmc_map.find(static_cast<void*>(model));
+    if (it != model_is_trtmc_map.end()) {
+      is_trtmc = it->second;
+    } else {
+      std::string platform;
+      if (auto err = GetModelConfigPlatform(model, model_name, platform)) {
+        model_is_trtmc_map[static_cast<void*>(model)] = is_trtmc = false;
+        return err;
+      }
+
+      is_trtmc = (platform == "model_connect");
+      model_is_trtmc_map[static_cast<void*>(model)] = is_trtmc;
+    }
+  }
+  catch (const std::exception& ex) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        TOSTRING(
+            "Failed to inspect model \"" << model_name << "\""
+                                         << ", version " << model_version
+                                         << ": " << ex.what())
+            .c_str());
+  }
+
+  return nullptr;  // success
+}
+
+/// @brief Gets the model instance information including the model, model name,
+/// model version, whether it's a TRT-MC model, instance name, device id, and
+/// instance group kind.
+/// @param instance The TRITONBACKEND_ModelInstance for which to get the
+/// information.
+/// @param model The TRITONBACKEND_Model associated with the instance.
+/// @param model_name The name of the model, used for logging purposes.
+/// @param model_version The version of the model.
+/// @param is_trtmc A boolean indicating whether the model is a TRT-MC model.
+/// @param instance_name The name of the model instance, used for logging
+/// purposes.
+/// @param device_id The device id on which the model instance is running.
+/// @param kind The instance group kind of the model instance.
+/// @returns A TRITONSERVER_Error indicating success or failure of the
+/// operation.
+TRITONSERVER_Error*
+GetModelInstanceInfo(
+    TRITONBACKEND_ModelInstance* instance, TRITONBACKEND_Model** model,
+    std::string& model_name, uint64_t& model_version, bool& is_trtmc,
+    std::string& instance_name, int32_t& device_id,
+    TRITONSERVER_InstanceGroupKind& kind)
+{
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, model));
+
+  TRITONBACKEND_ArtifactType artifact_type{TRITONBACKEND_ARTIFACT_FILESYSTEM};
+  RETURN_IF_ERROR(
+      GetModelInfo(*model, model_name, model_version, artifact_type, is_trtmc));
+
+  const char* cname;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceName(instance, &cname));
+  instance_name = std::string{cname};
+
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceDeviceId(instance, &device_id));
+
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceKind(instance, &kind));
+
+  return nullptr;  // success
+}
 
 // Implementing TRITONBACKEND_Initialize is optional. The backend
 // should initialize any global state that is intended to be shared
@@ -60,11 +203,9 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 {
   const char* cname;
   RETURN_IF_ERROR(TRITONBACKEND_BackendName(backend, &cname));
-  std::string name(cname);
+  std::string name{cname};
 
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("TRITONBACKEND_Initialize: ") + name).c_str());
+  TRITON_LOG_INFO("TRITONBACKEND_Initialize: " << name);
 
   // We should check the backend API version that Triton supports
   // vs. what this backend was compiled against.
@@ -72,18 +213,13 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   RETURN_IF_ERROR(
       TRITONBACKEND_ApiVersion(&api_version_major, &api_version_minor));
 
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("Triton TRITONBACKEND API version: ") +
-       std::to_string(api_version_major) + "." +
-       std::to_string(api_version_minor))
-          .c_str());
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("'") + name + "' TRITONBACKEND API version: " +
-       std::to_string(TRITONBACKEND_API_VERSION_MAJOR) + "." +
-       std::to_string(TRITONBACKEND_API_VERSION_MINOR))
-          .c_str());
+  TRITON_LOG_INFO(
+      "Triton TRITONBACKEND API version: " << api_version_major << "."
+                                           << api_version_minor);
+  TRITON_LOG_INFO(
+      "'" << name
+          << "' TRITONBACKEND API version: " << TRITONBACKEND_API_VERSION_MAJOR
+          << "." << TRITONBACKEND_API_VERSION_MINOR);
 
   if ((api_version_major != TRITONBACKEND_API_VERSION_MAJOR) ||
       (api_version_minor < TRITONBACKEND_API_VERSION_MINOR)) {
@@ -102,9 +238,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   size_t byte_size;
   RETURN_IF_ERROR(TRITONSERVER_MessageSerializeToJson(
       backend_config_message, &buffer, &byte_size));
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("backend configuration:\n") + buffer).c_str());
+  TRITON_LOG_INFO("backend configuration:\n" << buffer);
 
   triton::common::TritonJson::Value backend_config;
   if (byte_size != 0) {
@@ -114,10 +248,11 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   // Default execution policy, may be overridden by backend config
   auto execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
 
-  std::unique_ptr<plan::BackendConfiguration> lconfig(new plan::BackendConfiguration());
+  std::unique_ptr<BackendConfiguration> backendConfig(
+      new BackendConfiguration{});
   // Check if device memory tracker is explicitly enabled
   if (DeviceMemoryTracker::EnableFromBackendConfig(backend_config)) {
-    lconfig->enable_memory_tracker_ = DeviceMemoryTracker::Init();
+    backendConfig->enable_memory_tracker_ = DeviceMemoryTracker::Init();
   }
 
   triton::common::TritonJson::Value cmdline;
@@ -128,7 +263,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
     if (cmdline.Find("coalesce-request-input", &value)) {
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(
-          ParseBoolValue(value_str, &lconfig->coalesce_request_input_));
+          ParseBoolValue(value_str, &backendConfig->coalesce_request_input_));
     }
 
     if (cmdline.Find("plugins", &value)) {
@@ -142,7 +277,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
         void* handle = nullptr;
         auto err = OpenLibraryHandle(plugin, &handle);
         if (err != nullptr) {
-          LOG_MESSAGE(TRITONSERVER_LOG_ERROR, TRITONSERVER_ErrorMessage(err));
+          TRITON_LOG_ERROR(TRITONSERVER_ErrorMessage(err));
           TRITONSERVER_ErrorDelete(err);
           err = nullptr;
         }
@@ -184,20 +319,23 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   {
     std::call_once(onceFlag, [&success] {
       TensorRTLogger tensorrt_logger;
-      LOG_MESSAGE(TRITONSERVER_LOG_VERBOSE, "Registering TensorRT Plugins");
+      TRITON_LOG_INFO("Registering TensorRT Plugins");
       success = initLibNvInferPlugins(&tensorrt_logger, "");
     });
   }
+
   if (!success) {
-    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Failed to register TensorRT Plugins");
+    TRITON_LOG_ERROR("Failed to register TensorRT Plugins");
   }
 
   RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
-      backend, reinterpret_cast<void*>(lconfig.get())));
+      backend, reinterpret_cast<void*>(backendConfig.get())));
 
-  lconfig.release();
+  backendConfig.release();
+
   return nullptr;  // success
 }
+
 
 // Implementing TRITONBACKEND_Finalize is optional unless state is set
 // using TRITONBACKEND_BackendSetState. The backend must free this
@@ -205,13 +343,13 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
-  if (plan::BackendConfiguration::RetrieveFrom(backend).enable_memory_tracker_) {
+  if (BackendConfiguration::RetrieveFrom(backend).enable_memory_tracker_) {
     DeviceMemoryTracker::Fini();
   }
 
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-  delete reinterpret_cast<plan::BackendConfiguration*>(vstate);
+  delete reinterpret_cast<BackendConfiguration*>(vstate);
   return nullptr;  // success
 }
 
@@ -221,42 +359,49 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
 {
-  const char* cname;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelName(model, &cname));
-  std::string name(cname);
+  std::string model_name{};
+  uint64_t model_version{0};
+  TRITONBACKEND_ArtifactType artifact_type{TRITONBACKEND_ARTIFACT_FILESYSTEM};
+  bool is_trtmc{false};
 
-  uint64_t version;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelVersion(model, &version));
-
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("TRITONBACKEND_ModelInitialize: ") + name + " (version " +
-       std::to_string(version) + ")")
-          .c_str());
-
-  // Utilizing DeviceMemoryTracker behavior that function calls with
-  // 'nullptr' for usage will be no-ops.
-  std::unique_ptr<DeviceMemoryTracker::MemoryUsage> lusage;
-  if (plan::BackendConfiguration::RetrieveFrom(model).enable_memory_tracker_) {
-    lusage.reset(new DeviceMemoryTracker::MemoryUsage());
-    DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
-  }
-
-  // With each model we create a ModelState object and associate it
-  // with the TRITONBACKEND_Model.
-  plan::ModelState* model_state = nullptr;
-  RETURN_IF_ERROR(plan::ModelState::Create(model, &model_state));
+  // Get model info to determine if it is a TRT Model or TRT Model Container.
   RETURN_IF_ERROR(
-      TRITONBACKEND_ModelSetState(model, reinterpret_cast<void*>(model_state)));
+      GetModelInfo(model, model_name, model_version, artifact_type, is_trtmc));
 
-  if (lusage) {
-    DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
-    TRITONSERVER_BufferAttributes** ba_array;
-    uint32_t ba_len = 0;
-    RETURN_IF_ERROR(lusage->SerializeToBufferAttributes(&ba_array, &ba_len));
-    RETURN_IF_ERROR(
-        TRITONBACKEND_ModelReportMemoryUsage(model, ba_array, ba_len));
+  if (is_trtmc) {
+    /* TensorRT Model Connect (TRT Model Container / bundle) */
+  } else {
+    /* TensorRT Plan File (default / legacy) */
+
+    // Utilizing DeviceMemoryTracker behavior that function calls with 'nullptr'
+    // for usage will be no-ops.
+    std::unique_ptr<DeviceMemoryTracker::MemoryUsage> devmem_tracker;
+    if (BackendConfiguration::RetrieveFrom(model).enable_memory_tracker_) {
+      devmem_tracker.reset(new DeviceMemoryTracker::MemoryUsage{});
+      DeviceMemoryTracker::TrackThreadMemoryUsage(devmem_tracker.get());
+    }
+
+    // With each model we create a ModelState object and associate it
+    // with the TRITONBACKEND_Model.
+    plan::ModelState* model_state = nullptr;
+    RETURN_IF_ERROR(plan::ModelState::Create(model, &model_state));
+    RETURN_IF_ERROR(TRITONBACKEND_ModelSetState(
+        model, reinterpret_cast<void*>(model_state)));
+
+    if (devmem_tracker) {
+      DeviceMemoryTracker::UntrackThreadMemoryUsage(devmem_tracker.get());
+      TRITONSERVER_BufferAttributes** ba_array;
+      uint32_t ba_len = 0;
+      RETURN_IF_ERROR(
+          devmem_tracker->SerializeToBufferAttributes(&ba_array, &ba_len));
+      RETURN_IF_ERROR(
+          TRITONBACKEND_ModelReportMemoryUsage(model, ba_array, ba_len));
+    }
   }
+
+  TRITON_LOG_INFO(
+      "TRITONBACKEND_ModelInitialize: " << model_name << " (version "
+                                        << model_version << ")");
 
   return nullptr;  // success
 }
@@ -267,14 +412,32 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
 {
-  void* vstate;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vstate));
-  plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vstate);
+  std::string model_name{};
+  uint64_t model_version{0};
+  TRITONBACKEND_ArtifactType artifact_type{TRITONBACKEND_ARTIFACT_FILESYSTEM};
+  bool is_trtmc{false};
+
+  RETURN_IF_ERROR(
+      GetModelInfo(model, model_name, model_version, artifact_type, is_trtmc));
+
+  void* vmodel{nullptr};
+  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodel));
+
+  if (is_trtmc) {
+    /* TensorRT Model Connect (TRT Model Container / bundle) */
+  } else {
+    /* TensorRT Plan File (default / legacy) */
+    plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vmodel);
+    delete model_state;
+  }
 
   LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO, "TRITONBACKEND_ModelFinalize: delete model state");
-
-  delete model_state;
+      TRITONSERVER_LOG_INFO,
+      TOSTRING(
+          "TRITONBACKEND_ModelFinalize: model state for"
+          " model \""
+          << model_name << "\" version " << model_version << " deleted.")
+          .c_str());
 
   return nullptr;  // success
 }
@@ -285,55 +448,59 @@ TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 {
-  const char* cname;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceName(instance, &cname));
-  std::string name(cname);
-
-  int32_t device_id;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceDeviceId(instance, &device_id));
-  TRITONSERVER_InstanceGroupKind kind;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceKind(instance, &kind));
-
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("TRITONBACKEND_ModelInstanceInitialize: ") + name + " (" +
-       TRITONSERVER_InstanceGroupKindString(kind) + " device " +
-       std::to_string(device_id) + ")")
-          .c_str());
-
-  // The instance can access the corresponding model as well... here
-  // we get the model and from that get the model's state.
   TRITONBACKEND_Model* model;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, &model));
+  std::string model_name{};
+  uint64_t model_version{0};
+  bool is_trtmc{false};
+  std::string instance_name{};
+  int32_t device_id{0};
+  TRITONSERVER_InstanceGroupKind kind;
 
-  void* vmodelstate;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodelstate));
-  plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vmodelstate);
+  // Get model info to determine if it is a PT2 model archive or not.
+  RETURN_IF_ERROR(GetModelInstanceInfo(
+      instance, &model, model_name, model_version, is_trtmc, instance_name,
+      device_id, kind));
 
-  // Utilizing DeviceMemoryTracker behavior that function calls with
-  // 'nullptr' for usage will be no-ops.
-  std::unique_ptr<DeviceMemoryTracker::MemoryUsage> lusage;
-  if (plan::BackendConfiguration::RetrieveFrom(instance).enable_memory_tracker_) {
-    lusage.reset(new DeviceMemoryTracker::MemoryUsage());
-    DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
-  }
+  TRITON_LOG_INFO(
+      "TRITONBACKEND_ModelInstanceInitialize: "
+      << instance_name << " (" << TRITONSERVER_InstanceGroupKindString(kind)
+      << " device " << std::to_string(device_id) << ")");
 
+  void* vmodel;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodel));
 
-  // With each instance we create a ModelInstanceState object and
-  // associate it with the TRITONBACKEND_ModelInstance.
-  plan::ModelInstanceState* instance_state;
-  RETURN_IF_ERROR(
-      plan::ModelInstanceState::Create(model_state, instance, &instance_state));
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
-      instance, reinterpret_cast<void*>(instance_state)));
+  if (is_trtmc) {
+    /* TensorRT Model Connect (TRT Model Container / bundle) */
+  } else {
+    /* TensorRT Plan File (default / legacy) */
 
-  if (lusage) {
-    DeviceMemoryTracker::UntrackThreadMemoryUsage(lusage.get());
-    TRITONSERVER_BufferAttributes** ba_array;
-    uint32_t ba_len = 0;
-    RETURN_IF_ERROR(lusage->SerializeToBufferAttributes(&ba_array, &ba_len));
-    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceReportMemoryUsage(
-        instance, ba_array, ba_len));
+    plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vmodel);
+
+    // Utilizing DeviceMemoryTracker behavior that function calls with
+    // 'nullptr' for usage will be no-ops.
+    std::unique_ptr<DeviceMemoryTracker::MemoryUsage> devmem_tracker;
+    if (BackendConfiguration::RetrieveFrom(instance).enable_memory_tracker_) {
+      devmem_tracker.reset(new DeviceMemoryTracker::MemoryUsage());
+      DeviceMemoryTracker::TrackThreadMemoryUsage(devmem_tracker.get());
+    }
+
+    // With each instance we create a ModelInstanceState object and
+    // associate it with the TRITONBACKEND_ModelInstance.
+    plan::ModelInstanceState* instance_state;
+    RETURN_IF_ERROR(plan::ModelInstanceState::Create(
+        model_state, instance, &instance_state));
+    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
+        instance, reinterpret_cast<void*>(instance_state)));
+
+    if (devmem_tracker) {
+      DeviceMemoryTracker::UntrackThreadMemoryUsage(devmem_tracker.get());
+      TRITONSERVER_BufferAttributes** ba_array;
+      uint32_t ba_len = 0;
+      RETURN_IF_ERROR(
+          devmem_tracker->SerializeToBufferAttributes(&ba_array, &ba_len));
+      RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceReportMemoryUsage(
+          instance, ba_array, ba_len));
+    }
   }
 
   return nullptr;  // success
@@ -345,16 +512,39 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
 {
+  TRITONBACKEND_Model* model;
+  std::string model_name{};
+  uint64_t model_version{0};
+  bool is_trtmc{false};
+  std::string instance_name{};
+  int32_t device_id{0};
+  TRITONSERVER_InstanceGroupKind kind;
+
+  // Get model info to determine if it is a PT2 model archive or not.
+  RETURN_IF_ERROR(GetModelInstanceInfo(
+      instance, &model, model_name, model_version, is_trtmc, instance_name,
+      device_id, kind));
+
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
-  plan::ModelInstanceState* instance_state =
-      reinterpret_cast<plan::ModelInstanceState*>(vstate);
+
+  if (is_trtmc) {
+    /* TensorRT Model Connect (TRT Model Container / bundle) */
+  } else {
+    /* TensorRT Plan File (default / legacy) */
+    plan::ModelInstanceState* instance_state =
+        reinterpret_cast<plan::ModelInstanceState*>(vstate);
+
+    delete instance_state;
+  }
 
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      "TRITONBACKEND_ModelInstanceFinalize: delete instance state");
-
-  delete instance_state;
+      TOSTRING(
+          "TRITONBACKEND_ModelInstanceFinalize: model instance state for model "
+          "\""
+          << model_name << "\" version " << model_version << " deleted.")
+          .c_str());
 
   return nullptr;  // success
 }
@@ -387,12 +577,9 @@ TRITONBACKEND_ModelInstanceExecute(
   auto curr_instance = instance_semaphore.first;
   auto semaphore = instance_semaphore.second;
 
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_VERBOSE,
-      (std::string("model ") + model_state->Name() + ", instance " +
-       curr_instance->Name() + ", executing " + std::to_string(request_count) +
-       " requests")
-          .c_str());
+  TRITON_LOG_VERBOSE(
+      "model " << model_state->Name() << ", instance " << curr_instance->Name()
+               << ", executing " << request_count << " requests");
 
   // At this point we accept ownership of 'requests', which means that
   // even if something goes wrong we must still return success from
@@ -413,7 +600,5 @@ TRITONBACKEND_ModelInstanceExecute(
 
   return nullptr;  // success
 }
-
-}  // extern "C"
 
 }  // namespace triton::backend::tensorrt
