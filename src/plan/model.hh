@@ -29,7 +29,7 @@
 
 #include "triton/backend/backend_model.h"
 
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt::plan {
 
 class TensorRTModel : public BackendModel {
  public:
@@ -80,4 +80,4 @@ class TensorRTModel : public BackendModel {
   bool md_per_rank_engines_{false};
 };
 
-}}}  // namespace triton::backend::tensorrt
+}  // namespace triton::backend::tensorrt::plan

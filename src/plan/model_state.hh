@@ -28,12 +28,12 @@
 
 #include <NvInfer.h>
 
-#include "logging.h"
-#include "tensorrt_model.h"
-#include "tensorrt_model_instance.h"
+#include "model.hh"
+#include "model_instance.hh"
 #include "triton_semaphore.h"
+#include "../logging.h"
 
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt::plan {
 
 class ModelInstanceState;
 // Helper class to determine the ModelInstanceState to be used for current
@@ -155,4 +155,4 @@ class ModelState : public TensorRTModel {
 };
 
 
-}}}  // namespace triton::backend::tensorrt
+}

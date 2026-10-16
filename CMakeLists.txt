@@ -121,12 +121,6 @@ endif() # TRITON_ENABLE_NVTX
 add_library(
   triton-tensorrt-backend SHARED
   src/tensorrt.cc
-  src/model_state.cc
-  src/tensorrt_model.cc
-  src/tensorrt_model.h
-  src/instance_state.cc
-  src/tensorrt_model_instance.cc
-  src/tensorrt_model_instance.h
   src/shape_tensor.cc
   src/shape_tensor.h
   src/tensorrt_utils.cc
@@ -136,14 +130,20 @@ add_library(
   src/triton_semaphore.h
   src/shared_library.h
   src/shared_library.cc
-  src/loader.cc
-  src/loader.h
   src/logging.cc
   src/logging.h
   src/output_allocator.cc
   src/output_allocator.h
   src/io_binding_info.cc
   src/io_binding_info.h
+  src/plan/instance_state.cc
+  src/plan/loader.cc
+  src/plan/loader.hh
+  src/plan/model.cc
+  src/plan/model.hh
+  src/plan/model_instance.cc
+  src/plan/model_instance.hh
+  src/plan/model_state.cc
 )
 # Shared library implementing the Triton Backend API
 configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)

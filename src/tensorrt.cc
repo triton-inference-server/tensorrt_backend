@@ -1,4 +1,4 @@
-// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -36,9 +36,9 @@
 #include <thread>
 #include <unordered_map>
 
-#include "instance_state.h"
+#include "plan/instance_state.hh"
+#include "plan/model_state.hh"
 #include "logging.h"
-#include "model_state.h"
 #include "shared_library.h"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/device_memory_tracker.h"
@@ -46,7 +46,7 @@
 //
 // TensorRT Backend that implements the TRITONBACKEND API.
 //
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt {
 
 /////////////
 
@@ -114,7 +114,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   // Default execution policy, may be overridden by backend config
   auto execution_policy = TRITONBACKEND_EXECUTION_DEVICE_BLOCKING;
 
-  std::unique_ptr<BackendConfiguration> lconfig(new BackendConfiguration());
+  std::unique_ptr<plan::BackendConfiguration> lconfig(new plan::BackendConfiguration());
   // Check if device memory tracker is explicitly enabled
   if (DeviceMemoryTracker::EnableFromBackendConfig(backend_config)) {
     lconfig->enable_memory_tracker_ = DeviceMemoryTracker::Init();
@@ -170,7 +170,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       RETURN_IF_ERROR(value.AsString(&value_str));
       RETURN_IF_ERROR(ParseBoolValue(value_str, &is_version_compatible));
       if (is_version_compatible) {
-        ModelState::EnableVersionCompatibility();
+        plan::ModelState::EnableVersionCompatibility();
       }
     }
   }
@@ -205,13 +205,13 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 TRITONBACKEND_ISPEC TRITONSERVER_Error*
 TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
-  if (BackendConfiguration::RetrieveFrom(backend).enable_memory_tracker_) {
+  if (plan::BackendConfiguration::RetrieveFrom(backend).enable_memory_tracker_) {
     DeviceMemoryTracker::Fini();
   }
 
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-  delete reinterpret_cast<BackendConfiguration*>(vstate);
+  delete reinterpret_cast<plan::BackendConfiguration*>(vstate);
   return nullptr;  // success
 }
 
@@ -237,15 +237,15 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
   // Utilizing DeviceMemoryTracker behavior that function calls with
   // 'nullptr' for usage will be no-ops.
   std::unique_ptr<DeviceMemoryTracker::MemoryUsage> lusage;
-  if (BackendConfiguration::RetrieveFrom(model).enable_memory_tracker_) {
+  if (plan::BackendConfiguration::RetrieveFrom(model).enable_memory_tracker_) {
     lusage.reset(new DeviceMemoryTracker::MemoryUsage());
     DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
   }
 
   // With each model we create a ModelState object and associate it
   // with the TRITONBACKEND_Model.
-  ModelState* model_state = nullptr;
-  RETURN_IF_ERROR(ModelState::Create(model, &model_state));
+  plan::ModelState* model_state = nullptr;
+  RETURN_IF_ERROR(plan::ModelState::Create(model, &model_state));
   RETURN_IF_ERROR(
       TRITONBACKEND_ModelSetState(model, reinterpret_cast<void*>(model_state)));
 
@@ -269,7 +269,7 @@ TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
 {
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vstate));
-  ModelState* model_state = reinterpret_cast<ModelState*>(vstate);
+  plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vstate);
 
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO, "TRITONBACKEND_ModelFinalize: delete model state");
@@ -308,12 +308,12 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 
   void* vmodelstate;
   RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodelstate));
-  ModelState* model_state = reinterpret_cast<ModelState*>(vmodelstate);
+  plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vmodelstate);
 
   // Utilizing DeviceMemoryTracker behavior that function calls with
   // 'nullptr' for usage will be no-ops.
   std::unique_ptr<DeviceMemoryTracker::MemoryUsage> lusage;
-  if (BackendConfiguration::RetrieveFrom(instance).enable_memory_tracker_) {
+  if (plan::BackendConfiguration::RetrieveFrom(instance).enable_memory_tracker_) {
     lusage.reset(new DeviceMemoryTracker::MemoryUsage());
     DeviceMemoryTracker::TrackThreadMemoryUsage(lusage.get());
   }
@@ -321,9 +321,9 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 
   // With each instance we create a ModelInstanceState object and
   // associate it with the TRITONBACKEND_ModelInstance.
-  ModelInstanceState* instance_state;
+  plan::ModelInstanceState* instance_state;
   RETURN_IF_ERROR(
-      ModelInstanceState::Create(model_state, instance, &instance_state));
+      plan::ModelInstanceState::Create(model_state, instance, &instance_state));
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
       instance, reinterpret_cast<void*>(instance_state)));
 
@@ -347,8 +347,8 @@ TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
 {
   void* vstate;
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
-  ModelInstanceState* instance_state =
-      reinterpret_cast<ModelInstanceState*>(vstate);
+  plan::ModelInstanceState* instance_state =
+      reinterpret_cast<plan::ModelInstanceState*>(vstate);
 
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
@@ -372,10 +372,10 @@ TRITONBACKEND_ModelInstanceExecute(
   // 'instance' objects). Suggested practice for this is to use only
   // function-local and model-instance-specific state (obtained from
   // 'instance'), which is what we do here.
-  ModelInstanceState* instance_state;
+  plan::ModelInstanceState* instance_state;
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(
       instance, reinterpret_cast<void**>(&instance_state)));
-  ModelState* model_state = instance_state->StateForModel();
+  plan::ModelState* model_state = instance_state->StateForModel();
 
   // For TensorRT backend, the executing instance may not closely tie to
   // TRITONBACKEND_ModelInstance, the instance will be assigned based on
@@ -415,4 +415,5 @@ TRITONBACKEND_ModelInstanceExecute(
 }
 
 }  // extern "C"
-}}}  // namespace triton::backend::tensorrt
+
+}  // namespace triton::backend::tensorrt

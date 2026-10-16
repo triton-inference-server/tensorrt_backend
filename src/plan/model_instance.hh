@@ -1,4 +1,4 @@
-// Copyright 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -25,36 +25,29 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
-#include <NvInfer.h>
+#include <set>
 
-#include <memory>
-#include <string>
-#include <vector>
+#include "model.hh"
+#include "triton/backend/backend_model_instance.h"
 
-#include "logging.h"
-#include "model_state.h"
-#include "triton/core/tritonserver.h"
+namespace triton::backend::tensorrt::plan {
 
-namespace triton { namespace backend { namespace tensorrt {
+class TensorRTModelInstance : public BackendModelInstance {
+ public:
+  TensorRTModelInstance(
+      TensorRTModel* tensorrt_model,
+      TRITONBACKEND_ModelInstance* triton_model_instance);
+  virtual ~TensorRTModelInstance() = default;
 
-/// Load a TensorRT plan from a serialized plan file and return the
-/// corresponding runtime and engine. It is the caller's
-/// responsibility to destroy any returned runtime or engine object
-/// even if an error is returned.
-///
-/// \param plan_path The path to the model plan file.
-/// \param dla_core_id The DLA core to use for this runtime. Does not
-/// use DLA when set to -1.
-/// \param tensorrt_logger The logger to be used by this TensorRT plan.
-/// \param runtime Returns the IRuntime object, or nullptr if failed
-/// to create.
-/// \param engine Returns the ICudaEngine object, or nullptr if failed
-/// to create.
-/// \return Error status.
-TRITONSERVER_Error* LoadPlan(
-    const std::string& plan_path, const int64_t dla_core_id,
-    std::shared_ptr<nvinfer1::IRuntime>* runtime,
-    std::shared_ptr<nvinfer1::ICudaEngine>* engine,
-    TensorRTLogger* tensorrt_logger);
+  void Initialize();
+  TensorRTModel* Model() { return tensorrt_model_; }
+  std::set<std::string>& ProfileNames() { return profile_names_; }
+  int64_t DLACoreId() { return dla_core_id_; }
 
-}}}  // namespace triton::backend::tensorrt
+ protected:
+  TensorRTModel* tensorrt_model_;
+  std::set<std::string> profile_names_;
+  int64_t dla_core_id_;
+};
+
+}

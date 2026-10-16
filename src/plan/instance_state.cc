@@ -24,9 +24,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "instance_state.h"
-
-#include "tensorrt_utils.h"
+#include "instance_state.hh"
+#include "../tensorrt_utils.h"
 #include "triton/common/nvtx.h"
 
 #ifdef TRITON_ENABLE_TRT_MULTI_DEVICE
@@ -37,7 +36,7 @@
 #include <thread>
 #endif  // TRITON_ENABLE_TRT_MULTI_DEVICE
 
-namespace triton { namespace backend { namespace tensorrt {
+namespace triton::backend::tensorrt::plan {
 
 namespace {
 
@@ -4362,4 +4361,4 @@ TRTv3Interface::SetBindingDimensions(
 
   return nullptr;
 }
-}}}  // namespace triton::backend::tensorrt
+}
