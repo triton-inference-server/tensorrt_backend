@@ -26,6 +26,27 @@
 
 #pragma once
 
-namespace triton::backend::tensorrt::model_connect {
+#include "model_state.hh"
+#include "triton/backend/backend_model_instance.h"
 
+namespace triton::backend::tensorrt::model_connect
+{
+  class InstanceState
+    : public triton::backend::BackendModelInstance
+  {
+    protected:
+
+      ModelState* model_{nullptr};
+
+    public:
+
+      InstanceState(
+          ModelState* model,
+          TRITONBACKEND_ModelInstance* triton_model_instance);
+
+      virtual ~InstanceState();
+
+      ModelState*
+      GetModelState() const;
+  };
 }
