@@ -26,6 +26,23 @@
 
 #pragma once
 
-namespace triton::backend::tensorrt::model_connect {
+namespace triton::backend::tensorrt::model_connect
+{
+  class Global
+  {
+    private:
 
+      static inline bool is_version_compatible_{false};
+
+    public:
+
+      static void
+      EnableVersionCompatibility();
+
+      static void
+      DisableVersionCompatibility();
+
+      static bool
+      GetVersionCompatibilityEnabled();
+  };
 }

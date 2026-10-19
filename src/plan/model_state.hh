@@ -30,8 +30,8 @@
 
 #include "model.hh"
 #include "model_instance.hh"
-#include "triton_semaphore.h"
 #include "../logging.h"
+#include "../triton_semaphore.h"
 
 namespace triton::backend::tensorrt::plan {
 
