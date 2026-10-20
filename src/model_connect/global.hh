@@ -36,13 +36,11 @@ namespace triton::backend::tensorrt::model_connect
 
     public:
 
-      static void
-      EnableVersionCompatibility();
-
-      static void
-      DisableVersionCompatibility();
-
       static bool
       GetVersionCompatibilityEnabled();
+
+      static void
+      SetVersionCompatibility(
+          bool enabled);
   };
 }
