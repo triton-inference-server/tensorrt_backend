@@ -54,23 +54,23 @@ namespace {
 // the view to text->run. text_generation copies it to the std::string that
 // generate() requires.
 void
-TextView(const NamedTensor& tensor, trtmc_string_view* text)
+TextView(const NamedTensor& tensor, trtmc_string_view& text)
 {
   const char* bytes = reinterpret_cast<const char*>(tensor.bytes.data());
   if (tensor.bytes.size() < sizeof(uint32_t)) {
-    text->data = nullptr;
-    text->size = 0;
+    text.data = nullptr;
+    text.size = 0;
     return;
   }
   const uint32_t length = *reinterpret_cast<const uint32_t*>(bytes);
-  text->data = bytes + sizeof(uint32_t);
-  text->size = length;
+  text.data = bytes + sizeof(uint32_t);
+  text.size = length;
 }
 
 // Borrowed host int32 ids. text->run reads them before it returns.
 // The caller has already selected an INT32 input.
 TRITONSERVER_Error*
-TokenView(const NamedTensor& tensor, trtmc_i32_view* tokens)
+TokenView(const NamedTensor& tensor, trtmc_i32_view& tokens)
 {
   if (tensor.shape.size() != 1) {
     return TRITONSERVER_ErrorNew(
@@ -78,10 +78,10 @@ TokenView(const NamedTensor& tensor, trtmc_i32_view* tokens)
         "text continuation input must be one rank-1 token-id sequence");
   }
   const uint64_t count = static_cast<uint64_t>(tensor.shape[0]);
-  tokens->data = count == 0
-                     ? nullptr
-                     : reinterpret_cast<const int32_t*>(tensor.bytes.data());
-  tokens->size = count;
+  tokens.data = count == 0
+                    ? nullptr
+                    : reinterpret_cast<const int32_t*>(tensor.bytes.data());
+  tokens.size = count;
   return nullptr;
 }
 
@@ -431,9 +431,9 @@ ModelInstanceState::LoadAPI()
       std::string("failed to set model_connect CUDA device"));
 
   const trtmc_core_api_v1* trtmc = nullptr;
-  const trtmc_status api_status =
+  trtmc_status status =
       trtmc_get_api(TRTMC_API_VERSION_MAJOR, TRTMC_API_VERSION_MINOR, &trtmc);
-  if (api_status != TRTMC_OK || trtmc == nullptr) {
+  if (status != TRTMC_OK || trtmc == nullptr) {
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_UNSUPPORTED,
         "trtmc_get_api(" TRTMC_API_STR(TRTMC_API_VERSION_MAJOR) ", "
@@ -493,21 +493,18 @@ ModelInstanceState::LoadAPI()
       trtmc_error* error = nullptr;
       const std::string& bundle_path = model_state_->BundlePath();
       const trtmc_string_view bundle{bundle_path.data(), bundle_path.size()};
-      RETURN_IF_ERROR(TrtmcStatusError(
-          trtmc,
-          trtmc->model_load(bundle, nullptr, &trtmc_model->model, &error),
-          error));
+      // Read the SDK error after the call returns.
+      status = trtmc->model_load(bundle, nullptr, &trtmc_model->model, &error);
+      RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
 
       const trtmc_string_view task{
           TRTMC_TASK_TEXT_CONTINUATION,
           sizeof(TRTMC_TASK_TEXT_CONTINUATION) - 1};
       const trtmc_api_header* api = nullptr;
-      RETURN_IF_ERROR(TrtmcStatusError(
-          trtmc,
-          trtmc->model_get_task_api(
-              trtmc_model->model, task, TRTMC_API_VERSION_MAJOR,
-              TRTMC_API_VERSION_MINOR, &api, &error),
-          error));
+      status = trtmc->model_get_task_api(
+          trtmc_model->model, task, TRTMC_API_VERSION_MAJOR,
+          TRTMC_API_VERSION_MINOR, &api, &error);
+      RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
       if (api == nullptr || api->major != TRTMC_API_VERSION_MAJOR ||
           api->minor != TRTMC_API_VERSION_MINOR ||
           api->byte_size < sizeof(trtmc_text_continuation_api_v1)) {
@@ -643,7 +640,7 @@ RunTextTask(
           TRITONSERVER_ERROR_INVALID_ARG, "text input must be TYPE_STRING");
     }
     trtmc_string_view prompt_view{};
-    TextView(inputs[0], &prompt_view);
+    TextView(inputs[0], prompt_view);
     // generate() takes an owning std::string.
     const std::string prompt =
         prompt_view.size == 0
@@ -666,10 +663,10 @@ RunTextTask(
     trtmc_text_continuation_request_v1 text_request{};
     if (inputs[0].datatype == TRITONSERVER_TYPE_INT32) {
       text_request.prefix.kind = TRTMC_TEXT_TOKEN_IDS;
-      RETURN_IF_ERROR(TokenView(inputs[0], &text_request.prefix.as.token_ids));
+      RETURN_IF_ERROR(TokenView(inputs[0], text_request.prefix.as.token_ids));
     } else if (inputs[0].datatype == TRITONSERVER_TYPE_BYTES) {
       text_request.prefix.kind = TRTMC_TEXT_UTF8;
-      TextView(inputs[0], &text_request.prefix.as.text);
+      TextView(inputs[0], text_request.prefix.as.text);
     } else {
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG, "text input must be TYPE_STRING");
@@ -677,7 +674,7 @@ RunTextTask(
 
     trtmc_result* raw = nullptr;
     trtmc_error* error = nullptr;
-    const trtmc_status run_status =
+    trtmc_status status =
         text->run(model, &text_request, nullptr, &raw, &error);
     // Releases the C result after RunRequest writes the response.
     std::shared_ptr<void> keep(raw, [trtmc](void* result) {
@@ -685,14 +682,15 @@ RunTextTask(
         trtmc->result_release(static_cast<trtmc_result*>(result));
       }
     });
-    RETURN_IF_ERROR(TrtmcStatusError(trtmc, run_status, error));
+    RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
 
     trtmc_text_result_view_v1 view{};
-    RETURN_IF_ERROR(
-        TrtmcStatusError(trtmc, text->result_view(raw, &view, &error), error));
+    // Read the SDK error after the call returns.
+    status = text->result_view(raw, &view, &error);
+    RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
     return AppendTextOutput(
-        model_state, view.text, view.token_ids.data, view.token_ids.size,
-        std::move(keep), outputs);
+        model_state, view.text, view.token_ids.data, view.token_ids.size, keep,
+        outputs);
   }
 }
 
