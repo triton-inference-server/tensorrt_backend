@@ -40,6 +40,8 @@
 
 #include "backend_configuration.hh"
 #include "logging.h"
+#include "model_connect/instance_state.hh"
+#include "model_connect/model_state.hh"
 #include "plan/instance_state.hh"
 #include "plan/model_state.hh"
 #include "shared_library.h"
@@ -369,7 +371,14 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
       GetModelInfo(model, model_name, model_version, artifact_type, is_trtmc));
 
   if (is_trtmc) {
-    /* TensorRT Model Connect (TRT Model Container / bundle) */
+    model_connect::ModelState* model_state = nullptr;
+    RETURN_IF_ERROR(model_connect::ModelState::Create(model, &model_state));
+    TRITONSERVER_Error* set_state_err = TRITONBACKEND_ModelSetState(
+        model, reinterpret_cast<void*>(model_state));
+    if (set_state_err != nullptr) {
+      delete model_state;
+      return set_state_err;
+    }
   } else {
     /* TensorRT Plan File (default / legacy) */
 
@@ -424,11 +433,15 @@ TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
   RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodel));
 
   if (is_trtmc) {
-    /* TensorRT Model Connect (TRT Model Container / bundle) */
+    delete reinterpret_cast<model_connect::ModelState*>(vmodel);
   } else {
     /* TensorRT Plan File (default / legacy) */
-    plan::ModelState* model_state = reinterpret_cast<plan::ModelState*>(vmodel);
-    delete model_state;
+    delete reinterpret_cast<plan::ModelState*>(vmodel);
+  }
+
+  {
+    std::lock_guard lock{model_is_trtmc_map_mutex};
+    model_is_trtmc_map.erase(static_cast<void*>(model));
   }
 
   LOG_MESSAGE(
@@ -470,7 +483,21 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodel));
 
   if (is_trtmc) {
-    /* TensorRT Model Connect (TRT Model Container / bundle) */
+    auto* model_state = reinterpret_cast<model_connect::ModelState*>(vmodel);
+    if (model_state == nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          "model_connect model state is not initialized");
+    }
+    model_connect::ModelInstanceState* instance_state = nullptr;
+    RETURN_IF_ERROR(model_connect::ModelInstanceState::Create(
+        model_state, instance, &instance_state));
+    TRITONSERVER_Error* set_state_err = TRITONBACKEND_ModelInstanceSetState(
+        instance, reinterpret_cast<void*>(instance_state));
+    if (set_state_err != nullptr) {
+      delete instance_state;
+      return set_state_err;
+    }
   } else {
     /* TensorRT Plan File (default / legacy) */
 
@@ -529,13 +556,10 @@ TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
 
   if (is_trtmc) {
-    /* TensorRT Model Connect (TRT Model Container / bundle) */
+    delete reinterpret_cast<model_connect::ModelInstanceState*>(vstate);
   } else {
     /* TensorRT Plan File (default / legacy) */
-    plan::ModelInstanceState* instance_state =
-        reinterpret_cast<plan::ModelInstanceState*>(vstate);
-
-    delete instance_state;
+    delete reinterpret_cast<plan::ModelInstanceState*>(vstate);
   }
 
   LOG_MESSAGE(
@@ -562,6 +586,32 @@ TRITONBACKEND_ModelInstanceExecute(
   // 'instance' objects). Suggested practice for this is to use only
   // function-local and model-instance-specific state (obtained from
   // 'instance'), which is what we do here.
+  TRITONBACKEND_Model* parent_model = nullptr;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, &parent_model));
+  bool is_trtmc = false;
+  {
+    std::lock_guard lock{model_is_trtmc_map_mutex};
+    const auto found =
+        model_is_trtmc_map.find(static_cast<void*>(parent_model));
+    if (found != model_is_trtmc_map.end()) {
+      is_trtmc = found->second;
+    }
+  }
+  if (is_trtmc) {
+    model_connect::ModelInstanceState* instance_state = nullptr;
+    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(
+        instance, reinterpret_cast<void**>(&instance_state)));
+    if (instance_state == nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          "model_connect instance is not initialized");
+    }
+    // Each request is one text_continuation call. Ownership of 'requests'
+    // stays with ProcessRequests, which responds to every request.
+    instance_state->ProcessRequests(requests, request_count);
+    return nullptr;
+  }
+
   plan::ModelInstanceState* instance_state;
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(
       instance, reinterpret_cast<void**>(&instance_state)));

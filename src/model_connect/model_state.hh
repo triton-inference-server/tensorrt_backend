@@ -26,212 +26,56 @@
 
 #pragma once
 
-#include "instance_state.hh"
-#include "../logging.h"
-#include "../triton_semaphore.h"
-#include "triton/backend/backend_model.h"
-
-#include <NvInfer.h>
-#include <map>
+#include <cstdint>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
-namespace triton::backend::tensorrt::model_connect
-{
-  class ModelState
-    : public triton::backend::BackendModel
-  {
-    public:
+#include "triton/backend/backend_model.h"
 
-      enum class Priority
-      {
-        /// @brief Default value.
-        unspecified = 0,
-        /// @brief Minimum priority.
-        minimum = 1,
-        /// @brief Maximum priority.
-        maximum = 2,
-      };
+namespace triton::backend::tensorrt::model_connect {
 
-    protected:
+// One named tensor. The model configuration records the name and data type.
+// TYPE_STRING is stored as TYPE_BYTES. A request copy records the shape and
+// host bytes. A text result may instead borrow external, which external_keep
+// owns: for TYPE_BYTES that is the string and external_size is its character
+// count, and for a numeric type external_size is the byte count.
+struct NamedTensor {
+  std::string name;
+  TRITONSERVER_DataType datatype{TRITONSERVER_TYPE_INVALID};
+  std::vector<int64_t> shape;
+  std::vector<uint8_t> bytes;
+  const void* external{nullptr};
+  uint64_t external_size{0};
+  std::shared_ptr<void> external_keep;
+};
 
-      nvinfer1::ExecutionContextAllocationStrategy alloc_strategy_;
-      bool cuda_graphs_enabled_{false};
-      std::map<std::pair<int, int64_t>,
-               std::pair<std::shared_ptr<nvinfer1::IRuntime>,
-                         std::shared_ptr<nvinfer1::ICudaEngine>>> device_engines_;
-      bool busy_wait_events_enabled_{false};
-      bool eager_batching_enabled_{false};
-      bool engine_sharing_enabled_{false};
-      size_t gather_kernel_buffer_threshold_{0};
-      common::TritonJson::Value graph_specs_;
-      TensorRTLogger logger_;
-      bool multidevice_enabled_{false};
-      std::vector<int> multidevice_ids_{};
-      bool multidevice_per_rank_engines_{false};
-      Priority priority_{Priority::unspecified};
-      bool separate_output_stream_enabled_{false};
+// A TensorRT Model Connect bundle. The bundle header records the family and
+// the task. The task selects the implementation. Inputs and outputs are the
+// tensors named in the model configuration. Requests are not combined.
+class ModelState : public BackendModel {
+ public:
+  static TRITONSERVER_Error* Create(
+      TRITONBACKEND_Model* triton_model, ModelState** state);
 
-    public:
+  const std::string& BundlePath() const { return bundle_path_; }
+  const std::string& BundleTask() const { return bundle_task_; }
+  const std::string& BundleFamily() const { return bundle_family_; }
+  const std::vector<NamedTensor>& Inputs() const { return inputs_; }
+  const std::vector<NamedTensor>& Outputs() const { return outputs_; }
 
-      ModelState(
-          TRITONBACKEND_Model* triton_model);
+ private:
+  explicit ModelState(TRITONBACKEND_Model* triton_model);
 
-      virtual ~ModelState();
+  // Read the bundle header and record the configured tensors.
+  TRITONSERVER_Error* ValidateModelConfig();
+  TRITONSERVER_Error* ValidateTensors();
 
-      TRITONSERVER_Error*
-      CreateEngine(
-          int gpu_device,
-          int64_t dla_core_id,
-          const std::string& model_path,
-          std::shared_ptr<nvinfer1::ICudaEngine>* engine);
+  std::string bundle_path_;
+  std::string bundle_task_;
+  std::string bundle_family_;
+  std::vector<NamedTensor> inputs_;
+  std::vector<NamedTensor> outputs_;
+};
 
-      bool
-      GetBusyWaitEventsEnabled() const;
-
-      bool
-      GetCudaGraphsEnabled() const;
-
-      bool
-      GetEagerBatchingEnabled() const;
-
-      bool
-      GetEngineSharingEnabled() const;
-
-      std::pair<InstanceState*, Semaphore*>
-      GetExecutionState(
-          int device_id,
-          InstanceState* instance);
-
-      nvinfer1::ExecutionContextAllocationStrategy
-      GetExecutionContextAllocationStrategy() const;
-
-      size_t
-      GetGatherKernelBufferThreshold() const;
-
-      common::TritonJson::Value&
-      GetGraphSpecs();
-
-      int
-      GetCudaStreamPriority() const;
-
-      Priority
-      GetPriority() const;
-
-      bool
-      GetMultideviceEnabled() const;
-
-      const std::vector<int>&
-      GetMultideviceIds() const;
-
-      bool
-      GetMultidevicePerRankEngines() const;
-
-      bool
-      GetSeparateOutputStreamEnabled() const;
-
-      TensorRTLogger&
-      GetTensorRTLogger() const;
-
-      TRITONSERVER_Error*
-      ParseModelConfig();
-
-      void
-      SetBusyWaitEventsEnabled(
-          bool enabled);
-
-      void
-      SetCudaGraphsEnabled(
-          bool enabled);
-
-      void
-      SetEagerBatchingEnabled(
-          bool enabled);
-
-      void
-      SetEngineSharingEnabled(
-          bool enabled);
-
-      void
-      SetMultidevice(
-          bool enabled,
-          const std::vector<int>& device_ids,
-          bool per_rank_engines);
-      void
-      SetSeparateOutputStreamEnabled(
-          bool enabled);
-
-      TRITONSERVER_Error*
-      SetTensorRTModelConfig();
-
-    private:
-
-      TRITONSERVER_Error*
-      AutoCompleteConfig();
-
-      TRITONSERVER_Error*
-      AutoCompleteConfigHelper(
-          const std::string& model_path);
-
-      TRITONSERVER_Error*
-      ExtractBatchHintFromIOConfig(
-          nvinfer1::ICudaEngine* engine,
-          const std::string& tensor_name,
-          const common::TritonJson::Value& dims,
-          bool* config_batch_hint);
-
-      TRITONSERVER_Error* FixIO(
-          nvinfer1::ICudaEngine* engine,
-          triton::common::TritonJson::Value& reference_ios,
-          triton::common::TritonJson::Value* mutable_ios);
-
-      TRITONSERVER_Error*
-      GetMaxSupportedBatchSize(
-          nvinfer1::ICudaEngine* engine,
-          int num_profiles,
-          int* max_batch_size);
-
-      TRITONSERVER_Error*
-      GetProfileIndices(
-          const int num_profiles,
-          std::set<int>* profile_indices);
-
-      TRITONSERVER_Error*
-      GetProfileMaxBatchSize(
-          nvinfer1::ICudaEngine* engine,
-          int profile_index,
-          int* max_batch_size);
-
-      TRITONSERVER_Error*
-      GetRefIO(
-          bool is_input,
-          nvinfer1::ICudaEngine* engine,
-          triton::common::TritonJson::Value* ref_io);
-
-      TRITONSERVER_Error* InitIODims(
-          nvinfer1::ICudaEngine* engine,
-          nvinfer1::Dims& dims,
-          bool is_shape_tensor,
-          triton::common::TritonJson::Value* io);
-
-      TRITONSERVER_Error*
-      InstanceHasKindGPU(
-          bool* has_instance_kind_gpu);
-
-      // Validate that model configuration is supported by this backend.
-      TRITONSERVER_Error*
-      ValidateModelConfig();
-
-      // Parses the parameters in config
-      TRITONSERVER_Error*
-      ParseParameters();
-
-      // Parses TensorRT Multi-Device (MD) parameters from the 'parameters' config
-      // block (TRT-28040): 'enable_multi_device' and 'multi_device_gpus'.
-      TRITONSERVER_Error*
-      ParseMultiDeviceParameters(
-          common::TritonJson::Value& params);
-  };
-}
+}  // namespace triton::backend::tensorrt::model_connect
