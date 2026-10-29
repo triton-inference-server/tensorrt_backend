@@ -122,28 +122,19 @@ add_library(
   triton-tensorrt-backend SHARED
   src/tensorrt.cc
   src/shape_tensor.cc
-  src/shape_tensor.h
   src/tensorrt_utils.cc
-  src/tensorrt_utils.h
-  src/triton_filesystem.h
   src/triton_filesystem.cc
-  src/triton_semaphore.h
-  src/shared_library.h
   src/shared_library.cc
   src/logging.cc
-  src/logging.h
   src/output_allocator.cc
-  src/output_allocator.h
   src/io_binding_info.cc
-  src/io_binding_info.h
   src/plan/instance_state.cc
   src/plan/loader.cc
-  src/plan/loader.hh
   src/plan/model.cc
-  src/plan/model.hh
   src/plan/model_instance.cc
-  src/plan/model_instance.hh
   src/plan/model_state.cc
+  src/model_connect/model_state.cc
+  src/model_connect/instance_state.cc
 )
 # Shared library implementing the Triton Backend API
 configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)
@@ -260,6 +251,34 @@ if(TRITON_ENABLE_TENSORRT_MULTI_DEVICE)
   target_include_directories(triton-tensorrt-backend PRIVATE ${NCCL_INCLUDE_DIR})
   target_link_libraries(triton-tensorrt-backend PRIVATE ${NCCL_LIBRARY})
 endif()
+
+# TensorRT Model Connect is part of every build. platform "model_connect" loads
+# a bundle and runs its header task: text_continuation through libtrtmc_c.so,
+# or text_generation and structured_ranking through libtrtmc_runtime.so. The
+# SDK is expected to already be installed, the same way libnvinfer is.
+find_path(TRTMC_INCLUDE_DIR NAMES trtmc/trtmc.h)
+find_path(TRTMC_RUNTIME_INCLUDE_DIR NAMES trtmc/runtime/family_loader.h)
+find_path(TRTMC_RANKING_INCLUDE_DIR NAMES trtmc/structured_ranking.h)
+find_library(TRTMC_C_LIBRARY NAMES trtmc_c)
+find_library(TRTMC_RUNTIME_LIBRARY NAMES trtmc_runtime)
+if(NOT TRTMC_INCLUDE_DIR OR
+   NOT TRTMC_RUNTIME_INCLUDE_DIR OR
+   NOT TRTMC_RANKING_INCLUDE_DIR OR
+   NOT TRTMC_C_LIBRARY OR
+   NOT TRTMC_RUNTIME_LIBRARY)
+  message(FATAL_ERROR
+    "TensorRT Model Connect SDK not found (trtmc/trtmc.h, "
+    "trtmc/runtime/family_loader.h, trtmc/structured_ranking.h, "
+    "libtrtmc_c.so, and libtrtmc_runtime.so).")
+endif()
+message(STATUS "TensorRT Model Connect: ${TRTMC_C_LIBRARY}")
+# Ranking headers come first so score() uses that tensor ABI.
+target_include_directories(triton-tensorrt-backend BEFORE PRIVATE
+  ${TRTMC_RANKING_INCLUDE_DIR}
+  ${TRTMC_RUNTIME_INCLUDE_DIR}
+  ${TRTMC_INCLUDE_DIR})
+target_link_libraries(triton-tensorrt-backend PRIVATE
+  ${TRTMC_C_LIBRARY} ${TRTMC_RUNTIME_LIBRARY})
 
 
 #
