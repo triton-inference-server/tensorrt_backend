@@ -28,15 +28,21 @@
 
 #include <cuda_runtime_api.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#include "model_connect/scoped_defer.hh"
 #include "model_connect/trtmc_utils.hh"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
@@ -327,12 +333,51 @@ RequestBatchSize(TRITONBACKEND_Request* request, const int max_batch_size)
 
 }  // namespace
 
-// One loaded bundle. The task implementation is inside `run`; this struct
-// has no member that belongs to a single task.
-struct ModelInstanceState::Sdk {
-  std::function<TRITONSERVER_Error*(
-      std::vector<NamedTensor>& inputs, std::vector<NamedTensor>* outputs)>
-      run;
+// One loaded bundle. A structured_ranking bundle keeps the task alive so
+// its metrics can be sampled on `publisher`.
+struct ModelInstanceState::Metrics {
+  struct TritonMetric {
+    TRITONSERVER_MetricFamily* family{nullptr};
+    TRITONSERVER_Metric* metric{nullptr};
+    std::function<double()> read;
+  };
+
+  std::shared_ptr<trtmc::ITask> task;
+  trtmc::IStructuredRanking* ranking{nullptr};
+  std::vector<TritonMetric> metrics;
+  std::atomic<bool> stop{false};
+  std::mutex wait_mu;
+  std::condition_variable cv;
+  std::thread publisher;
+
+  ~Metrics()
+  {
+    {
+      std::lock_guard<std::mutex> lock(wait_mu);
+      stop.store(true);
+    }
+    cv.notify_all();
+    if (publisher.joinable()) {
+      publisher.join();
+    }
+    ranking = nullptr;
+    for (TritonMetric& metric : metrics) {
+      if (metric.metric != nullptr) {
+        LOG_IF_ERROR(
+            TRITONSERVER_MetricDelete(metric.metric),
+            "failed to delete model_connect metric");
+        metric.metric = nullptr;
+      }
+    }
+    for (TritonMetric& metric : metrics) {
+      if (metric.family != nullptr) {
+        LOG_IF_ERROR(
+            TRITONSERVER_MetricFamilyDelete(metric.family),
+            "failed to delete model_connect metric family");
+        metric.family = nullptr;
+      }
+    }
+  }
 };
 
 struct TrtmcModel {
@@ -445,7 +490,7 @@ ModelInstanceState::LoadAPI()
 
   const std::string& bundle_task = model_state_->BundleTask();
   const std::string& family = model_state_->BundleFamily();
-  auto sdk = std::make_unique<Sdk>();
+  auto metrics = std::make_unique<Metrics>();
   switch (TaskKindFor(bundle_task)) {
     case TaskKind::kStructuredRanking: {
       // score() takes the numeric host tensors.
@@ -460,7 +505,9 @@ ModelInstanceState::LoadAPI()
             TRITONSERVER_ERROR_UNSUPPORTED,
             "bundle task structured_ranking did not load IStructuredRanking");
       }
-      sdk->run = [trtmc_task, ranking](
+      metrics->task = trtmc_task;
+      metrics->ranking = ranking;
+      exec_fn_ = [trtmc_task, ranking](
                      std::vector<NamedTensor>& inputs,
                      std::vector<NamedTensor>* outputs) {
         return RunRankingTask(ranking, inputs, outputs);
@@ -481,7 +528,7 @@ ModelInstanceState::LoadAPI()
             "bundle task text_generation did not load ITextGeneration");
       }
       ModelState* model_state = model_state_;
-      sdk->run = [trtmc_task, generation, model_state](
+      exec_fn_ = [trtmc_task, generation, model_state](
                      std::vector<NamedTensor>& inputs,
                      std::vector<NamedTensor>* outputs) {
         return RunTextTask(
@@ -533,7 +580,7 @@ ModelInstanceState::LoadAPI()
           reinterpret_cast<const trtmc_text_continuation_api_v1*>(api);
 
       ModelState* model_state = model_state_;
-      sdk->run = [trtmc_model, text_api, model_state](
+      exec_fn_ = [trtmc_model, text_api, model_state](
                      std::vector<NamedTensor>& inputs,
                      std::vector<NamedTensor>* outputs) {
         return RunTextTask(
@@ -555,8 +602,147 @@ ModelInstanceState::LoadAPI()
                               model_state_->BundlePath() + "' family '" +
                               family + "' task '" + bundle_task + "'")
                                  .c_str());
-  sdk_ = std::move(sdk);
+  metrics_ = std::move(metrics);
+  return StartMetrics();
+}
+
+TRITONSERVER_Error*
+ModelInstanceState::StartMetrics()
+{
+  if (metrics_ == nullptr || metrics_->ranking == nullptr) {
+    return nullptr;
+  }
+
+  const std::string& model = model_state_->Name();
+  const std::string version = std::to_string(model_state_->Version());
+  const std::string device = std::to_string(DeviceId());
+  const std::string& instance = Name();
+  std::vector<const TRITONSERVER_Parameter*> labels{
+      TRITONSERVER_ParameterNew(
+          "model", TRITONSERVER_PARAMETER_STRING, model.c_str()),
+      TRITONSERVER_ParameterNew(
+          "version", TRITONSERVER_PARAMETER_STRING, version.c_str()),
+      TRITONSERVER_ParameterNew(
+          "device", TRITONSERVER_PARAMETER_STRING, device.c_str()),
+      TRITONSERVER_ParameterNew(
+          "instance", TRITONSERVER_PARAMETER_STRING, instance.c_str())};
+  ScopedDefer delete_labels([&labels] {
+    for (const TRITONSERVER_Parameter* label : labels) {
+      TRITONSERVER_ParameterDelete(const_cast<TRITONSERVER_Parameter*>(label));
+    }
+    labels.clear();
+  });
+  for (const TRITONSERVER_Parameter* label : labels) {
+    if (label == nullptr) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          "failed to create model_connect metric label");
+    }
+  }
+
+  // Each entry is one published metric. Append here to add another.
+  struct MetricSpec {
+    const char* name;
+    const char* description;
+    double (*read)(const trtmc::CacheStats&);
+  };
+
+  // Shared definitions. Each instance creates its own gauges from this
+  // table and reads that instance's cache statistics.
+  static constexpr MetricSpec kMetrics[] = {
+      {"hstu_kv_cache_supported", "1 when this instance has a managed KV cache",
+       [](const trtmc::CacheStats& s) { return s.supported ? 1.0 : 0.0; }},
+      {"hstu_kv_cache_budget_bytes", "KV cache budget in bytes",
+       [](const trtmc::CacheStats& stats) {
+         return static_cast<double>(stats.budget_bytes);
+       }},
+      {"hstu_kv_cache_reserved_bytes", "Resident KV cache storage in bytes",
+       [](const trtmc::CacheStats& stats) {
+         return static_cast<double>(stats.reserved_bytes);
+       }},
+      {"hstu_kv_cache_used_bytes",
+       "KV cache bytes active for the current request",
+       [](const trtmc::CacheStats& stats) {
+         return static_cast<double>(stats.used_bytes);
+       }},
+      {"hstu_kv_cache_peak_bytes",
+       "Maximum active KV cache bytes since this instance loaded",
+       [](const trtmc::CacheStats& stats) {
+         return static_cast<double>(stats.peak_bytes);
+       }},
+      {"hstu_kv_cache_active_sequences",
+       "Sequences currently using the KV cache",
+       [](const trtmc::CacheStats& stats) {
+         return static_cast<double>(stats.active_sequences);
+       }},
+      {"hstu_kv_cache_allocation_failures", "KV cache allocation failures",
+       [](const trtmc::CacheStats& stats) {
+         return static_cast<double>(stats.allocation_failures);
+       }},
+  };
+
+  bool first = true;
+  for (const MetricSpec& spec : kMetrics) {
+    metrics_->metrics.push_back(Metrics::TritonMetric{});
+    Metrics::TritonMetric& metric = metrics_->metrics.back();
+    metric.read = [this, read = spec.read]() {
+      return read(metrics_->ranking->cache_stats());
+    };
+    TRITONSERVER_Error* err = TRITONSERVER_MetricFamilyNew(
+        &metric.family, TRITONSERVER_METRIC_KIND_GAUGE, spec.name,
+        spec.description);
+    if (err != nullptr) {
+      if (TRITONSERVER_ErrorCode(err) == TRITONSERVER_ERROR_UNSUPPORTED &&
+          first) {
+        // Metrics are not enabled in Triton.
+        metrics_->metrics.clear();
+        TRITONSERVER_ErrorDelete(err);
+        return nullptr;
+      }
+      return err;
+    }
+    first = false;
+    err = TRITONSERVER_MetricNew(
+        &metric.metric, metric.family, labels.data(), labels.size());
+    if (err != nullptr) {
+      return err;
+    }
+  }
+
+  try {
+    metrics_->publisher = std::thread([this] { PollMetrics(); });
+  }
+  catch (const std::exception& ex) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("failed to start model_connect metrics: ") + ex.what())
+            .c_str());
+  }
   return nullptr;
+}
+
+void
+ModelInstanceState::PollMetrics()
+{
+  if (metrics_ == nullptr || metrics_->metrics.empty()) {
+    return;
+  }
+  while (true) {
+    for (const Metrics::TritonMetric& metric : metrics_->metrics) {
+      if (metric.metric == nullptr) {
+        continue;
+      }
+      LOG_IF_ERROR(
+          TRITONSERVER_MetricSet(metric.metric, metric.read()),
+          "failed to update model_connect metric");
+    }
+    std::unique_lock<std::mutex> lock(metrics_->wait_mu);
+    if (metrics_->cv.wait_for(lock, std::chrono::milliseconds(10), [this] {
+          return metrics_->stop.load();
+        })) {
+      return;
+    }
+  }
 }
 
 // Moves host inputs into score() and moves the scored tensors back out.
@@ -750,7 +936,7 @@ ModelInstanceState::RunRequest(
 
   // Text results stay alive here until the write below returns.
   std::vector<NamedTensor> output_tensors;
-  RETURN_IF_ERROR(sdk_->run(input_tensors, &output_tensors));
+  RETURN_IF_ERROR(exec_fn_(input_tensors, &output_tensors));
   std::vector<const NamedTensor*> pending;
   // Only outputs this request asked for.
   pending.reserve(outputs.size());

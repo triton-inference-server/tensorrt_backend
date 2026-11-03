@@ -26,7 +26,9 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <vector>
 
 #include "model_state.hh"
 #include "triton/backend/backend_model_instance.h"
@@ -38,7 +40,8 @@ namespace triton::backend::tensorrt::model_connect {
 // task runs, and BackendOutputResponder writes numeric outputs.
 // text_continuation and text_generation decode one string or one token-id
 // tensor. structured_ranking
-// passes the numeric tensors to IStructuredRanking::score. A TYPE_STRING
+// passes the numeric tensors to IStructuredRanking::score and publishes that
+// task's metrics for the life of the instance. A TYPE_STRING
 // output is length-prefixed bytes, which the responder cannot size, so that
 // output is copied once from the result into the response. This instance
 // does not call batch_text_continuation and does not combine requests.
@@ -64,8 +67,14 @@ class ModelInstanceState : public BackendModelInstance {
       TRITONBACKEND_ModelInstance* triton_model_instance);
 
   // Sets this instance's CUDA device, selects the bundle task, and stores
-  // sdk_->run.
+  // exec_fn_. A structured_ranking instance also starts its metrics.
   TRITONSERVER_Error* LoadAPI();
+
+  // Creates this instance's metrics and samples them until the instance is
+  // destroyed. Text tasks currently have none.
+  TRITONSERVER_Error* StartMetrics();
+  // Writes the current metric values until the instance begins to shut down.
+  void PollMetrics();
 
   // Checks the request inputs, copies them to host NamedTensors, runs the
   // task, and writes the outputs.
@@ -73,8 +82,12 @@ class ModelInstanceState : public BackendModelInstance {
       TRITONBACKEND_Request* request, TRITONBACKEND_Response** response);
 
   ModelState* model_state_;
-  struct Sdk;
-  std::unique_ptr<Sdk> sdk_;
+  struct Metrics;
+  std::unique_ptr<Metrics> metrics_;
+  // Calls this instance's loaded task.
+  std::function<TRITONSERVER_Error*(
+      std::vector<NamedTensor>& inputs, std::vector<NamedTensor>* outputs)>
+      exec_fn_;
 };
 
 }  // namespace triton::backend::tensorrt::model_connect
