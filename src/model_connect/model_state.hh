@@ -50,6 +50,18 @@ struct NamedTensor {
   std::shared_ptr<void> external_keep;
 };
 
+// Additional parameters in model configuration.
+struct Parameters {
+  uint64_t kv_cache_size_bytes{0};
+  double kv_cache_memory_ratio{0};
+
+  // Unsupported parameters
+  // bool kv_cache_hydration_enabled{false};
+  // uint64_t kv_cache_max_entries{0};
+  // double kv_cache_ttl_seconds{0};
+  // double kv_cache_lease_seconds{0};
+};
+
 // A TensorRT Model Connect bundle. The bundle header records the family and
 // the task. The task selects the implementation. Inputs and outputs are the
 // tensors named in the model configuration. Requests are not combined.
@@ -61,6 +73,7 @@ class ModelState : public BackendModel {
   const std::string& BundlePath() const { return bundle_path_; }
   const std::string& BundleTask() const { return bundle_task_; }
   const std::string& BundleFamily() const { return bundle_family_; }
+  const struct Parameters& Parameters() const { return params; }
   const std::vector<NamedTensor>& Inputs() const { return inputs_; }
   const std::vector<NamedTensor>& Outputs() const { return outputs_; }
 
@@ -70,10 +83,12 @@ class ModelState : public BackendModel {
   // Read the bundle header and record the configured tensors.
   TRITONSERVER_Error* ValidateModelConfig();
   TRITONSERVER_Error* ValidateTensors();
+  TRITONSERVER_Error* ParseParameters();
 
   std::string bundle_path_;
   std::string bundle_task_;
   std::string bundle_family_;
+  struct Parameters params;
   std::vector<NamedTensor> inputs_;
   std::vector<NamedTensor> outputs_;
 };
