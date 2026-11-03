@@ -26,6 +26,7 @@
 
 #include "model_connect/model_state.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -212,7 +213,52 @@ ModelState::ValidateModelConfig()
          "' is not supported")
             .c_str());
   }
+  RETURN_IF_ERROR(ParseParameters());
   return ValidateTensors();
+}
+
+TRITONSERVER_Error*
+ModelState::ParseParameters()
+{
+  common::TritonJson::Value params;
+  if (!ModelConfig().Find("parameters", &params)) {
+    return nullptr;
+  }
+
+  RETURN_IF_ERROR(TryParseModelStringParameter(
+      params, "kv_cache_size_bytes", &this->params.kv_cache_size_bytes,
+      uint64_t{0}));
+  RETURN_IF_ERROR(TryParseModelStringParameter(
+      params, "kv_cache_memory_ratio", &this->params.kv_cache_memory_ratio,
+      0.0));
+
+  if (this->params.kv_cache_size_bytes != 0) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        ("'kv_cache_size_bytes' set to '" +
+         std::to_string(this->params.kv_cache_size_bytes) + "' for model '" +
+         Name() + "'")
+            .c_str());
+  }
+  if (this->params.kv_cache_memory_ratio != 0.0) {
+    if (!std::isfinite(this->params.kv_cache_memory_ratio) ||
+        this->params.kv_cache_memory_ratio < 0.0 ||
+        this->params.kv_cache_memory_ratio > 1.0) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INVALID_ARG,
+          ("Invalid value for 'kv_cache_memory_ratio': '" +
+           std::to_string(this->params.kv_cache_memory_ratio) +
+           "' for model '" + Name() + "'. Must be a float in (0, 1].")
+              .c_str());
+    }
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        ("'kv_cache_memory_ratio' set to '" +
+         std::to_string(this->params.kv_cache_memory_ratio) + "' for model '" +
+         Name() + "'")
+            .c_str());
+  }
+  return nullptr;
 }
 
 }  // namespace triton::backend::tensorrt::model_connect

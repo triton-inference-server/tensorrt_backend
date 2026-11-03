@@ -351,10 +351,12 @@ struct TrtmcModel {
 TRITONSERVER_Error*
 LoadTaskObject(
     const std::string& path, const std::string& bundle_task,
-    std::shared_ptr<trtmc::ITask>* trtmc_task)
+    const Parameters& parameters, std::shared_ptr<trtmc::ITask>* trtmc_task)
 {
   try {
-    *trtmc_task = trtmc::load_task(path);
+    *trtmc_task = trtmc::load_task(
+        path, {}, parameters.kv_cache_size_bytes, {}, false,
+        parameters.kv_cache_memory_ratio);
   }
   catch (const std::bad_alloc&) {
     return TRITONSERVER_ErrorNew(
@@ -448,8 +450,9 @@ ModelInstanceState::LoadAPI()
     case TaskKind::kStructuredRanking: {
       // score() takes the numeric host tensors.
       std::shared_ptr<trtmc::ITask> trtmc_task;
-      RETURN_IF_ERROR(
-          LoadTaskObject(model_state_->BundlePath(), bundle_task, &trtmc_task));
+      RETURN_IF_ERROR(LoadTaskObject(
+          model_state_->BundlePath(), bundle_task, model_state_->Parameters(),
+          &trtmc_task));
       auto* ranking =
           dynamic_cast<trtmc::IStructuredRanking*>(trtmc_task.get());
       if (ranking == nullptr) {
@@ -467,8 +470,9 @@ ModelInstanceState::LoadAPI()
     case TaskKind::kTextGeneration: {
       // generate() takes one owned prompt string.
       std::shared_ptr<trtmc::ITask> trtmc_task;
-      RETURN_IF_ERROR(
-          LoadTaskObject(model_state_->BundlePath(), bundle_task, &trtmc_task));
+      RETURN_IF_ERROR(LoadTaskObject(
+          model_state_->BundlePath(), bundle_task, model_state_->Parameters(),
+          &trtmc_task));
       auto* generation =
           dynamic_cast<trtmc::ITextGeneration*>(trtmc_task.get());
       if (generation == nullptr) {
@@ -487,6 +491,17 @@ ModelInstanceState::LoadAPI()
       break;
     }
     case TaskKind::kTextContinuation: {
+      // model_load does not accept either cache budget argument.
+      const Parameters& parameters = model_state_->Parameters();
+      if (parameters.kv_cache_size_bytes != 0 ||
+          parameters.kv_cache_memory_ratio != 0) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_UNSUPPORTED,
+            (std::string("model_connect task '") + bundle_task +
+             "' does not accept 'kv_cache_size_bytes' or "
+             "'kv_cache_memory_ratio'")
+                .c_str());
+      }
       // text->run borrows one UTF-8 or token-id prefix.
       auto trtmc_model = std::make_shared<TrtmcModel>();
       trtmc_model->trtmc = trtmc;
