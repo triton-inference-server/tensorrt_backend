@@ -351,10 +351,10 @@ struct TrtmcModel {
 TRITONSERVER_Error*
 LoadTaskObject(
     const std::string& path, const std::string& bundle_task,
-    const Parameters& parameters, std::shared_ptr<trtmc::ITask>* trtmc_task)
+    const Parameters& parameters, std::shared_ptr<trtmc::ITask>& trtmc_task)
 {
   try {
-    *trtmc_task = trtmc::load_task(
+    trtmc_task = trtmc::load_task(
         path, {}, parameters.kv_cache_size_bytes, {}, false,
         parameters.kv_cache_memory_ratio);
   }
@@ -452,7 +452,7 @@ ModelInstanceState::LoadAPI()
       std::shared_ptr<trtmc::ITask> trtmc_task;
       RETURN_IF_ERROR(LoadTaskObject(
           model_state_->BundlePath(), bundle_task, model_state_->Parameters(),
-          &trtmc_task));
+          trtmc_task));
       auto* ranking =
           dynamic_cast<trtmc::IStructuredRanking*>(trtmc_task.get());
       if (ranking == nullptr) {
@@ -472,7 +472,7 @@ ModelInstanceState::LoadAPI()
       std::shared_ptr<trtmc::ITask> trtmc_task;
       RETURN_IF_ERROR(LoadTaskObject(
           model_state_->BundlePath(), bundle_task, model_state_->Parameters(),
-          &trtmc_task));
+          trtmc_task));
       auto* generation =
           dynamic_cast<trtmc::ITextGeneration*>(trtmc_task.get());
       if (generation == nullptr) {

@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "model_connect/trtmc_utils.hh"
+#include "tensorrt.hh"
 #include "triton/backend/backend_common.h"
 #include "trtmc/trtmc.h"
 
@@ -234,11 +235,11 @@ ModelState::ParseParameters()
 
   if (this->params.kv_cache_size_bytes != 0) {
     LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        ("'kv_cache_size_bytes' set to '" +
-         std::to_string(this->params.kv_cache_size_bytes) + "' for model '" +
-         Name() + "'")
-            .c_str());
+        TRITONSERVER_LOG_INFO, TOSTRING(
+                                   "'kv_cache_size_bytes' set to '"
+                                   << this->params.kv_cache_size_bytes
+                                   << "' for model '" << Name() << "'")
+                                   .c_str());
   }
   if (this->params.kv_cache_memory_ratio != 0.0) {
     if (!std::isfinite(this->params.kv_cache_memory_ratio) ||
@@ -252,11 +253,11 @@ ModelState::ParseParameters()
               .c_str());
     }
     LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        ("'kv_cache_memory_ratio' set to '" +
-         std::to_string(this->params.kv_cache_memory_ratio) + "' for model '" +
-         Name() + "'")
-            .c_str());
+        TRITONSERVER_LOG_INFO, TOSTRING(
+                                   "'kv_cache_memory_ratio' set to '"
+                                   << this->params.kv_cache_memory_ratio
+                                   << "' for model '" << Name() << "'")
+                                   .c_str());
   }
   return nullptr;
 }
