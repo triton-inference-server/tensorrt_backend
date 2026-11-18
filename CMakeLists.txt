@@ -135,6 +135,9 @@ add_library(
   src/plan/model_state.cc
   src/model_connect/model_state.cc
   src/model_connect/instance_state.cc
+  src/model_connect/ranking_instance_state.cc
+  src/model_connect/text_continuation_instance_state.cc
+  src/model_connect/text_generation_instance_state.cc
 )
 # Shared library implementing the Triton Backend API
 configure_file(src/libtriton_tensorrt.ldscript libtriton_tensorrt.ldscript COPYONLY)

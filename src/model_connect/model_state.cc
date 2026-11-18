@@ -93,24 +93,15 @@ TRITONSERVER_Error*
 ReadBundleTask(const std::string& path, std::string* task, std::string* family)
 {
   const trtmc_core_api_v1* trtmc = nullptr;
-  trtmc_status status =
-      trtmc_get_api(TRTMC_API_VERSION_MAJOR, TRTMC_API_VERSION_MINOR, &trtmc);
-  if (status != TRTMC_OK || trtmc == nullptr) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_UNSUPPORTED,
-        "trtmc_get_api(" TRTMC_API_STR(TRTMC_API_VERSION_MAJOR) ", "
-        TRTMC_API_STR(TRTMC_API_VERSION_MINOR) ") did not return the "
-        "TensorRT Model Connect trtmc API");
-  }
+  RETURN_IF_ERROR(GetTrtmcApi(&trtmc));
 
   trtmc_error* error = nullptr;
   trtmc_bundle* bundle = nullptr;
   const trtmc_string_view bundle_path{path.data(), path.size()};
-  // Read the SDK error after the call returns.
-  status = trtmc->bundle_open(bundle_path, &bundle, &error);
-  RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
+  RETURN_IF_TRTMC_ERROR(
+      trtmc, error, trtmc->bundle_open(bundle_path, &bundle, &error));
   trtmc_bundle_info_v1 bundle_info{};
-  status = trtmc->bundle_info(bundle, &bundle_info, &error);
+  const trtmc_status status = trtmc->bundle_info(bundle, &bundle_info, &error);
   TRITONSERVER_Error* info_error = TrtmcStatusError(trtmc, status, error);
   if (info_error == nullptr) {
     if (bundle_info.task.data != nullptr && bundle_info.task.size > 0) {
