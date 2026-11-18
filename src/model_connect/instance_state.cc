@@ -28,35 +28,29 @@
 
 #include <cuda_runtime_api.h>
 
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstring>
-#include <functional>
+#include <exception>
 #include <limits>
-#include <mutex>
+#include <memory>
 #include <new>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
-#include "model_connect/scoped_defer.hh"
+#include "model_connect/ranking_instance_state.hh"
+#include "model_connect/text_continuation_instance_state.hh"
+#include "model_connect/text_generation_instance_state.hh"
 #include "model_connect/trtmc_utils.hh"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
 #include "trtmc/runtime/family_loader.h"
-#include "trtmc/structured_ranking.h"
-#include "trtmc/trtmc.h"
 
 namespace triton::backend::tensorrt::model_connect {
 
-namespace {
-
 // Borrowed host view of one Triton string. Valid while tensor.bytes is alive.
-// ValidateInputs has already accepted the buffer. text_continuation passes
+// ValidateInput has already accepted the buffer. text_continuation passes
 // the view to text->run. text_generation copies it to the std::string that
 // generate() requires.
 void
@@ -73,23 +67,7 @@ TextView(const NamedTensor& tensor, trtmc_string_view& text)
   text.size = length;
 }
 
-// Borrowed host int32 ids. text->run reads them before it returns.
-// The caller has already selected an INT32 input.
-TRITONSERVER_Error*
-TokenView(const NamedTensor& tensor, trtmc_i32_view& tokens)
-{
-  if (tensor.shape.size() != 1) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "text continuation input must be one rank-1 token-id sequence");
-  }
-  const uint64_t count = static_cast<uint64_t>(tensor.shape[0]);
-  tokens.data = count == 0
-                    ? nullptr
-                    : reinterpret_cast<const int32_t*>(tensor.bytes.data());
-  tokens.size = count;
-  return nullptr;
-}
+namespace {
 
 // Copies the text result from tensor.external to the response buffer.
 // TYPE_BYTES has no fixed element size, so the responder cannot write it.
@@ -152,9 +130,9 @@ SentCopyError(
 }
 
 // Copies one request input from the collector to tensor->bytes.
-// ValidateInputs has already accepted the request input.
+// ValidateInput has already accepted the request input.
 TRITONSERVER_Error*
-SetInputTensors(
+CopyInputToHost(
     TRITONBACKEND_Request* request, const NamedTensor& input,
     BackendInputCollector* collector, NamedTensor* tensor)
 {
@@ -185,11 +163,28 @@ SetInputTensors(
       &copied_bytes, &copied_type, &copied_id);
 }
 
+}  // namespace
+
 // The bytes of one Triton string input. A host buffer is checked in place.
 // A GPU buffer is read to the host for the check.
+// FIXME: Duplicates the buffer gathering of GetContiguousInputContent in the
+// TensorFlow and PyTorch backends, and copies a GPU input once here and again
+// in CopyInputsToHost. Validate the host copy in tensor.bytes instead.
 TRITONSERVER_Error*
-ValidateStringInput(TRITONBACKEND_Input* input, const char* name)
+ValidateStringInput(
+    TRITONBACKEND_Input* input, const char* name,
+    const TRITONSERVER_DataType datatype, const int64_t* shape,
+    const uint32_t dims)
 {
+  if (datatype != TRITONSERVER_TYPE_BYTES) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG, "text input must be TYPE_STRING");
+  }
+  if (shape == nullptr || dims != 1 || shape[0] != 1) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG, "text input must contain one string");
+  }
+
   uint32_t buffer_count = 0;
   RETURN_IF_ERROR(TRITONBACKEND_InputProperties(
       input, nullptr, nullptr, nullptr, nullptr, nullptr, &buffer_count));
@@ -236,44 +231,7 @@ ValidateStringInput(TRITONBACKEND_Input* input, const char* name)
       bytes, size, 1, name != nullptr ? name : "", &strings);
 }
 
-// Each Triton request input, checked once for every task. After this returns,
-// the inputs are copied and the task runs. A TYPE_BYTES input is one string.
-// Any other input must be a numeric type.
-TRITONSERVER_Error*
-ValidateInputs(TRITONBACKEND_Request* request)
-{
-  uint32_t count = 0;
-  RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(request, &count));
-  for (uint32_t index = 0; index < count; ++index) {
-    TRITONBACKEND_Input* input = nullptr;
-    RETURN_IF_ERROR(TRITONBACKEND_RequestInputByIndex(request, index, &input));
-    const char* name = nullptr;
-    TRITONSERVER_DataType datatype = TRITONSERVER_TYPE_INVALID;
-    const int64_t* shape = nullptr;
-    uint32_t dims = 0;
-    RETURN_IF_ERROR(TRITONBACKEND_InputProperties(
-        input, &name, &datatype, &shape, &dims, nullptr, nullptr));
-    if (datatype == TRITONSERVER_TYPE_BYTES) {
-      if (dims != 1 || shape == nullptr || shape[0] != 1) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INVALID_ARG,
-            "text input must contain one string");
-      }
-      RETURN_IF_ERROR(ValidateStringInput(input, name));
-    } else {
-      trtmc::DType dtype = trtmc::DType::kFloat32;
-      if (!NumericType(datatype, &dtype)) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            (std::string("unexpected datatype TYPE_") +
-             TRITONSERVER_DataTypeString(datatype) + " for inference input '" +
-             (name != nullptr ? name : "") + "'")
-                .c_str());
-      }
-    }
-  }
-  return nullptr;
-}
+namespace {
 
 // The responder copies the byte size of the shape and does not look at the
 // task buffer's length. TYPE_BYTES is sized by WriteTextResult.
@@ -333,75 +291,15 @@ RequestBatchSize(TRITONBACKEND_Request* request, const int max_batch_size)
 
 }  // namespace
 
-// One loaded bundle. A structured_ranking bundle keeps the task alive so
-// its metrics can be sampled on `publisher`.
-struct ModelInstanceState::Metrics {
-  struct TritonMetric {
-    TRITONSERVER_MetricFamily* family{nullptr};
-    TRITONSERVER_Metric* metric{nullptr};
-    std::function<double()> read;
-  };
-
-  std::shared_ptr<trtmc::ITask> task;
-  trtmc::IStructuredRanking* ranking{nullptr};
-  std::vector<TritonMetric> metrics;
-  std::atomic<bool> stop{false};
-  std::mutex wait_mu;
-  std::condition_variable cv;
-  std::thread publisher;
-
-  ~Metrics()
-  {
-    {
-      std::lock_guard<std::mutex> lock(wait_mu);
-      stop.store(true);
-    }
-    cv.notify_all();
-    if (publisher.joinable()) {
-      publisher.join();
-    }
-    ranking = nullptr;
-    for (TritonMetric& metric : metrics) {
-      if (metric.metric != nullptr) {
-        LOG_IF_ERROR(
-            TRITONSERVER_MetricDelete(metric.metric),
-            "failed to delete model_connect metric");
-        metric.metric = nullptr;
-      }
-    }
-    for (TritonMetric& metric : metrics) {
-      if (metric.family != nullptr) {
-        LOG_IF_ERROR(
-            TRITONSERVER_MetricFamilyDelete(metric.family),
-            "failed to delete model_connect metric family");
-        metric.family = nullptr;
-      }
-    }
-  }
-};
-
-struct TrtmcModel {
-  const trtmc_core_api_v1* trtmc{nullptr};
-  trtmc_model* model{nullptr};
-  ~TrtmcModel()
-  {
-    if (trtmc != nullptr && model != nullptr) {
-      trtmc->model_release(model);
-    }
-  }
-};
-
-// load_task for structured_ranking and text_generation. The shared_ptr keeps
-// the ITask alive for the instance.
 TRITONSERVER_Error*
-LoadTaskObject(
-    const std::string& path, const std::string& bundle_task,
-    const Parameters& parameters, std::shared_ptr<trtmc::ITask>& trtmc_task)
+ModelInstanceState::LoadSdkTask(std::shared_ptr<trtmc::ITask>* task)
 {
+  const std::string& bundle_task = model_state_->BundleTask();
+  const Parameters& parameters = model_state_->Parameters();
   try {
-    trtmc_task = trtmc::load_task(
-        path, {}, parameters.kv_cache_size_bytes, {}, false,
-        parameters.kv_cache_memory_ratio);
+    *task = trtmc::load_task(
+        model_state_->BundlePath(), {}, parameters.kv_cache_size_bytes, {},
+        false, parameters.kv_cache_memory_ratio);
   }
   catch (const std::bad_alloc&) {
     return TRITONSERVER_ErrorNew(
@@ -417,15 +315,6 @@ LoadTaskObject(
   return nullptr;
 }
 
-TRITONSERVER_Error* RunRankingTask(
-    trtmc::IStructuredRanking* ranking, std::vector<NamedTensor>& inputs,
-    std::vector<NamedTensor>* outputs);
-TRITONSERVER_Error* RunTextTask(
-    const trtmc_core_api_v1* trtmc, trtmc_model* model,
-    const trtmc_text_continuation_api_v1* text,
-    trtmc::ITextGeneration* generation, ModelState* model_state,
-    const std::vector<NamedTensor>& inputs, std::vector<NamedTensor>* outputs);
-
 ModelInstanceState::ModelInstanceState(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance)
     : BackendModelInstance(model_state, triton_model_instance),
@@ -440,18 +329,48 @@ ModelInstanceState::ModelInstanceState(
   }
 }
 
-ModelInstanceState::~ModelInstanceState() = default;
-
 TRITONSERVER_Error*
 ModelInstanceState::Create(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance,
     ModelInstanceState** state)
 {
   *state = nullptr;
+  const std::string& bundle_task = model_state->BundleTask();
   try {
-    std::unique_ptr<ModelInstanceState> instance_state(
-        new ModelInstanceState(model_state, triton_model_instance));
-    RETURN_IF_ERROR(instance_state->LoadAPI());
+    std::unique_ptr<ModelInstanceState> instance_state;
+    switch (TaskKindFor(bundle_task)) {
+      case TaskKind::kStructuredRanking:
+        instance_state = std::make_unique<RankingInstanceState>(
+            model_state, triton_model_instance);
+        break;
+      case TaskKind::kTextGeneration:
+        instance_state = std::make_unique<TextGenerationInstanceState>(
+            model_state, triton_model_instance);
+        break;
+      case TaskKind::kTextContinuation:
+        instance_state = std::make_unique<TextContinuationInstanceState>(
+            model_state, triton_model_instance);
+        break;
+      default:
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_UNSUPPORTED,
+            (std::string("model_connect bundle task '") + bundle_task +
+             "' is not supported")
+                .c_str());
+    }
+
+    // Execute is another thread and sets this device again.
+    RETURN_IF_CUDA_ERROR(
+        cudaSetDevice(instance_state->DeviceId()), TRITONSERVER_ERROR_INTERNAL,
+        std::string("failed to set model_connect CUDA device"));
+    RETURN_IF_ERROR(instance_state->Load());
+
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("loaded model_connect bundle '") +
+         model_state->BundlePath() + "' family '" +
+         model_state->BundleFamily() + "' task '" + bundle_task + "'")
+            .c_str());
     *state = instance_state.release();
   }
   catch (const BackendModelInstanceException& ex) {
@@ -465,319 +384,6 @@ ModelInstanceState::Create(
         TRITONSERVER_ERROR_INTERNAL,
         (std::string("failed to create model_connect instance: ") + ex.what())
             .c_str());
-  }
-  return nullptr;
-}
-
-TRITONSERVER_Error*
-ModelInstanceState::LoadAPI()
-{
-  // Execute is another thread and sets this device again.
-  RETURN_IF_CUDA_ERROR(
-      cudaSetDevice(DeviceId()), TRITONSERVER_ERROR_INTERNAL,
-      std::string("failed to set model_connect CUDA device"));
-
-  const trtmc_core_api_v1* trtmc = nullptr;
-  trtmc_status status =
-      trtmc_get_api(TRTMC_API_VERSION_MAJOR, TRTMC_API_VERSION_MINOR, &trtmc);
-  if (status != TRTMC_OK || trtmc == nullptr) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_UNSUPPORTED,
-        "trtmc_get_api(" TRTMC_API_STR(TRTMC_API_VERSION_MAJOR) ", "
-        TRTMC_API_STR(TRTMC_API_VERSION_MINOR) ") did not return the "
-        "TensorRT Model Connect trtmc API");
-  }
-
-  const std::string& bundle_task = model_state_->BundleTask();
-  const std::string& family = model_state_->BundleFamily();
-  auto metrics = std::make_unique<Metrics>();
-  switch (TaskKindFor(bundle_task)) {
-    case TaskKind::kStructuredRanking: {
-      // score() takes the numeric host tensors.
-      std::shared_ptr<trtmc::ITask> trtmc_task;
-      RETURN_IF_ERROR(LoadTaskObject(
-          model_state_->BundlePath(), bundle_task, model_state_->Parameters(),
-          trtmc_task));
-      auto* ranking =
-          dynamic_cast<trtmc::IStructuredRanking*>(trtmc_task.get());
-      if (ranking == nullptr) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_UNSUPPORTED,
-            "bundle task structured_ranking did not load IStructuredRanking");
-      }
-      metrics->task = trtmc_task;
-      metrics->ranking = ranking;
-      exec_fn_ = [trtmc_task, ranking](
-                     std::vector<NamedTensor>& inputs,
-                     std::vector<NamedTensor>* outputs) {
-        return RunRankingTask(ranking, inputs, outputs);
-      };
-      break;
-    }
-    case TaskKind::kTextGeneration: {
-      // generate() takes one owned prompt string.
-      std::shared_ptr<trtmc::ITask> trtmc_task;
-      RETURN_IF_ERROR(LoadTaskObject(
-          model_state_->BundlePath(), bundle_task, model_state_->Parameters(),
-          trtmc_task));
-      auto* generation =
-          dynamic_cast<trtmc::ITextGeneration*>(trtmc_task.get());
-      if (generation == nullptr) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_UNSUPPORTED,
-            "bundle task text_generation did not load ITextGeneration");
-      }
-      ModelState* model_state = model_state_;
-      exec_fn_ = [trtmc_task, generation, model_state](
-                     std::vector<NamedTensor>& inputs,
-                     std::vector<NamedTensor>* outputs) {
-        return RunTextTask(
-            nullptr, nullptr, nullptr, generation, model_state, inputs,
-            outputs);
-      };
-      break;
-    }
-    case TaskKind::kTextContinuation: {
-      // model_load does not accept either cache budget argument.
-      const Parameters& parameters = model_state_->Parameters();
-      if (parameters.kv_cache_size_bytes != 0 ||
-          parameters.kv_cache_memory_ratio != 0) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_UNSUPPORTED,
-            (std::string("model_connect task '") + bundle_task +
-             "' does not accept 'kv_cache_size_bytes' or "
-             "'kv_cache_memory_ratio'")
-                .c_str());
-      }
-      // text->run borrows one UTF-8 or token-id prefix.
-      auto trtmc_model = std::make_shared<TrtmcModel>();
-      trtmc_model->trtmc = trtmc;
-      trtmc_error* error = nullptr;
-      const std::string& bundle_path = model_state_->BundlePath();
-      const trtmc_string_view bundle{bundle_path.data(), bundle_path.size()};
-      // Read the SDK error after the call returns.
-      status = trtmc->model_load(bundle, nullptr, &trtmc_model->model, &error);
-      RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
-
-      const trtmc_string_view task{
-          TRTMC_TASK_TEXT_CONTINUATION,
-          sizeof(TRTMC_TASK_TEXT_CONTINUATION) - 1};
-      const trtmc_api_header* api = nullptr;
-      status = trtmc->model_get_task_api(
-          trtmc_model->model, task, TRTMC_API_VERSION_MAJOR,
-          TRTMC_API_VERSION_MINOR, &api, &error);
-      RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
-      if (api == nullptr || api->major != TRTMC_API_VERSION_MAJOR ||
-          api->minor != TRTMC_API_VERSION_MINOR ||
-          api->byte_size < sizeof(trtmc_text_continuation_api_v1)) {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_UNSUPPORTED,
-            "loaded bundle does not provide text_continuation "
-            "API " TRTMC_API_STR(TRTMC_API_VERSION_MAJOR) "." TRTMC_API_STR(
-                TRTMC_API_VERSION_MINOR));
-      }
-      const auto* text_api =
-          reinterpret_cast<const trtmc_text_continuation_api_v1*>(api);
-
-      ModelState* model_state = model_state_;
-      exec_fn_ = [trtmc_model, text_api, model_state](
-                     std::vector<NamedTensor>& inputs,
-                     std::vector<NamedTensor>* outputs) {
-        return RunTextTask(
-            trtmc_model->trtmc, trtmc_model->model, text_api, nullptr,
-            model_state, inputs, outputs);
-      };
-      break;
-    }
-    default:
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_UNSUPPORTED,
-          (std::string("model_connect bundle task '") + bundle_task +
-           "' is not supported")
-              .c_str());
-  }
-
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO, (std::string("loaded model_connect bundle '") +
-                              model_state_->BundlePath() + "' family '" +
-                              family + "' task '" + bundle_task + "'")
-                                 .c_str());
-  metrics_ = std::move(metrics);
-  return StartMetrics();
-}
-
-TRITONSERVER_Error*
-ModelInstanceState::StartMetrics()
-{
-  if (metrics_ == nullptr || metrics_->ranking == nullptr) {
-    return nullptr;
-  }
-
-  const std::string& model = model_state_->Name();
-  const std::string version = std::to_string(model_state_->Version());
-  const std::string device = std::to_string(DeviceId());
-  const std::string& instance = Name();
-  std::vector<const TRITONSERVER_Parameter*> labels{
-      TRITONSERVER_ParameterNew(
-          "model", TRITONSERVER_PARAMETER_STRING, model.c_str()),
-      TRITONSERVER_ParameterNew(
-          "version", TRITONSERVER_PARAMETER_STRING, version.c_str()),
-      TRITONSERVER_ParameterNew(
-          "device", TRITONSERVER_PARAMETER_STRING, device.c_str()),
-      TRITONSERVER_ParameterNew(
-          "instance", TRITONSERVER_PARAMETER_STRING, instance.c_str())};
-  ScopedDefer delete_labels([&labels] {
-    for (const TRITONSERVER_Parameter* label : labels) {
-      TRITONSERVER_ParameterDelete(const_cast<TRITONSERVER_Parameter*>(label));
-    }
-    labels.clear();
-  });
-  for (const TRITONSERVER_Parameter* label : labels) {
-    if (label == nullptr) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          "failed to create model_connect metric label");
-    }
-  }
-
-  // Each entry is one published metric. Append here to add another.
-  struct MetricSpec {
-    const char* name;
-    const char* description;
-    double (*read)(const trtmc::CacheStats&);
-  };
-
-  // Shared definitions. Each instance creates its own gauges from this
-  // table and reads that instance's cache statistics.
-  static constexpr MetricSpec kMetrics[] = {
-      {"hstu_kv_cache_supported", "1 when this instance has a managed KV cache",
-       [](const trtmc::CacheStats& s) { return s.supported ? 1.0 : 0.0; }},
-      {"hstu_kv_cache_budget_bytes", "KV cache budget in bytes",
-       [](const trtmc::CacheStats& stats) {
-         return static_cast<double>(stats.budget_bytes);
-       }},
-      {"hstu_kv_cache_reserved_bytes", "Resident KV cache storage in bytes",
-       [](const trtmc::CacheStats& stats) {
-         return static_cast<double>(stats.reserved_bytes);
-       }},
-      {"hstu_kv_cache_used_bytes",
-       "KV cache bytes active for the current request",
-       [](const trtmc::CacheStats& stats) {
-         return static_cast<double>(stats.used_bytes);
-       }},
-      {"hstu_kv_cache_peak_bytes",
-       "Maximum active KV cache bytes since this instance loaded",
-       [](const trtmc::CacheStats& stats) {
-         return static_cast<double>(stats.peak_bytes);
-       }},
-      {"hstu_kv_cache_active_sequences",
-       "Sequences currently using the KV cache",
-       [](const trtmc::CacheStats& stats) {
-         return static_cast<double>(stats.active_sequences);
-       }},
-      {"hstu_kv_cache_allocation_failures", "KV cache allocation failures",
-       [](const trtmc::CacheStats& stats) {
-         return static_cast<double>(stats.allocation_failures);
-       }},
-  };
-
-  bool first = true;
-  for (const MetricSpec& spec : kMetrics) {
-    metrics_->metrics.push_back(Metrics::TritonMetric{});
-    Metrics::TritonMetric& metric = metrics_->metrics.back();
-    metric.read = [this, read = spec.read]() {
-      return read(metrics_->ranking->cache_stats());
-    };
-    TRITONSERVER_Error* err = TRITONSERVER_MetricFamilyNew(
-        &metric.family, TRITONSERVER_METRIC_KIND_GAUGE, spec.name,
-        spec.description);
-    if (err != nullptr) {
-      if (TRITONSERVER_ErrorCode(err) == TRITONSERVER_ERROR_UNSUPPORTED &&
-          first) {
-        // Metrics are not enabled in Triton.
-        metrics_->metrics.clear();
-        TRITONSERVER_ErrorDelete(err);
-        return nullptr;
-      }
-      return err;
-    }
-    first = false;
-    err = TRITONSERVER_MetricNew(
-        &metric.metric, metric.family, labels.data(), labels.size());
-    if (err != nullptr) {
-      return err;
-    }
-  }
-
-  try {
-    metrics_->publisher = std::thread([this] { PollMetrics(); });
-  }
-  catch (const std::exception& ex) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("failed to start model_connect metrics: ") + ex.what())
-            .c_str());
-  }
-  return nullptr;
-}
-
-void
-ModelInstanceState::PollMetrics()
-{
-  if (metrics_ == nullptr || metrics_->metrics.empty()) {
-    return;
-  }
-  while (true) {
-    for (const Metrics::TritonMetric& metric : metrics_->metrics) {
-      if (metric.metric == nullptr) {
-        continue;
-      }
-      LOG_IF_ERROR(
-          TRITONSERVER_MetricSet(metric.metric, metric.read()),
-          "failed to update model_connect metric");
-    }
-    std::unique_lock<std::mutex> lock(metrics_->wait_mu);
-    if (metrics_->cv.wait_for(lock, std::chrono::milliseconds(10), [this] {
-          return metrics_->stop.load();
-        })) {
-      return;
-    }
-  }
-}
-
-// Moves host inputs into score() and moves the scored tensors back out.
-TRITONSERVER_Error*
-RunRankingTask(
-    trtmc::IStructuredRanking* ranking, std::vector<NamedTensor>& inputs,
-    std::vector<NamedTensor>* outputs)
-{
-  // Move the host bytes in. score() returns its own buffers.
-  std::vector<trtmc::FeatureTensor> features;
-  features.reserve(inputs.size());
-  for (NamedTensor& input : inputs) {
-    trtmc::FeatureTensor feature;
-    feature.name = std::move(input.name);
-    feature.shape = std::move(input.shape);
-    feature.bytes = std::move(input.bytes);
-    // ValidateInputs accepted this datatype.
-    NumericType(input.datatype, &feature.dtype);
-    features.push_back(std::move(feature));
-  }
-  std::vector<trtmc::FeatureTensor> scored = ranking->score(features);
-  outputs->reserve(scored.size());
-  for (trtmc::FeatureTensor& feature : scored) {
-    NamedTensor output;
-    output.name = std::move(feature.name);
-    output.shape = std::move(feature.shape);
-    output.bytes = std::move(feature.bytes);
-    if (!TritonType(feature.dtype, &output.datatype)) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("unexpected datatype for inference output '") +
-           output.name + "'")
-              .c_str());
-    }
-    outputs->push_back(std::move(output));
   }
   return nullptr;
 }
@@ -818,127 +424,64 @@ AppendTextOutput(
   return nullptr;
 }
 
-// One text input. text_generation copies the prompt from the input tensor to
-// the std::string generate() requires. text_continuation borrows a UTF-8
-// string or token ids.
 TRITONSERVER_Error*
-RunTextTask(
-    const trtmc_core_api_v1* trtmc, trtmc_model* model,
-    const trtmc_text_continuation_api_v1* text,
-    trtmc::ITextGeneration* generation, ModelState* model_state,
-    const std::vector<NamedTensor>& inputs, std::vector<NamedTensor>* outputs)
+ModelInstanceState::ValidateRequest(TRITONBACKEND_Request* request) const
 {
-  // This call takes one string, or one rank-1 token-id sequence.
-  if (inputs.size() != 1) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "model_connect text task requires one input");
+  uint32_t count = 0;
+  RETURN_IF_ERROR(TRITONBACKEND_RequestInputCount(request, &count));
+  for (uint32_t index = 0; index < count; ++index) {
+    TRITONBACKEND_Input* input = nullptr;
+    RETURN_IF_ERROR(TRITONBACKEND_RequestInputByIndex(request, index, &input));
+    const char* name = nullptr;
+    TRITONSERVER_DataType datatype = TRITONSERVER_TYPE_INVALID;
+    const int64_t* shape = nullptr;
+    uint32_t dims = 0;
+    RETURN_IF_ERROR(TRITONBACKEND_InputProperties(
+        input, &name, &datatype, &shape, &dims, nullptr, nullptr));
+    RETURN_IF_ERROR(ValidateInput(input, name, datatype, shape, dims));
   }
-
-  if (generation != nullptr) {
-    if (inputs[0].datatype != TRITONSERVER_TYPE_BYTES) {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG, "text input must be TYPE_STRING");
-    }
-    trtmc_string_view prompt_view{};
-    TextView(inputs[0], prompt_view);
-    // generate() takes an owning std::string.
-    const std::string prompt =
-        prompt_view.size == 0
-            ? std::string()
-            : std::string(
-                  prompt_view.data, static_cast<size_t>(prompt_view.size));
-    trtmc::TextGenerationConfig config;
-    config.max_new_tokens = generation->default_max_new_tokens();
-    // Kept until RunRequest finishes writing the response.
-    auto result = std::make_shared<trtmc::TextResult>(
-        generation->generate(prompt, config));
-    const trtmc_string_view text_view{
-        result->text.data(), static_cast<uint64_t>(result->text.size())};
-    return AppendTextOutput(
-        model_state, text_view,
-        result->token_ids.empty() ? nullptr : result->token_ids.data(),
-        result->token_ids.size(), result, outputs);
-  } else {
-    // text_continuation. The C API borrows one UTF-8 or token-id prefix.
-    trtmc_text_continuation_request_v1 text_request{};
-    if (inputs[0].datatype == TRITONSERVER_TYPE_INT32) {
-      text_request.prefix.kind = TRTMC_TEXT_TOKEN_IDS;
-      RETURN_IF_ERROR(TokenView(inputs[0], text_request.prefix.as.token_ids));
-    } else if (inputs[0].datatype == TRITONSERVER_TYPE_BYTES) {
-      text_request.prefix.kind = TRTMC_TEXT_UTF8;
-      TextView(inputs[0], text_request.prefix.as.text);
-    } else {
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG, "text input must be TYPE_STRING");
-    }
-
-    trtmc_result* raw = nullptr;
-    trtmc_error* error = nullptr;
-    trtmc_status status =
-        text->run(model, &text_request, nullptr, &raw, &error);
-    // Releases the C result after RunRequest writes the response.
-    std::shared_ptr<void> keep(raw, [trtmc](void* result) {
-      if (trtmc != nullptr && result != nullptr) {
-        trtmc->result_release(static_cast<trtmc_result*>(result));
-      }
-    });
-    RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
-
-    trtmc_text_result_view_v1 view{};
-    // Read the SDK error after the call returns.
-    status = text->result_view(raw, &view, &error);
-    RETURN_IF_ERROR(TrtmcStatusError(trtmc, status, error));
-    return AppendTextOutput(
-        model_state, view.text, view.token_ids.data, view.token_ids.size, keep,
-        outputs);
-  }
+  return nullptr;
 }
 
-// One request in, one task call, one request out.
 TRITONSERVER_Error*
-ModelInstanceState::RunRequest(
-    TRITONBACKEND_Request* request, TRITONBACKEND_Response** response)
+ModelInstanceState::CopyInputsToHost(
+    TRITONBACKEND_Request* request, TRITONBACKEND_Response** response,
+    std::vector<NamedTensor>* tensors)
 {
-  TRITONBACKEND_MemoryManager* memory_manager =
-      model_state_->TritonMemoryManager();
-  const std::vector<NamedTensor>& inputs = model_state_->Inputs();
-  const std::vector<NamedTensor>& outputs = model_state_->Outputs();
-
-  RETURN_IF_ERROR(ValidateInputs(request));
-
   TRITONBACKEND_Request* requests[1] = {request};
   std::vector<TRITONBACKEND_Response*> responses(1, *response);
   cudaStream_t copy_stream = nullptr;
-
-  // Copies each configured input from the request to a host NamedTensor.
-  std::vector<NamedTensor> input_tensors;
-  input_tensors.reserve(inputs.size());
-  {
-    BackendInputCollector collector(
-        requests, 1, &responses, memory_manager,
-        model_state_->EnablePinnedInput(), copy_stream, nullptr, nullptr, 0,
-        HostPolicyName().c_str(), false, false);
-    for (const NamedTensor& input : inputs) {
-      NamedTensor tensor;
-      RETURN_IF_ERROR(SetInputTensors(request, input, &collector, &tensor));
-      RETURN_IF_ERROR(SentCopyError(response, responses));
-      input_tensors.push_back(std::move(tensor));
-    }
-    const bool need_sync = collector.Finalize();
+  BackendInputCollector collector(
+      requests, 1, &responses, model_state_->TritonMemoryManager(),
+      model_state_->EnablePinnedInput(), copy_stream, nullptr, nullptr, 0,
+      HostPolicyName().c_str(), false, false);
+  tensors->reserve(model_state_->Inputs().size());
+  for (const NamedTensor& input : model_state_->Inputs()) {
+    NamedTensor tensor;
+    RETURN_IF_ERROR(CopyInputToHost(request, input, &collector, &tensor));
     RETURN_IF_ERROR(SentCopyError(response, responses));
-    if (need_sync) {
-      RETURN_IF_CUDA_ERROR(
-          cudaStreamSynchronize(copy_stream), TRITONSERVER_ERROR_INTERNAL,
-          std::string("failed to synchronize model_connect copy"));
-    }
+    tensors->push_back(std::move(tensor));
   }
+  const bool need_sync = collector.Finalize();
+  RETURN_IF_ERROR(SentCopyError(response, responses));
+  if (need_sync) {
+    RETURN_IF_CUDA_ERROR(
+        cudaStreamSynchronize(copy_stream), TRITONSERVER_ERROR_INTERNAL,
+        std::string("failed to synchronize model_connect copy"));
+  }
+  return nullptr;
+}
 
-  // Text results stay alive here until the write below returns.
-  std::vector<NamedTensor> output_tensors;
-  RETURN_IF_ERROR(exec_fn_(input_tensors, &output_tensors));
+TRITONSERVER_Error*
+ModelInstanceState::CopyOutputsToResponse(
+    TRITONBACKEND_Request* request, TRITONBACKEND_Response** response,
+    const std::vector<NamedTensor>& output_tensors)
+{
+  TRITONBACKEND_Request* requests[1] = {request};
+  std::vector<TRITONBACKEND_Response*> responses(1, *response);
+  cudaStream_t copy_stream = nullptr;
+  const std::vector<NamedTensor>& outputs = model_state_->Outputs();
   std::vector<const NamedTensor*> pending;
-  // Only outputs this request asked for.
   pending.reserve(outputs.size());
   uint32_t requested = 0;
   RETURN_IF_ERROR(TRITONBACKEND_RequestOutputCount(request, &requested));
@@ -972,7 +515,7 @@ ModelInstanceState::RunRequest(
 
   // Strings are packed into the response. Numeric outputs use the responder.
   BackendOutputResponder responder(
-      requests, 1, &responses, memory_manager, false,
+      requests, 1, &responses, model_state_->TritonMemoryManager(), false,
       model_state_->EnablePinnedOutput(), copy_stream, nullptr, false);
   for (const NamedTensor* tensor : pending) {
     if (tensor->datatype == TRITONSERVER_TYPE_BYTES) {
@@ -1001,6 +544,47 @@ ModelInstanceState::RunRequest(
   return nullptr;
 }
 
+TRITONSERVER_Error*
+ModelInstanceState::RunRequest(
+    std::vector<TRITONBACKEND_Request*>& requests,
+    std::vector<TRITONBACKEND_Response*>* responses, const RunFn& run)
+{
+  for (size_t r = 0; r < requests.size(); ++r) {
+    TRITONBACKEND_Response** response = &(*responses)[r];
+    if (*response == nullptr) {
+      continue;
+    }
+    TRITONSERVER_Error* err = nullptr;
+    try {
+      err = ValidateRequest(requests[r]);
+      std::vector<NamedTensor> inputs;
+      if (err == nullptr) {
+        err = CopyInputsToHost(requests[r], response, &inputs);
+      }
+      // Text results stay alive here until the write below returns.
+      std::vector<NamedTensor> outputs;
+      if (err == nullptr) {
+        err = run(inputs, &outputs);
+      }
+      if (err == nullptr) {
+        err = CopyOutputsToResponse(requests[r], response, outputs);
+      }
+    }
+    catch (const std::bad_alloc&) {
+      err = TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_UNAVAILABLE,
+          "model_connect request ran out of memory");
+    }
+    catch (const std::exception& ex) {
+      err = TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          (std::string("model_connect request failed: ") + ex.what()).c_str());
+    }
+    RESPOND_AND_SET_NULL_IF_ERROR(response, err);
+  }
+  return nullptr;
+}
+
 void
 ModelInstanceState::ProcessRequests(
     TRITONBACKEND_Request** requests, const uint32_t request_count)
@@ -1012,15 +596,12 @@ ModelInstanceState::ProcessRequests(
   SET_TIMESTAMP(exec_start_ns);
 
   // A create failure is logged. That request is not run.
-  std::vector<TRITONBACKEND_Response*> responses;
-  responses.reserve(request_count);
+  std::vector<TRITONBACKEND_Response*> responses(request_count, nullptr);
   for (uint32_t r = 0; r < request_count; ++r) {
-    TRITONBACKEND_Response* response = nullptr;
-    TRITONSERVER_Error* err = TRITONBACKEND_ResponseNew(&response, requests[r]);
-    if (err == nullptr) {
-      responses.push_back(response);
-    } else {
-      responses.push_back(nullptr);
+    TRITONSERVER_Error* err =
+        TRITONBACKEND_ResponseNew(&responses[r], requests[r]);
+    if (err != nullptr) {
+      responses[r] = nullptr;
       LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Fail to create response");
       TRITONSERVER_ErrorDelete(err);
     }
@@ -1033,30 +614,14 @@ ModelInstanceState::ProcessRequests(
     total_batch_size += RequestBatchSize(requests[r], max_batch_size);
   }
 
-  // Each request is a separate task call, so this execute is one compute
-  // window.
   uint64_t compute_start_ns = 0;
   SET_TIMESTAMP(compute_start_ns);
-  for (uint32_t r = 0; r < request_count; ++r) {
-    if (responses[r] == nullptr) {
-      continue;
-    }
-    TRITONSERVER_Error* err = nullptr;
-    try {
-      err = RunRequest(requests[r], &responses[r]);
-    }
-    catch (const std::bad_alloc&) {
-      err = TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_UNAVAILABLE,
-          "model_connect request ran out of memory");
-    }
-    catch (const std::exception& ex) {
-      err = TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          (std::string("model_connect request failed: ") + ex.what()).c_str());
-    }
-    RESPOND_AND_SET_NULL_IF_ERROR(&responses[r], err);
-  }
+
+  std::vector<TRITONBACKEND_Request*> request_list(
+      requests, requests + request_count);
+  RESPOND_ALL_AND_SET_NULL_IF_ERROR(
+      responses, request_count, Execute(request_list, &responses));
+
   uint64_t compute_end_ns = 0;
   SET_TIMESTAMP(compute_end_ns);
   uint64_t exec_end_ns = 0;
