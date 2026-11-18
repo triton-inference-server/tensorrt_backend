@@ -37,6 +37,14 @@
 #define TRTMC_API_STR_(value) #value
 #define TRTMC_API_STR(value) TRTMC_API_STR_(value)
 
+#define RETURN_IF_TRTMC_ERROR(TRTMC, ERROR, ...)                      \
+  do {                                                                \
+    trtmc_status trtmc_macro_status = (__VA_ARGS__);                  \
+    RETURN_IF_ERROR(                                                  \
+        ::triton::backend::tensorrt::model_connect::TrtmcStatusError( \
+            (TRTMC), trtmc_macro_status, (ERROR)));                   \
+  } while (false)
+
 namespace triton::backend::tensorrt::model_connect {
 
 // One SDK status, as a Triton error. Releases the SDK error object.
@@ -78,6 +86,24 @@ TrtmcStatusError(
       break;
   }
   return TRITONSERVER_ErrorNew(code, message.c_str());
+}
+
+// The trtmc C API at the version this backend was built against.
+inline TRITONSERVER_Error*
+GetTrtmcApi(const trtmc_core_api_v1** trtmc)
+{
+  *trtmc = nullptr;
+  const trtmc_status status =
+      trtmc_get_api(TRTMC_API_VERSION_MAJOR, TRTMC_API_VERSION_MINOR, trtmc);
+  if (status != TRTMC_OK || *trtmc == nullptr) {
+    *trtmc = nullptr;
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_UNSUPPORTED,
+        "trtmc_get_api(" TRTMC_API_STR(TRTMC_API_VERSION_MAJOR) ", "
+        TRTMC_API_STR(TRTMC_API_VERSION_MINOR) ") did not return the "
+        "TensorRT Model Connect trtmc API");
+  }
+  return nullptr;
 }
 
 enum class TaskKind {
