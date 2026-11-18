@@ -49,24 +49,6 @@
 
 namespace triton::backend::tensorrt::model_connect {
 
-// Borrowed host view of one Triton string. Valid while tensor.bytes is alive.
-// ValidateInput has already accepted the buffer. text_continuation passes
-// the view to text->run. text_generation copies it to the std::string that
-// generate() requires.
-void
-TextView(const NamedTensor& tensor, trtmc_string_view& text)
-{
-  const char* bytes = reinterpret_cast<const char*>(tensor.bytes.data());
-  if (tensor.bytes.size() < sizeof(uint32_t)) {
-    text.data = nullptr;
-    text.size = 0;
-    return;
-  }
-  const uint32_t length = *reinterpret_cast<const uint32_t*>(bytes);
-  text.data = bytes + sizeof(uint32_t);
-  text.size = length;
-}
-
 namespace {
 
 // Copies the text result from tensor.external to the response buffer.
@@ -163,7 +145,81 @@ CopyInputToHost(
       &copied_bytes, &copied_type, &copied_id);
 }
 
+// The responder copies the byte size of the shape and does not look at the
+// task buffer's length. TYPE_BYTES is sized by WriteTextResult.
+TRITONSERVER_Error*
+CheckNamedTensor(const NamedTensor& tensor, TRITONSERVER_DataType expected)
+{
+  if (tensor.datatype != expected) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        (std::string("unexpected datatype TYPE_") +
+         TRITONSERVER_DataTypeString(tensor.datatype) +
+         " for inference output '" + tensor.name + "', expecting TYPE_" +
+         TRITONSERVER_DataTypeString(expected))
+            .c_str());
+  }
+  if (expected == TRITONSERVER_TYPE_BYTES) {
+    return nullptr;
+  }
+  int64_t count = 0;
+  RETURN_IF_ERROR(backend::GetElementCount(tensor.shape, &count));
+  const uint32_t element_bytes = TRITONSERVER_DataTypeByteSize(expected);
+  const uint64_t actual_bytes =
+      tensor.external_keep ? tensor.external_size : tensor.bytes.size();
+  if (count >= 0 &&
+      actual_bytes != static_cast<uint64_t>(count) * element_bytes) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL, ("model_connect output '" + tensor.name +
+                                      "' byte size does not match its shape")
+                                         .c_str());
+  }
+  return nullptr;
+}
+
+// Leading dimension when the model batches, otherwise one request.
+uint64_t
+RequestBatchSize(TRITONBACKEND_Request* request, const int max_batch_size)
+{
+  if (max_batch_size == 0) {
+    return 1;
+  }
+  TRITONBACKEND_Input* input = nullptr;
+  TRITONSERVER_Error* err =
+      TRITONBACKEND_RequestInputByIndex(request, 0, &input);
+  const int64_t* shape = nullptr;
+  uint32_t dims = 0;
+  if (err == nullptr) {
+    err = TRITONBACKEND_InputProperties(
+        input, nullptr, nullptr, &shape, &dims, nullptr, nullptr);
+  }
+  uint64_t batch_size = 0;
+  if (err == nullptr && shape != nullptr && dims > 0 && shape[0] > 0) {
+    batch_size = static_cast<uint64_t>(shape[0]);
+  }
+  LOG_IF_ERROR(err, "failed reading model_connect batch size");
+  return batch_size;
+}
+
 }  // namespace
+
+// Borrowed host view of one Triton string. Valid while tensor.bytes is alive.
+// ValidateInput has already accepted the buffer. text_continuation passes
+// the view to text->run. text_generation copies it to the std::string that
+// generate() requires.
+void
+TextView(const NamedTensor& tensor, trtmc_string_view& text)
+{
+  const char* bytes = reinterpret_cast<const char*>(tensor.bytes.data());
+  if (tensor.bytes.size() < sizeof(uint32_t)) {
+    text.data = nullptr;
+    text.size = 0;
+    return;
+  }
+  const uint32_t length = *reinterpret_cast<const uint32_t*>(bytes);
+  text.data = bytes + sizeof(uint32_t);
+  text.size = length;
+}
 
 // The bytes of one Triton string input. A host buffer is checked in place.
 // A GPU buffer is read to the host for the check.
@@ -230,66 +286,6 @@ ValidateStringInput(
   return backend::ValidateStringBuffer(
       bytes, size, 1, name != nullptr ? name : "", &strings);
 }
-
-namespace {
-
-// The responder copies the byte size of the shape and does not look at the
-// task buffer's length. TYPE_BYTES is sized by WriteTextResult.
-TRITONSERVER_Error*
-CheckNamedTensor(const NamedTensor& tensor, TRITONSERVER_DataType expected)
-{
-  if (tensor.datatype != expected) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        (std::string("unexpected datatype TYPE_") +
-         TRITONSERVER_DataTypeString(tensor.datatype) +
-         " for inference output '" + tensor.name + "', expecting TYPE_" +
-         TRITONSERVER_DataTypeString(expected))
-            .c_str());
-  }
-  if (expected == TRITONSERVER_TYPE_BYTES) {
-    return nullptr;
-  }
-  int64_t count = 0;
-  RETURN_IF_ERROR(backend::GetElementCount(tensor.shape, &count));
-  const uint32_t element_bytes = TRITONSERVER_DataTypeByteSize(expected);
-  const uint64_t actual_bytes =
-      tensor.external_keep ? tensor.external_size : tensor.bytes.size();
-  if (count >= 0 &&
-      actual_bytes != static_cast<uint64_t>(count) * element_bytes) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL, ("model_connect output '" + tensor.name +
-                                      "' byte size does not match its shape")
-                                         .c_str());
-  }
-  return nullptr;
-}
-
-// Leading dimension when the model batches, otherwise one request.
-uint64_t
-RequestBatchSize(TRITONBACKEND_Request* request, const int max_batch_size)
-{
-  if (max_batch_size == 0) {
-    return 1;
-  }
-  TRITONBACKEND_Input* input = nullptr;
-  TRITONSERVER_Error* err =
-      TRITONBACKEND_RequestInputByIndex(request, 0, &input);
-  const int64_t* shape = nullptr;
-  uint32_t dims = 0;
-  if (err == nullptr) {
-    err = TRITONBACKEND_InputProperties(
-        input, nullptr, nullptr, &shape, &dims, nullptr, nullptr);
-  }
-  uint64_t batch_size = 0;
-  if (err == nullptr && shape != nullptr && dims > 0 && shape[0] > 0) {
-    batch_size = static_cast<uint64_t>(shape[0]);
-  }
-  LOG_IF_ERROR(err, "failed reading model_connect batch size");
-  return batch_size;
-}
-
-}  // namespace
 
 TRITONSERVER_Error*
 ModelInstanceState::LoadSdkTask(std::shared_ptr<trtmc::ITask>* task)
