@@ -34,9 +34,11 @@
 
 namespace triton::backend::tensorrt::model_connect {
 
-// structured_ranking through IStructuredRanking::score. Each request is
-// scored on its own. The task's KV cache statistics are published as Triton
-// gauges for the life of the instance.
+// structured_ranking through IStructuredRanking::score. With max_batch_size
+// greater than 0, the requests in one execute are concatenated on the batch
+// dimension and scored once. With max_batch_size 0, each request is scored
+// on its own. The task's KV cache statistics are published as Triton gauges
+// for the life of the instance.
 class RankingInstanceState : public ModelInstanceState {
  public:
   RankingInstanceState(
@@ -45,14 +47,18 @@ class RankingInstanceState : public ModelInstanceState {
   ~RankingInstanceState() override;
 
  private:
-  TRITONSERVER_Error* Load() override;
+  TRITONSERVER_Error* LoadModel() override;
   TRITONSERVER_Error* ValidateInput(
       TRITONBACKEND_Input* input, const char* name,
       TRITONSERVER_DataType datatype, const int64_t* shape,
       uint32_t dims) const override;
+  // With max_batch_size 0 or one pending request, scores each request through
+  // RunRequest. Otherwise the collector concatenates the valid requests on the
+  // batch dimension, score() runs once, and the responder splits each output
+  // into the responses.
   TRITONSERVER_Error* Execute(
-      std::vector<TRITONBACKEND_Request*>& requests,
-      std::vector<TRITONBACKEND_Response*>* responses) override;
+      TRITONBACKEND_Request** requests, uint32_t request_count,
+      std::vector<TRITONBACKEND_Response*>& responses) override;
 
   // Creates this instance's gauges and samples them until the instance is
   // destroyed.

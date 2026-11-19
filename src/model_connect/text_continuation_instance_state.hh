@@ -34,8 +34,9 @@
 
 namespace triton::backend::tensorrt::model_connect {
 
-// text_continuation through the trtmc C API. Each request is one string or one
-// rank-1 token-id sequence and runs on its own.
+// text_continuation through the trtmc C API. Every continuation in one
+// execute, one per string or token row, is one batch_text_continuation call.
+// Each request gets its own rows back.
 class TextContinuationInstanceState : public ModelInstanceState {
  public:
   TextContinuationInstanceState(
@@ -45,19 +46,19 @@ class TextContinuationInstanceState : public ModelInstanceState {
   ~TextContinuationInstanceState() override;
 
  private:
-  TRITONSERVER_Error* Load() override;
+  TRITONSERVER_Error* LoadModel() override;
   TRITONSERVER_Error* ValidateInput(
       TRITONBACKEND_Input* input, const char* name,
       TRITONSERVER_DataType datatype, const int64_t* shape,
       uint32_t dims) const override;
   TRITONSERVER_Error* Execute(
-      std::vector<TRITONBACKEND_Request*>& requests,
-      std::vector<TRITONBACKEND_Response*>* responses) override;
+      TRITONBACKEND_Request** requests, uint32_t request_count,
+      std::vector<TRITONBACKEND_Response*>& responses) override;
 
   const trtmc_core_api_v1* trtmc_{nullptr};
   trtmc_model* model_{nullptr};
   // Owned by model_. Valid until model_release.
-  const trtmc_text_continuation_api_v1* text_{nullptr};
+  const trtmc_batch_text_continuation_api_v1* batch_{nullptr};
 };
 
 }  // namespace triton::backend::tensorrt::model_connect
