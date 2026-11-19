@@ -606,8 +606,8 @@ TRITONBACKEND_ModelInstanceExecute(
           TRITONSERVER_ERROR_INTERNAL,
           "model_connect instance is not initialized");
     }
-    // Each request is one text_continuation call. Ownership of 'requests'
-    // stays with ProcessRequests, which responds to every request.
+    // Ownership of 'requests' stays with ProcessRequests, which responds to
+    // every request.
     instance_state->ProcessRequests(requests, request_count);
     return nullptr;
   }

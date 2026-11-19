@@ -32,21 +32,27 @@
 #include <vector>
 
 #include "triton/backend/backend_model.h"
+#include "trtmc/types.h"
 
 namespace triton::backend::tensorrt::model_connect {
 
-// One named tensor. The model configuration records the name and data type.
-// TYPE_STRING is stored as TYPE_BYTES. A request copy records the shape and
-// host bytes. A text result may instead borrow external, which external_keep
-// owns: for TYPE_BYTES that is the string and external_size is its character
-// count, and for a numeric type external_size is the byte count.
+// One named tensor. A model configuration entry sets only name and datatype.
+// A request copy or a packed output also sets shape and bytes. A text result
+// borrows its data from the task result instead of copying it into bytes.
 struct NamedTensor {
   std::string name;
   TRITONSERVER_DataType datatype{TRITONSERVER_TYPE_INVALID};
   std::vector<int64_t> shape;
   std::vector<uint8_t> bytes;
+  // Borrowed TYPE_BYTES output, one view per element with no length prefix.
+  std::vector<trtmc_string_view> strings;
+  // Borrowed numeric host data, used instead of bytes when external_keep is
+  // set. external_size is its byte count.
   const void* external{nullptr};
   uint64_t external_size{0};
+  // Owns the result that strings or external point into until the response is
+  // written. For a numeric type, non-null means the data is in external, not
+  // bytes.
   std::shared_ptr<void> external_keep;
 };
 
@@ -64,7 +70,10 @@ struct Parameters {
 
 // A TensorRT Model Connect bundle. The bundle header records the family and
 // the task. The task selects the implementation. Inputs and outputs are the
-// tensors named in the model configuration. Requests are not combined.
+// tensors named in the model configuration. structured_ranking with
+// max_batch_size greater than 0 scores the requests of one execute together.
+// text_continuation runs them in one batch_text_continuation call.
+// text_generation runs one request at a time.
 class ModelState : public BackendModel {
  public:
   static TRITONSERVER_Error* Create(

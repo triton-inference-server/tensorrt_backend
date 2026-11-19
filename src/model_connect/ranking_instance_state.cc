@@ -26,6 +26,8 @@
 
 #include "model_connect/ranking_instance_state.hh"
 
+#include <cuda_runtime_api.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -40,10 +42,48 @@
 #include "model_connect/scoped_defer.hh"
 #include "model_connect/trtmc_utils.hh"
 #include "triton/backend/backend_common.h"
+#include "triton/backend/backend_input_collector.h"
+#include "triton/backend/backend_output_responder.h"
 
 namespace triton::backend::tensorrt::model_connect {
 
 namespace {
+
+// Reads the name, data type, and shape of each configured input in one request
+// and adds them to the batch on the batch dimension. A failure leaves the batch
+// unchanged. ModelState rejects allow_ragged_batch, so Triton has already
+// matched the other dimensions of the requests in one execute.
+TRITONSERVER_Error*
+AppendToBatch(
+    TRITONBACKEND_Request* request, const char* host_policy,
+    const std::vector<NamedTensor>& config_inputs,
+    std::vector<NamedTensor>* batch)
+{
+  std::vector<NamedTensor> tensors;
+  tensors.reserve(config_inputs.size());
+  for (const NamedTensor& config : config_inputs) {
+    TRITONBACKEND_Input* input = nullptr;
+    RETURN_IF_ERROR(
+        TRITONBACKEND_RequestInput(request, config.name.c_str(), &input));
+    NamedTensor tensor;
+    const int64_t* shape = nullptr;
+    uint32_t dims = 0;
+    RETURN_IF_ERROR(TRITONBACKEND_InputPropertiesForHostPolicy(
+        input, host_policy, nullptr, &tensor.datatype, &shape, &dims, nullptr,
+        nullptr));
+    tensor.name = config.name;
+    tensor.shape.assign(shape, shape + dims);
+    tensors.push_back(std::move(tensor));
+  }
+  if (batch->empty()) {
+    *batch = std::move(tensors);
+    return nullptr;
+  }
+  for (size_t i = 0; i < tensors.size(); ++i) {
+    (*batch)[i].shape[0] += tensors[i].shape[0];
+  }
+  return nullptr;
+}
 
 // Moves host inputs into score() and moves the scored tensors back out.
 TRITONSERVER_Error*
@@ -135,7 +175,7 @@ RankingInstanceState::RankingInstanceState(
 RankingInstanceState::~RankingInstanceState() = default;
 
 TRITONSERVER_Error*
-RankingInstanceState::Load()
+RankingInstanceState::LoadModel()
 {
   RETURN_IF_ERROR(LoadSdkTask(&task_));
   ranking_ = dynamic_cast<trtmc::IStructuredRanking*>(task_.get());
@@ -151,7 +191,7 @@ RankingInstanceState::Load()
 // against it, so another type here is an internal error.
 TRITONSERVER_Error*
 RankingInstanceState::ValidateInput(
-    TRITONBACKEND_Input* input, const char* name,
+    TRITONBACKEND_Input* /* input */, const char* name,
     const TRITONSERVER_DataType datatype, const int64_t* shape,
     const uint32_t dims) const
 {
@@ -164,20 +204,138 @@ RankingInstanceState::ValidateInput(
          (name != nullptr ? name : "") + "'")
             .c_str());
   }
+  if (model_state_->MaxBatchSize() > 0 &&
+      (shape == nullptr || dims == 0 || shape[0] < 1)) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INVALID_ARG,
+        "model_connect ranking input has no batch dimension");
+  }
   return nullptr;
 }
 
+// Without batching, or with one request left, each request runs through
+// RunRequest. Otherwise a request whose inputs cannot be read stays out of the
+// batch. A score() failure fails every request in the batch. A copy or
+// response write failure fails only that request.
 TRITONSERVER_Error*
 RankingInstanceState::Execute(
-    std::vector<TRITONBACKEND_Request*>& requests,
-    std::vector<TRITONBACKEND_Response*>* responses)
+    TRITONBACKEND_Request** requests, const uint32_t request_count,
+    std::vector<TRITONBACKEND_Response*>& responses)
 {
-  return RunRequest(
-      requests, responses,
-      [this](
-          std::vector<NamedTensor>& inputs, std::vector<NamedTensor>* outputs) {
-        return RunRankingTask(ranking_, inputs, outputs);
-      });
+  size_t valid_request_count = 0;
+  for (const TRITONBACKEND_Response* response : responses) {
+    valid_request_count += response != nullptr ? 1 : 0;
+  }
+  if (model_state_->MaxBatchSize() == 0 || valid_request_count < 2) {
+    // Non-batching path
+    return RunRequest(
+        requests, request_count, responses,
+        [this](
+            std::vector<NamedTensor>& inputs,
+            std::vector<NamedTensor>* outputs) {
+          return RunRankingTask(ranking_, inputs, outputs);
+        });
+  }
+
+  const char* host_policy = HostPolicyName().c_str();
+  std::vector<size_t> batch_indices;
+  std::vector<TRITONBACKEND_Request*> batch_requests;
+  std::vector<TRITONBACKEND_Response*> batch_responses;
+  std::vector<NamedTensor> batch_inputs;
+  for (uint32_t r = 0; r < request_count; ++r) {
+    if (responses[r] == nullptr) {
+      continue;
+    }
+
+    RESPOND_AND_SET_NULL_IF_ERROR(
+        &responses[r],
+        AppendToBatch(
+            requests[r], host_policy, model_state_->Inputs(), &batch_inputs));
+    if (responses[r] != nullptr) {
+      batch_indices.push_back(r);
+      batch_requests.push_back(requests[r]);
+      batch_responses.push_back(responses[r]);
+    }
+  }
+  if (batch_requests.empty()) {
+    return nullptr;
+  }
+  // The collector and responder send and clear a failed response in
+  // batch_responses. The caller must see the same responses.
+  ScopedDefer sync_responses([&] {
+    for (size_t i = 0; i < batch_indices.size(); ++i) {
+      responses[batch_indices[i]] = batch_responses[i];
+    }
+  });
+
+  for (NamedTensor& tensor : batch_inputs) {
+    int64_t bytes = 0;
+    RETURN_IF_ERROR(
+        backend::GetByteSize(tensor.datatype, tensor.shape, &bytes));
+    tensor.bytes.assign(static_cast<size_t>(bytes), 0);
+  }
+  const uint32_t batch_request_count =
+      static_cast<uint32_t>(batch_requests.size());
+  const int64_t total_batch_size = batch_inputs.front().shape[0];
+
+  cudaStream_t copy_stream = nullptr;
+  BackendInputCollector collector(
+      batch_requests.data(), batch_request_count, &batch_responses,
+      model_state_->TritonMemoryManager(), model_state_->EnablePinnedInput(),
+      copy_stream, nullptr, nullptr, 0, host_policy, false, false);
+  for (NamedTensor& tensor : batch_inputs) {
+    collector.ProcessTensor(
+        tensor.name.c_str(),
+        reinterpret_cast<char*>(
+            tensor.bytes.empty() ? nullptr : tensor.bytes.data()),
+        tensor.bytes.size(), TRITONSERVER_MEMORY_CPU, 0);
+  }
+  if (collector.Finalize()) {
+    RETURN_IF_CUDA_ERROR(
+        cudaStreamSynchronize(copy_stream), TRITONSERVER_ERROR_INTERNAL,
+        std::string("failed to synchronize model_connect copy"));
+  }
+
+  std::vector<NamedTensor> outputs;
+  SET_TIMESTAMP(compute_start_ns_);
+  RETURN_IF_ERROR(RunRankingTask(ranking_, batch_inputs, &outputs));
+  SET_TIMESTAMP(compute_end_ns_);
+  for (const NamedTensor& output : outputs) {
+    if (output.shape.empty() || output.shape[0] != total_batch_size) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          "model_connect ranking output batch does not match the requests");
+    }
+  }
+  for (uint32_t r = 0; r < batch_request_count; ++r) {
+    if (batch_responses[r] == nullptr) {
+      continue;
+    }
+    std::vector<const NamedTensor*> requested;
+    RESPOND_AND_SET_NULL_IF_ERROR(
+        &batch_responses[r],
+        FindRequestedOutputs(batch_requests[r], outputs, &requested));
+  }
+
+  BackendOutputResponder responder(
+      batch_requests.data(), batch_request_count, &batch_responses,
+      model_state_->TritonMemoryManager(), true /* first_dim_batching */,
+      model_state_->EnablePinnedOutput(), copy_stream, nullptr, false);
+  for (const NamedTensor& output : outputs) {
+    std::vector<int64_t> shape = output.shape;
+    responder.ProcessTensor(
+        output.name, output.datatype, shape,
+        output.bytes.empty()
+            ? nullptr
+            : reinterpret_cast<const char*>(output.bytes.data()),
+        TRITONSERVER_MEMORY_CPU, 0);
+  }
+  if (responder.Finalize()) {
+    RETURN_IF_CUDA_ERROR(
+        cudaStreamSynchronize(copy_stream), TRITONSERVER_ERROR_INTERNAL,
+        std::string("failed to synchronize model_connect copy"));
+  }
+  return nullptr;
 }
 
 TRITONSERVER_Error*
