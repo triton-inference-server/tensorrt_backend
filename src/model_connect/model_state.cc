@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -49,9 +50,9 @@ ParseTensorGroup(
 {
   common::TritonJson::Value array;
   RETURN_IF_ERROR(model_config.MemberAsArray(group, &array));
-  for (size_t index = 0; index < array.ArraySize(); ++index) {
+  for (size_t i = 0; i < array.ArraySize(); ++i) {
     common::TritonJson::Value tensor;
-    RETURN_IF_ERROR(array.IndexAsObject(index, &tensor));
+    RETURN_IF_ERROR(array.IndexAsObject(i, &tensor));
 
     NamedTensor parsed;
     const char* data_type = nullptr;
@@ -66,23 +67,71 @@ ParseTensorGroup(
     RETURN_IF_ERROR(
         tensor.MemberAsString("name", &tensor_name, &tensor_name_len));
     parsed.name.assign(tensor_name, tensor_name_len);
+
+    // Without allow_ragged_batch, Triton batches only requests whose
+    // dimensions after the batch dimension match.
+    common::TritonJson::Value ragged;
+    bool allow_ragged_batch = false;
+    if (tensor.Find("allow_ragged_batch", &ragged)) {
+      RETURN_IF_ERROR(ragged.AsBool(&allow_ragged_batch));
+    }
+    if (allow_ragged_batch) {
+      return TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_UNSUPPORTED,
+          ("model_connect does not support allow_ragged_batch for " +
+           std::string(group) + " '" + parsed.name + "'")
+              .c_str());
+    }
     tensors->push_back(std::move(parsed));
   }
   return nullptr;
 }
 
+// Every input and output is a numeric type.
 TRITONSERVER_Error*
 RequireNumericTensors(
-    const std::vector<NamedTensor>& tensors, const char* group)
+    const std::vector<NamedTensor>& inputs,
+    const std::vector<NamedTensor>& outputs)
 {
-  for (const NamedTensor& tensor : tensors) {
-    trtmc::DType dtype = trtmc::DType::kFloat32;
-    if (!NumericType(tensor.datatype, &dtype)) {
+  const std::pair<const char*, const std::vector<NamedTensor>*> groups[] = {
+      {"input", &inputs}, {"output", &outputs}};
+  for (const auto& [group, tensors] : groups) {
+    for (const NamedTensor& tensor : *tensors) {
+      trtmc::DType dtype = trtmc::DType::kFloat32;
+      if (!NumericType(tensor.datatype, &dtype)) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string("model_connect ") + group + " '" + tensor.name +
+             "' must be TYPE_FP32, TYPE_FP16, TYPE_BF16, TYPE_INT8, "
+             "TYPE_INT32, or TYPE_INT64")
+                .c_str());
+      }
+    }
+  }
+  return nullptr;
+}
+
+// Every input and output holds TYPE_STRING text or TYPE_INT32 token ids. An
+// input holds token ids only where input_token_ids is set.
+TRITONSERVER_Error*
+RequireTextTensors(
+    const std::vector<NamedTensor>& inputs,
+    const std::vector<NamedTensor>& outputs, const bool input_token_ids)
+{
+  const std::tuple<const char*, const std::vector<NamedTensor>*, bool>
+      groups[] = {
+          {"input", &inputs, input_token_ids}, {"output", &outputs, true}};
+  for (const auto& [group, tensors, allow_token_ids] : groups) {
+    for (const NamedTensor& tensor : *tensors) {
+      if (tensor.datatype == TRITONSERVER_TYPE_BYTES ||
+          (allow_token_ids && tensor.datatype == TRITONSERVER_TYPE_INT32)) {
+        continue;
+      }
       return TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("model_connect ") + group + " '" + tensor.name +
-           "' must be TYPE_FP32, TYPE_FP16, TYPE_BF16, TYPE_INT8, "
-           "TYPE_INT32, or TYPE_INT64")
+          (std::string("model_connect text task ") + group + " '" +
+           tensor.name + "' must be TYPE_STRING" +
+           (allow_token_ids ? " or TYPE_INT32" : ""))
               .c_str());
     }
   }
@@ -161,11 +210,42 @@ ModelState::ValidateTensors()
 {
   RETURN_IF_ERROR(ParseTensorGroup(ModelConfig(), "input", &inputs_));
   RETURN_IF_ERROR(ParseTensorGroup(ModelConfig(), "output", &outputs_));
-  if (TaskKindFor(bundle_task_) != TaskKind::kStructuredRanking) {
-    return nullptr;
+  const TaskKind kind = TaskKindFor(bundle_task_);
+  switch (kind) {
+    case TaskKind::kStructuredRanking:
+      // A batched execute reads each request's batch size from its first
+      // input.
+      if (MaxBatchSize() > 0 && inputs_.empty()) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            "model_connect ranking model with max_batch_size greater than 0 "
+            "requires an input");
+      }
+      RETURN_IF_ERROR(RequireNumericTensors(inputs_, outputs_));
+      break;
+    case TaskKind::kTextGeneration:
+    case TaskKind::kTextContinuation: {
+      if (inputs_.size() != 1 || outputs_.size() != 1) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            "model_connect text task requires one input and one output");
+      }
+      // text_generation runs one prompt string per request.
+      const bool generation = kind == TaskKind::kTextGeneration;
+      if (generation && MaxBatchSize() > 0) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INVALID_ARG,
+            (std::string("model_connect task '") + bundle_task_ +
+             "' requires max_batch_size 0")
+                .c_str());
+      }
+      RETURN_IF_ERROR(RequireTextTensors(inputs_, outputs_, !generation));
+      break;
+    }
+    default:
+      break;
   }
-  RETURN_IF_ERROR(RequireNumericTensors(inputs_, "input"));
-  return RequireNumericTensors(outputs_, "output");
+  return nullptr;
 }
 
 TRITONSERVER_Error*
@@ -181,13 +261,13 @@ ModelState::ValidateModelConfig()
     }
   }
 
+  // Validate bundle path
   if (!bundle_name.empty() && bundle_name.front() == '/') {
     bundle_path_ = bundle_name;
   } else {
     bundle_path_ =
         JoinPath({RepositoryPath(), std::to_string(Version()), bundle_name});
   }
-
   std::error_code exists_error;
   if (!std::filesystem::is_regular_file(bundle_path_, exists_error)) {
     return TRITONSERVER_ErrorNew(
@@ -197,6 +277,7 @@ ModelState::ValidateModelConfig()
             .c_str());
   }
 
+  // Validate bundle task
   RETURN_IF_ERROR(ReadBundleTask(bundle_path_, &bundle_task_, &bundle_family_));
   if (TaskKindFor(bundle_task_) == TaskKind::kUnsupported) {
     return TRITONSERVER_ErrorNew(
@@ -205,7 +286,19 @@ ModelState::ValidateModelConfig()
          "' is not supported")
             .c_str());
   }
+
+  // Validate parameters
   RETURN_IF_ERROR(ParseParameters());
+  // text_continuation's model_load does not accept either cache budget.
+  if (TaskKindFor(bundle_task_) == TaskKind::kTextContinuation &&
+      (params.kv_cache_size_bytes != 0 || params.kv_cache_memory_ratio != 0)) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_UNSUPPORTED,
+        (std::string("model_connect task '") + bundle_task_ +
+         "' does not accept 'kv_cache_size_bytes' or "
+         "'kv_cache_memory_ratio'")
+            .c_str());
+  }
   return ValidateTensors();
 }
 

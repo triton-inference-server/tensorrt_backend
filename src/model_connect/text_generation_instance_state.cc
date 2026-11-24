@@ -71,19 +71,8 @@ TextGenerationInstanceState::TextGenerationInstanceState(
 }
 
 TRITONSERVER_Error*
-TextGenerationInstanceState::Load()
+TextGenerationInstanceState::LoadModel()
 {
-  if (model_state_->Inputs().size() != 1) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "model_connect text task requires one input");
-  }
-  if (model_state_->Outputs().size() != 1) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        "model_connect text task requires one output");
-  }
-
   RETURN_IF_ERROR(LoadSdkTask(&task_));
   generation_ = dynamic_cast<trtmc::ITextGeneration*>(task_.get());
   if (generation_ == nullptr) {
@@ -105,11 +94,11 @@ TextGenerationInstanceState::ValidateInput(
 
 TRITONSERVER_Error*
 TextGenerationInstanceState::Execute(
-    std::vector<TRITONBACKEND_Request*>& requests,
-    std::vector<TRITONBACKEND_Response*>* responses)
+    TRITONBACKEND_Request** requests, const uint32_t request_count,
+    std::vector<TRITONBACKEND_Response*>& responses)
 {
   return RunRequest(
-      requests, responses,
+      requests, request_count, responses,
       [this](
           std::vector<NamedTensor>& inputs, std::vector<NamedTensor>* outputs) {
         return RunTextTask(generation_, model_state_, inputs, outputs);

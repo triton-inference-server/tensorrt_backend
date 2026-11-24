@@ -40,7 +40,7 @@ namespace triton::backend::tensorrt::model_connect {
 
 // One loaded bundle. ProcessRequests creates every response, sends it, and
 // reports statistics for the execute. The subclass for the bundle task loads
-// that task, checks each input, and runs each request.
+// that task, checks each input, and runs the requests.
 // BackendInputCollector copies request tensors to host buffers and
 // BackendOutputResponder writes numeric outputs. A TYPE_STRING output is
 // length-prefixed bytes, which the responder cannot size, so that output is
@@ -68,7 +68,7 @@ class ModelInstanceState : public BackendModelInstance {
       TRITONBACKEND_ModelInstance* triton_model_instance);
 
   // Loads the bundle task. The CUDA device is already set.
-  virtual TRITONSERVER_Error* Load() = 0;
+  virtual TRITONSERVER_Error* LoadModel() = 0;
 
   // Checks one input of one request before any copy, given the properties
   // from TRITONBACKEND_InputProperties. A failure fails only that request.
@@ -77,46 +77,61 @@ class ModelInstanceState : public BackendModelInstance {
       TRITONSERVER_DataType datatype, const int64_t* shape,
       uint32_t dims) const = 0;
 
-  // Runs every request. A nullptr response marks a request that already
-  // failed, which is skipped. A failure confined to one request is sent on its
-  // response, which is then set to nullptr. A returned error fails every
-  // remaining response. Must not throw; RunRequest catches exceptions from
-  // each request.
+  // Runs every request. responses has one entry per request, in the same order.
+  // ValidateRequest has already accepted each request with a response. A
+  // nullptr response marks a request that already failed, which is skipped. A
+  // failure confined to one request is sent on its response, which is then set
+  // to nullptr. A returned error or an exception fails every remaining
+  // response.
   virtual TRITONSERVER_Error* Execute(
-      std::vector<TRITONBACKEND_Request*>& requests,
-      std::vector<TRITONBACKEND_Response*>* responses) = 0;
+      TRITONBACKEND_Request** requests, uint32_t request_count,
+      std::vector<TRITONBACKEND_Response*>& responses) = 0;
 
   // Loads the bundle with trtmc::load_task and the model's KV cache
   // parameters.
   TRITONSERVER_Error* LoadSdkTask(std::shared_ptr<trtmc::ITask>* task);
 
   // Copies one request's configured inputs to host NamedTensors.
-  TRITONSERVER_Error* CopyInputsToHost(
+  TRITONSERVER_Error* SetInputTensors(
       TRITONBACKEND_Request* request, TRITONBACKEND_Response** response,
       std::vector<NamedTensor>* tensors);
 
+  // Runs ValidateInput on every input of the request.
+  TRITONSERVER_Error* ValidateRequest(TRITONBACKEND_Request* request) const;
+
+  // The returned tensor for each output the request asked for, checked
+  // against the model configuration.
+  TRITONSERVER_Error* FindRequestedOutputs(
+      TRITONBACKEND_Request* request,
+      const std::vector<NamedTensor>& output_tensors,
+      std::vector<const NamedTensor*>* pending) const;
+
   // Writes one request's outputs. A write failure is that request's error.
-  TRITONSERVER_Error* CopyOutputsToResponse(
+  TRITONSERVER_Error* ReadOutputTensors(
       TRITONBACKEND_Request* request, TRITONBACKEND_Response** response,
       const std::vector<NamedTensor>& output_tensors);
 
-  // Validates, copies, runs, and writes each request on its own, skipping a
-  // nullptr response. A failure or exception fails only that request.
+  // Copies, runs, and writes each request on its own, skipping a nullptr
+  // response. A failure or exception fails only that request.
   TRITONSERVER_Error* RunRequest(
-      std::vector<TRITONBACKEND_Request*>& requests,
-      std::vector<TRITONBACKEND_Response*>* responses, const RunFn& run);
+      TRITONBACKEND_Request** requests, uint32_t request_count,
+      std::vector<TRITONBACKEND_Response*>& responses, const RunFn& run);
 
   ModelState* model_state_;
-
- private:
-  // Runs ValidateInput on every input of the request.
-  TRITONSERVER_Error* ValidateRequest(TRITONBACKEND_Request* request) const;
+  // This execute's compute timestamps for statistics. Execute sets
+  // compute_start_ns_ before its first task call, if still 0, and
+  // compute_end_ns_ after each task call.
+  uint64_t compute_start_ns_{0};
+  uint64_t compute_end_ns_{0};
 };
 
-// Checks a TYPE_BYTES input that holds one string of shape [1].
+// Checks a TYPE_BYTES input that holds one string of shape [1]. With
+// max_batch_size greater than 0, the shape is [batch, 1] with one string per
+// batch element.
 TRITONSERVER_Error* ValidateStringInput(
     TRITONBACKEND_Input* input, const char* name,
-    TRITONSERVER_DataType datatype, const int64_t* shape, uint32_t dims);
+    TRITONSERVER_DataType datatype, const int64_t* shape, uint32_t dims,
+    int max_batch_size = 0);
 
 // Borrowed host view of one Triton string. Valid while tensor.bytes is alive.
 void TextView(const NamedTensor& tensor, trtmc_string_view& text);

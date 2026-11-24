@@ -43,14 +43,14 @@ class TextGenerationInstanceState : public ModelInstanceState {
       TRITONBACKEND_ModelInstance* triton_model_instance);
 
  private:
-  TRITONSERVER_Error* Load() override;
+  TRITONSERVER_Error* LoadModel() override;
   TRITONSERVER_Error* ValidateInput(
       TRITONBACKEND_Input* input, const char* name,
       TRITONSERVER_DataType datatype, const int64_t* shape,
       uint32_t dims) const override;
   TRITONSERVER_Error* Execute(
-      std::vector<TRITONBACKEND_Request*>& requests,
-      std::vector<TRITONBACKEND_Response*>* responses) override;
+      TRITONBACKEND_Request** requests, uint32_t request_count,
+      std::vector<TRITONBACKEND_Response*>& responses) override;
 
   std::shared_ptr<trtmc::ITask> task_;
   // Points into task_.
