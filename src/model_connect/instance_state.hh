@@ -77,11 +77,12 @@ class ModelInstanceState : public BackendModelInstance {
       TRITONSERVER_DataType datatype, const int64_t* shape,
       uint32_t dims) const = 0;
 
-  // Runs every request. ValidateRequest has already accepted each request with
-  // a response. A nullptr response marks a request that already failed, which
-  // is skipped. A failure confined to one request is sent on its response,
-  // which is then set to nullptr. A returned error or an exception fails every
-  // remaining response.
+  // Runs every request. responses has one entry per request, in the same order.
+  // ValidateRequest has already accepted each request with a response. A
+  // nullptr response marks a request that already failed, which is skipped. A
+  // failure confined to one request is sent on its response, which is then set
+  // to nullptr. A returned error or an exception fails every remaining
+  // response.
   virtual TRITONSERVER_Error* Execute(
       TRITONBACKEND_Request** requests, uint32_t request_count,
       std::vector<TRITONBACKEND_Response*>& responses) = 0;

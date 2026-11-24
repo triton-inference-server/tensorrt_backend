@@ -156,6 +156,8 @@ PackContinuationOutput(
   }
   const size_t row_bytes = static_cast<size_t>(width) * sizeof(int32_t);
   packed->bytes.resize(count * row_bytes);
+  // A continuation can return no tokens. Its token_ids.data may then be null,
+  // which memcpy does not accept even for zero bytes.
   for (size_t i = 0; i < count && row_bytes > 0; ++i) {
     memcpy(
         packed->bytes.data() + i * row_bytes, views[begin + i].token_ids.data,
