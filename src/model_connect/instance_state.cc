@@ -42,6 +42,7 @@
 #include "model_connect/text_continuation_instance_state.hh"
 #include "model_connect/text_generation_instance_state.hh"
 #include "model_connect/trtmc_utils.hh"
+#include "tensorrt.hh"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_output_responder.h"
@@ -216,6 +217,7 @@ TextView(const NamedTensor& tensor, trtmc_string_view& text)
     text.size = 0;
     return;
   }
+  // A Triton string is a 4-byte length followed by that many bytes.
   const uint32_t length = *reinterpret_cast<const uint32_t*>(bytes);
   text.data = bytes + sizeof(uint32_t);
   text.size = length;
@@ -257,23 +259,23 @@ ValidateStringInput(
     if (buffer_bytes == 0) {
       continue;
     }
+    // TRITONBACKEND_InputBuffer reports the size as uint64_t.
+    const size_t length = static_cast<size_t>(buffer_bytes);
     const bool host = memory == TRITONSERVER_MEMORY_CPU ||
                       memory == TRITONSERVER_MEMORY_CPU_PINNED;
     if (buffer_count == 1 && host) {
       bytes = static_cast<const char*>(buffer);
-      size = static_cast<size_t>(buffer_bytes);
+      size = length;
       break;
     }
     const size_t offset = gathered.size();
-    gathered.resize(offset + static_cast<size_t>(buffer_bytes));
+    gathered.resize(offset + length);
     if (host) {
-      memcpy(
-          gathered.data() + offset, buffer, static_cast<size_t>(buffer_bytes));
+      memcpy(gathered.data() + offset, buffer, length);
     } else {
       RETURN_IF_CUDA_ERROR(
           cudaMemcpy(
-              gathered.data() + offset, buffer,
-              static_cast<size_t>(buffer_bytes), cudaMemcpyDeviceToHost),
+              gathered.data() + offset, buffer, length, cudaMemcpyDeviceToHost),
           TRITONSERVER_ERROR_INTERNAL,
           std::string("failed to copy model_connect string input"));
     }
@@ -350,8 +352,9 @@ ModelInstanceState::Create(
       default:
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_UNSUPPORTED,
-            (std::string("model_connect bundle task '") + bundle_task +
-             "' is not supported")
+            TOSTRING(
+                "model_connect bundle task '" << bundle_task
+                                              << "' is not supported")
                 .c_str());
     }
 
@@ -363,9 +366,10 @@ ModelInstanceState::Create(
 
     LOG_MESSAGE(
         TRITONSERVER_LOG_INFO,
-        (std::string("loaded model_connect bundle '") +
-         model_state->BundlePath() + "' family '" +
-         model_state->BundleFamily() + "' task '" + bundle_task + "'")
+        TOSTRING(
+            "loaded model_connect bundle '"
+            << model_state->BundlePath() << "' family '"
+            << model_state->BundleFamily() << "' task '" << bundle_task << "'")
             .c_str());
     *state = instance_state.release();
   }
